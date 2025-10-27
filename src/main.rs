@@ -4,7 +4,7 @@
 
 use otlp2parquet_runtime::Platform;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let platform = Platform::detect();
 
