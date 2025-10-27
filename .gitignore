@@ -1,0 +1,45 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# Build artifacts
+*.wasm
+*.wasm.gz
+optimized.wasm
+
+# Generated files
+/crates/quill-proto/proto/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+
+# Cloudflare Workers
+.wrangler/
+worker-build/
+wrangler.toml
+
+# AWS
+.aws-sam/
+
+# Local storage (standalone mode)
+/data/
+/logs/
+
+# Testing
+coverage/
+*.profraw
+*.profdata

@@ -1,0 +1,90 @@
+[workspace]
+members = [
+    "crates/quill-core",
+    "crates/quill-runtime",
+    "crates/quill-proto",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Quill Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/smithclay/otlp2parquet"
+
+[profile.release]
+opt-level = "z"           # Optimize for size
+lto = true                # Link-time optimization
+codegen-units = 1         # Better optimization
+strip = true              # Strip symbols
+panic = "abort"           # Smaller panic handler
+
+[profile.release.package."*"]
+opt-level = "z"
+
+[workspace.dependencies]
+# Arrow/Parquet - MINIMAL features only
+arrow = { version = "53", default-features = false, features = ["ipc"] }
+parquet = { version = "53", default-features = false, features = ["arrow", "snap"] }
+
+# OTLP Protocol - minimal
+prost = { version = "0.13", default-features = false, features = ["std"] }
+prost-types = { version = "0.13", default-features = false }
+tonic = { version = "0.12", default-features = false, features = ["transport", "codegen", "prost"] }
+
+# Platform-specific
+worker = { version = "0.4" }
+aws-lambda-runtime = { version = "0.13" }
+aws-lambda-events = { version = "0.16" }
+aws-config = { version = "1", default-features = false, features = ["rustls"] }
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rustls"] }
+
+# Core utilities - minimal
+tokio = { version = "1", default-features = false, features = ["rt", "macros"] }
+serde = { version = "1", default-features = false, features = ["derive"] }
+serde_json = { version = "1", default-features = false }
+anyhow = "1"
+thiserror = "1"
+uuid = { version = "1", default-features = false, features = ["v4", "fast-rng"] }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+async-trait = "0.1"
+
+# Build dependencies
+prost-build = "0.13"
+tonic-build = "0.12"
+
+[package]
+name = "quill"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+quill-core = { path = "crates/quill-core" }
+quill-runtime = { path = "crates/quill-runtime" }
+
+# Platform-specific dependencies (optional)
+worker = { workspace = true, optional = true }
+aws-lambda-runtime = { workspace = true, optional = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+
+[features]
+default = ["standalone"]
+cloudflare = ["worker", "quill-runtime/cloudflare"]
+lambda = ["aws-lambda-runtime", "quill-runtime/lambda"]
+grpc = ["quill-runtime/grpc"]
+standalone = ["quill-runtime/standalone"]
+
+[[bin]]
+name = "quill"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[build-dependencies]
+prost-build = { workspace = true }

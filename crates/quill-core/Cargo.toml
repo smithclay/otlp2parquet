@@ -1,0 +1,24 @@
+[package]
+name = "quill-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+# Arrow/Parquet - MINIMAL features
+arrow = { workspace = true }
+parquet = { workspace = true }
+
+# OTLP Protocol
+quill-proto = { path = "../quill-proto" }
+
+# Utilities
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }

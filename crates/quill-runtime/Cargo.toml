@@ -1,0 +1,31 @@
+[package]
+name = "quill-runtime"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+quill-core = { path = "../quill-core" }
+quill-proto = { path = "../quill-proto" }
+
+# Platform-specific (optional)
+worker = { workspace = true, optional = true }
+aws-lambda-runtime = { workspace = true, optional = true }
+aws-lambda-events = { workspace = true, optional = true }
+aws-config = { workspace = true, optional = true }
+aws-sdk-s3 = { workspace = true, optional = true }
+tonic = { workspace = true, optional = true }
+
+# Core utilities
+tokio = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[features]
+default = []
+cloudflare = ["worker"]
+lambda = ["aws-lambda-runtime", "aws-lambda-events", "aws-config", "aws-sdk-s3"]
+grpc = ["tonic", "lambda"]
+standalone = []
