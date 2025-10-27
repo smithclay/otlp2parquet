@@ -18,7 +18,7 @@ aws-sdk-s3 = { workspace = true, optional = true }
 tonic = { workspace = true, optional = true }
 
 # Core utilities
-tokio = { workspace = true, features = ["fs"] }
+tokio = { workspace = true, features = ["fs"], optional = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -27,6 +27,6 @@ async-trait = { workspace = true }
 [features]
 default = []
 cloudflare = ["worker"]
-lambda = ["lambda_runtime", "aws_lambda_events", "aws-config", "aws-sdk-s3"]
+lambda = ["tokio", "lambda_runtime", "aws_lambda_events", "aws-config", "aws-sdk-s3"]
 grpc = ["tonic", "lambda"]
-standalone = []
+standalone = ["tokio"]

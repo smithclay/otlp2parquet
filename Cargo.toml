@@ -46,7 +46,7 @@ serde = { version = "1", default-features = false, features = ["derive"] }
 serde_json = { version = "1", default-features = false, features = ["std"] }
 anyhow = "1"
 thiserror = "1"
-uuid = { version = "1", default-features = false, features = ["v4", "fast-rng"] }
+uuid = { version = "1", default-features = false, features = ["v4", "fast-rng", "js"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 async-trait = "0.1"
 
@@ -69,15 +69,15 @@ otlp2parquet-runtime = { path = "crates/otlp2parquet-runtime" }
 # Platform-specific dependencies (optional)
 worker = { workspace = true, optional = true }
 lambda_runtime = { workspace = true, optional = true }
-tokio = { workspace = true }
+tokio = { workspace = true, optional = true }
 anyhow = { workspace = true }
 
 [features]
 default = ["standalone"]
 cloudflare = ["worker", "otlp2parquet-runtime/cloudflare"]
-lambda = ["lambda_runtime", "otlp2parquet-runtime/lambda"]
+lambda = ["tokio", "lambda_runtime", "otlp2parquet-runtime/lambda"]
 grpc = ["otlp2parquet-runtime/grpc"]
-standalone = ["otlp2parquet-runtime/standalone"]
+standalone = ["tokio", "otlp2parquet-runtime/standalone"]
 
 [[bin]]
 name = "otlp2parquet"

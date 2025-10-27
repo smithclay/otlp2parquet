@@ -2,8 +2,12 @@
 //
 // Detects the runtime platform and delegates to the appropriate handler
 
+// Cloudflare Workers use a different entry point via the worker::event macro
+// So we only compile the tokio-based main for non-cloudflare builds
+#[cfg(not(feature = "cloudflare"))]
 use otlp2parquet_runtime::Platform;
 
+#[cfg(not(feature = "cloudflare"))]
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let platform = Platform::detect();
@@ -11,14 +15,6 @@ async fn main() -> anyhow::Result<()> {
     println!("Detected platform: {:?}", platform);
 
     match platform {
-        #[cfg(feature = "cloudflare")]
-        Platform::CloudflareWorkers => {
-            // Cloudflare Workers entry is handled by the worker macro
-            // This path should not be reached in Workers environment
-            eprintln!("Cloudflare Workers should use the worker entry point");
-            std::process::exit(1);
-        }
-
         #[cfg(feature = "lambda")]
         Platform::Lambda => {
             otlp2parquet_runtime::lambda::run().await?;
@@ -37,4 +33,13 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+// For Cloudflare Workers, we don't use a main function
+// The worker crate provides the entry point via #[event(fetch)] macro
+#[cfg(feature = "cloudflare")]
+fn main() {
+    // Cloudflare Workers entry point is defined in the worker module
+    // This is just a placeholder that won't be called
+    panic!("Cloudflare Workers binary should be built as a cdylib, not a binary");
 }

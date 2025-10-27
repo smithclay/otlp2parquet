@@ -9,8 +9,12 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 /// Storage abstraction for writing Parquet files
-#[async_trait]
-pub trait Storage: Send + Sync {
+///
+/// Note: For WASM/Cloudflare Workers, Send + Sync are not required
+/// due to single-threaded JS runtime
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait Storage {
     /// Write data to the storage backend at the specified path
     async fn write(&self, path: &str, data: &[u8]) -> Result<()>;
 
