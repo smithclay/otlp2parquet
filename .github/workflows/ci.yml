@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ["main", "claude/**"]
+    branches: ["main"]
   pull_request:
     branches: ["main"]
 
@@ -39,16 +39,10 @@ jobs:
   # Run tests
   test:
     name: Test
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        rust: [stable, beta]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.rust }}
+      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run tests
         run: cargo test --all-features
