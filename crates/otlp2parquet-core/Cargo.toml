@@ -12,6 +12,7 @@ parquet = { workspace = true }
 
 # OTLP Protocol
 otlp2parquet-proto = { path = "../otlp2parquet-proto" }
+prost = { workspace = true }
 
 # Utilities - pure, no async, no I/O
 anyhow = { workspace = true }
