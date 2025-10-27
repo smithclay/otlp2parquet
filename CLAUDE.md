@@ -582,6 +582,73 @@ After implementation, profile and optimize:
 
 ---
 
+## Development Tooling
+
+### uv - Fast Python Package Manager
+
+This project uses [uv](https://github.com/astral-sh/uv) for managing Python-based development tools. uv is an extremely fast Python package installer and resolver written in Rust.
+
+**Installation:**
+```bash
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Verify installation
+uv --version
+```
+
+**Usage:**
+```bash
+# Run a tool without installing it globally (recommended)
+uvx pre-commit run --all-files
+
+# Install a package in a virtual environment
+uv pip install pre-commit
+
+# Run a Python script with automatic dependency management
+uv run script.py
+```
+
+### Pre-commit Hooks
+
+Pre-commit hooks ensure code quality and consistency before commits. The project uses:
+
+**Rust Hooks:**
+- `cargo fmt` - Format Rust code with rustfmt
+- `cargo clippy` - Lint Rust code with clippy (zero warnings policy)
+
+**General Hooks:**
+- YAML/TOML validation
+- Trailing whitespace removal
+- End-of-file fixer
+- Large file detection
+- Merge conflict detection
+
+**Setup:**
+```bash
+# Install pre-commit hooks (one-time setup)
+uvx pre-commit install
+
+# Run hooks manually on all files
+uvx pre-commit run --all-files
+
+# Run hooks on staged files only
+uvx pre-commit run
+
+# Update hook versions
+uvx pre-commit autoupdate
+```
+
+**Configuration:**
+See `.pre-commit-config.yaml` for the complete hook configuration.
+
+**Note:** Hooks run automatically on `git commit`. If a hook fails:
+1. Review the changes made by auto-fixers (fmt)
+2. Fix any issues reported by linters (clippy)
+3. Stage the changes and commit again
+
+---
+
 ## Testing Strategy
 
 1. **Unit tests**: OTLP parsing, Arrow conversion, schema validation
@@ -667,3 +734,5 @@ Priority order for AI agent:
 - **Use `Arc` for shared data** (schema, config)
 - **Profile before optimizing** - measure don't guess
 - **Document tradeoffs** made for size
+- **Run pre-commit hooks** - Use `uvx pre-commit run --all-files` before committing
+- **Fix clippy warnings** - The project enforces zero clippy warnings

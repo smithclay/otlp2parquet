@@ -77,11 +77,8 @@ pub fn otel_logs_schema() -> Schema {
 }
 
 /// Common resource attribute keys that are extracted to dedicated columns
-pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
-    "service.name",
-    "service.namespace",
-    "service.instance.id",
-];
+pub const EXTRACTED_RESOURCE_ATTRS: &[&str] =
+    &["service.name", "service.namespace", "service.instance.id"];
 
 #[cfg(test)]
 mod tests {
