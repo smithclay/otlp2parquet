@@ -13,12 +13,8 @@ parquet = { workspace = true }
 # OTLP Protocol
 otlp2parquet-proto = { path = "../otlp2parquet-proto" }
 
-# Utilities
+# Utilities - pure, no async, no I/O
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
-async-trait = { workspace = true }
-
-[dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
