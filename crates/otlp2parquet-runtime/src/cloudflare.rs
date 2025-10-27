@@ -21,11 +21,11 @@ impl R2Storage {
 }
 
 #[cfg(feature = "cloudflare")]
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl Storage for R2Storage {
     async fn write(&self, path: &str, data: &[u8]) -> anyhow::Result<()> {
         self.bucket
-            .put(path, data)
+            .put(path, data.to_vec())
             .execute()
             .await
             .map_err(|e| anyhow::anyhow!("R2 write error: {}", e))?;
