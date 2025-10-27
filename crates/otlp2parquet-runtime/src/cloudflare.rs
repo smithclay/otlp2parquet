@@ -6,7 +6,7 @@
 use worker::*;
 
 #[cfg(feature = "cloudflare")]
-use quill_core::Storage;
+use otlp2parquet_core::Storage;
 
 #[cfg(feature = "cloudflare")]
 pub struct R2Storage {

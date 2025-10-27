@@ -1,4 +1,4 @@
-// quill-runtime - Platform-specific adapters
+// otlp2parquet-runtime - Platform-specific adapters
 //
 // This crate provides runtime adapters for different platforms:
 // - Cloudflare Workers (R2 storage)

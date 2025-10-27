@@ -1,15 +1,15 @@
 [workspace]
 members = [
-    "crates/quill-core",
-    "crates/quill-runtime",
-    "crates/quill-proto",
+    "crates/otlp2parquet-core",
+    "crates/otlp2parquet-runtime",
+    "crates/otlp2parquet-proto",
 ]
 resolver = "2"
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = ["Quill Contributors"]
+authors = ["otlp2parquet Contributors"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/smithclay/otlp2parquet"
 
@@ -55,7 +55,7 @@ prost-build = "0.13"
 tonic-build = "0.12"
 
 [package]
-name = "quill"
+name = "otlp2parquet"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -63,8 +63,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-quill-core = { path = "crates/quill-core" }
-quill-runtime = { path = "crates/quill-runtime" }
+otlp2parquet-core = { path = "crates/otlp2parquet-core" }
+otlp2parquet-runtime = { path = "crates/otlp2parquet-runtime" }
 
 # Platform-specific dependencies (optional)
 worker = { workspace = true, optional = true }
@@ -74,13 +74,13 @@ anyhow = { workspace = true }
 
 [features]
 default = ["standalone"]
-cloudflare = ["worker", "quill-runtime/cloudflare"]
-lambda = ["aws-lambda-runtime", "quill-runtime/lambda"]
-grpc = ["quill-runtime/grpc"]
-standalone = ["quill-runtime/standalone"]
+cloudflare = ["worker", "otlp2parquet-runtime/cloudflare"]
+lambda = ["aws-lambda-runtime", "otlp2parquet-runtime/lambda"]
+grpc = ["otlp2parquet-runtime/grpc"]
+standalone = ["otlp2parquet-runtime/standalone"]
 
 [[bin]]
-name = "quill"
+name = "otlp2parquet"
 path = "src/main.rs"
 
 [lib]

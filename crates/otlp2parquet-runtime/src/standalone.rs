@@ -3,7 +3,7 @@
 // Uses local filesystem for storage
 
 use anyhow::Result;
-use quill_core::Storage;
+use otlp2parquet_core::Storage;
 use std::path::PathBuf;
 
 pub struct LocalStorage {

@@ -1,4 +1,4 @@
-// quill-core - Platform-agnostic core logic
+// otlp2parquet-core - Platform-agnostic core logic
 //
 // This crate contains the core processing logic for converting
 // OTLP logs to Parquet files. It is platform-agnostic and can be

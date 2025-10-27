@@ -6,7 +6,7 @@
 use aws_sdk_s3::Client;
 
 #[cfg(feature = "lambda")]
-use quill_core::Storage;
+use otlp2parquet_core::Storage;
 
 #[cfg(feature = "lambda")]
 pub struct S3Storage {

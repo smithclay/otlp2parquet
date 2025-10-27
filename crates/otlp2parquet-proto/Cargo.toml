@@ -1,5 +1,5 @@
 [package]
-name = "quill-proto"
+name = "otlp2parquet-proto"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

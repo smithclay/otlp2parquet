@@ -51,19 +51,19 @@ A Rust-based service that ingests OpenTelemetry logs via OTLP (HTTP/gRPC) and wr
 
 ```
 otlp2parquet/
-├── Cargo.toml              # Workspace root
+├── Cargo.toml                # Workspace root
 ├── crates/
-│   ├── quill-core/         # Platform-agnostic logic
-│   │   ├── otlp/           # OTLP parsing
-│   │   ├── parquet/        # Parquet writing
-│   │   └── storage/        # Storage trait
-│   ├── quill-runtime/      # Platform adapters
-│   │   ├── cloudflare/     # CF Workers
-│   │   ├── lambda/         # AWS Lambda
-│   │   └── standalone/     # Local dev
-│   └── quill-proto/        # Generated protobuf
+│   ├── otlp2parquet-core/    # Platform-agnostic logic
+│   │   ├── otlp/             # OTLP parsing
+│   │   ├── parquet/          # Parquet writing
+│   │   └── storage/          # Storage trait
+│   ├── otlp2parquet-runtime/ # Platform adapters
+│   │   ├── cloudflare/       # CF Workers
+│   │   ├── lambda/           # AWS Lambda
+│   │   └── standalone/       # Local dev
+│   └── otlp2parquet-proto/   # Generated protobuf
 └── src/
-    └── main.rs             # Universal entry point
+    └── main.rs               # Universal entry point
 ```
 
 ## Building
@@ -81,7 +81,7 @@ cargo build --release \
   --features cloudflare
 
 # Optimize
-wasm-opt -Oz -o optimized.wasm target/wasm32-unknown-unknown/release/quill.wasm
+wasm-opt -Oz -o optimized.wasm target/wasm32-unknown-unknown/release/otlp2parquet.wasm
 gzip -9 optimized.wasm
 
 # Check size (must be <3MB)
@@ -105,7 +105,7 @@ cargo lambda deploy
 
 ```bash
 cargo build --release --features standalone
-./target/release/quill
+./target/release/otlp2parquet
 ```
 
 ## Development Status

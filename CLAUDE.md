@@ -1,4 +1,4 @@
-# Quill - Agentic Coding Instructions
+# otlp2parquet - Agentic Coding Instructions
 **Universal OTel Log Ingestion Pipeline (Rust)**
 
 ## Mission
@@ -68,21 +68,20 @@ Build a Rust binary that ingests OpenTelemetry logs via OTLP (HTTP/gRPC), conver
 ## Cargo Workspace Structure
 
 ```
-quill/
-├── Cargo.toml          # Workspace root
+otlp2parquet/
+├── Cargo.toml                # Workspace root
 ├── crates/
-│   ├── core/           # Platform-agnostic logic
-│   │   ├── otlp/       # OTLP parsing
-│   │   ├── arrow/      # Arrow conversion
-│   │   ├── parquet/    # Parquet writing (minimal)
-│   │   └── storage/    # Storage trait
-│   ├── runtime/        # Platform adapters
-│   │   ├── cloudflare/ # CF Workers
-│   │   ├── lambda/     # AWS Lambda
-│   │   └── standalone/ # Local dev
-│   └── proto/          # Generated protobuf
+│   ├── otlp2parquet-core/    # Platform-agnostic logic
+│   │   ├── otlp/             # OTLP parsing
+│   │   ├── parquet/          # Parquet writing (minimal)
+│   │   └── storage/          # Storage trait
+│   ├── otlp2parquet-runtime/ # Platform adapters
+│   │   ├── cloudflare/       # CF Workers
+│   │   ├── lambda/           # AWS Lambda
+│   │   └── standalone/       # Local dev
+│   └── otlp2parquet-proto/   # Generated protobuf
 └── src/
-    └── main.rs         # Universal entry point
+    └── main.rs               # Universal entry point
 ```
 
 ---
@@ -241,8 +240,8 @@ pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
 
 1. **Project Setup**
    ```bash
-   cargo new --lib quill
-   cd quill
+   cargo new --lib otlp2parquet
+   cd otlp2parquet
    # Set up workspace structure
    # Configure Cargo.toml with size optimizations
    ```
@@ -552,7 +551,7 @@ After implementation, profile and optimize:
 1. **Build with optimizations**
    ```bash
    cargo build --release --target wasm32-unknown-unknown
-   wasm-opt -Oz -o optimized.wasm target/wasm32-unknown-unknown/release/quill.wasm
+   wasm-opt -Oz -o optimized.wasm target/wasm32-unknown-unknown/release/otlp2parquet.wasm
    gzip -9 optimized.wasm
    ls -lh optimized.wasm.gz  # Must be <3MB
    ```
@@ -560,7 +559,7 @@ After implementation, profile and optimize:
 2. **Profile with twiggy**
    ```bash
    cargo install twiggy
-   twiggy top -n 20 target/wasm32-unknown-unknown/release/quill.wasm
+   twiggy top -n 20 target/wasm32-unknown-unknown/release/otlp2parquet.wasm
    # Identify largest dependencies
    ```
 
@@ -600,7 +599,7 @@ After implementation, profile and optimize:
 ### Cloudflare Workers
 ```bash
 # wrangler.toml
-name = "quill"
+name = "otlp2parquet"
 main = "build/worker.wasm"
 compatibility_date = "2025-01-01"
 
@@ -622,7 +621,7 @@ cargo lambda deploy --iam-role arn:aws:iam::...
 
 # Create function URL
 aws lambda create-function-url-config \
-  --function-name quill \
+  --function-name otlp2parquet \
   --auth-type NONE
 ```
 

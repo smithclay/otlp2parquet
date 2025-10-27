@@ -2,7 +2,7 @@
 //
 // Detects the runtime platform and delegates to the appropriate handler
 
-use quill_runtime::Platform;
+use otlp2parquet_runtime::Platform;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -21,12 +21,12 @@ async fn main() -> anyhow::Result<()> {
 
         #[cfg(feature = "lambda")]
         Platform::Lambda => {
-            quill_runtime::lambda::run().await?;
+            otlp2parquet_runtime::lambda::run().await?;
         }
 
         #[cfg(feature = "standalone")]
         Platform::Standalone => {
-            quill_runtime::standalone::run().await?;
+            otlp2parquet_runtime::standalone::run().await?;
         }
 
         #[allow(unreachable_patterns)]

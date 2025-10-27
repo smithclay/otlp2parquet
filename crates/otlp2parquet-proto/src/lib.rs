@@ -1,4 +1,4 @@
-// quill-proto - OpenTelemetry Protocol Definitions
+// otlp2parquet-proto - OpenTelemetry Protocol Definitions
 //
 // This crate contains the generated protobuf code for OTLP.
 // The code is generated at build time from the OpenTelemetry proto files.

@@ -1,5 +1,5 @@
 [package]
-name = "quill-core"
+name = "otlp2parquet-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -11,7 +11,7 @@ arrow = { workspace = true }
 parquet = { workspace = true }
 
 # OTLP Protocol
-quill-proto = { path = "../quill-proto" }
+otlp2parquet-proto = { path = "../otlp2parquet-proto" }
 
 # Utilities
 anyhow = { workspace = true }

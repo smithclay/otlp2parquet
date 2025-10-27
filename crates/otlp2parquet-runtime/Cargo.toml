@@ -1,13 +1,13 @@
 [package]
-name = "quill-runtime"
+name = "otlp2parquet-runtime"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
 [dependencies]
-quill-core = { path = "../quill-core" }
-quill-proto = { path = "../quill-proto" }
+otlp2parquet-core = { path = "../otlp2parquet-core" }
+otlp2parquet-proto = { path = "../otlp2parquet-proto" }
 
 # Platform-specific (optional)
 worker = { workspace = true, optional = true }
