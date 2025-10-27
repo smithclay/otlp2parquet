@@ -3,7 +3,7 @@
 // Generates Hive-style partition paths:
 // logs/{service}/year={year}/month={month}/day={day}/hour={hour}/{uuid}-{timestamp}.parquet
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Timelike, Utc};
 use uuid::Uuid;
 
 /// Generate a partition path for a log entry
@@ -19,7 +19,7 @@ use uuid::Uuid;
 pub fn generate_partition_path(service_name: &str, timestamp_nanos: i64) -> String {
     // Convert nanoseconds to DateTime
     let timestamp_secs = timestamp_nanos / 1_000_000_000;
-    let dt = DateTime::from_timestamp(timestamp_secs, 0).unwrap_or_else(|| Utc::now());
+    let dt = DateTime::from_timestamp(timestamp_secs, 0).unwrap_or_else(Utc::now);
 
     // Generate unique filename
     let uuid = Uuid::new_v4();
@@ -59,7 +59,7 @@ mod tests {
     #[test]
     fn test_generate_partition_path() {
         // 2024-01-15 14:30:00 UTC in nanoseconds
-        let timestamp_nanos = 1705327800_000_000_000;
+        let timestamp_nanos = 1_705_327_800_000_000_000;
         let service_name = "my-service";
 
         let path = generate_partition_path(service_name, timestamp_nanos);
