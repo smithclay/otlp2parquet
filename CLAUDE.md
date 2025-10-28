@@ -25,41 +25,54 @@ Build a Rust binary that ingests OpenTelemetry logs via OTLP (HTTP/gRPC), conver
    - Lambda: `AWS_LAMBDA_FUNCTION_NAME` env var
    - Standalone: neither present
 
-4. **Storage: Trait-based abstraction**
-   - R2 for CF Workers
-   - S3 for Lambda
-   - Common interface
+4. **Storage: Platform-native implementations (NO shared trait)**
+   - R2 for CF Workers (async, worker runtime)
+   - S3 for Lambda (async, lambda_runtime's tokio)
+   - Local filesystem for Standalone (blocking, std::fs)
+   - **No abstraction** - each platform uses its idioms
 
 ---
 
 ## Architecture
 
+**Philosophy (Fred Brooks):** "Conceptual integrity is the most important consideration in system design."
+
+The architecture separates **essence** (pure OTLP→Parquet conversion) from **accident** (platform I/O, networking, runtime). There is **NO shared Storage trait** - each platform uses its native idioms directly.
+
+### Core Principle: Three Different Systems
+
+CF Workers, Lambda, and Standalone are **fundamentally different systems** that happen to share the same core processing logic. Forcing them through a common abstraction violates conceptual integrity.
+
 ```
 ┌─────────────────────────────────────────┐
-│  Platform Detection (runtime)           │
-│  ├─ Cloudflare Workers → R2             │
-│  ├─ Lambda → S3                         │
-│  └─ Standalone → local/testing          │
+│  Platform-Specific Entry Points         │
+│  ├─ CF Workers: #[event(fetch)]         │
+│  │   (single-threaded JS runtime)       │
+│  ├─ Lambda: lambda_runtime::run()       │
+│  │   (uses lambda_runtime's tokio)      │
+│  └─ Standalone: blocking HTTP server    │
+│      (std::net, no async)               │
 └─────────────────────────────────────────┘
                   ↓
 ┌─────────────────────────────────────────┐
-│  Protocol Layer                         │
-│  ├─ HTTP: /v1/logs (protobuf/json)     │
-│  └─ gRPC: LogsService/Export (Lambda)   │
+│  Protocol Layer (HTTP handlers)         │
+│  └─ Parse HTTP request → OTLP bytes    │
 └─────────────────────────────────────────┘
                   ↓
 ┌─────────────────────────────────────────┐
-│  Core Processing (platform-agnostic)    │
-│  ├─ Parse OTLP protobuf                 │
-│  ├─ Convert to Arrow RecordBatch        │
-│  ├─ Write Parquet (minimal features)    │
-│  └─ Generate partition path             │
+│  Core Processing (PURE - no I/O)       │
+│  process_otlp_logs(bytes) -> bytes      │
+│  ├─ Parse OTLP protobuf ✅              │
+│  ├─ Convert to Arrow RecordBatch ✅     │
+│  ├─ Write Parquet (Snappy) ✅           │
+│  └─ Generate partition path ✅          │
 └─────────────────────────────────────────┘
                   ↓
 ┌─────────────────────────────────────────┐
-│  Storage Trait                          │
-│  ├─ R2Client (worker crate)             │
-│  └─ S3Client (aws-sdk-s3)               │
+│  Platform-Specific Storage (no trait)   │
+│  ├─ R2Storage::write() (async)         │
+│  ├─ S3Storage::write() (async)         │
+│  └─ LocalStorage::write() (blocking)   │
 └─────────────────────────────────────────┘
 ```
 
@@ -71,18 +84,21 @@ Build a Rust binary that ingests OpenTelemetry logs via OTLP (HTTP/gRPC), conver
 otlp2parquet/
 ├── Cargo.toml                # Workspace root
 ├── crates/
-│   ├── otlp2parquet-core/    # Platform-agnostic logic
-│   │   ├── otlp/             # OTLP parsing
-│   │   ├── parquet/          # Parquet writing (minimal)
-│   │   └── storage/          # Storage trait
+│   ├── otlp2parquet-core/    # ✅ PURE platform-agnostic logic
+│   │   ├── otlp/             # ✅ OTLP→Arrow conversion
+│   │   ├── parquet/          # ✅ Parquet writing + partitioning
+│   │   └── schema.rs         # ✅ Arrow schema (15 fields)
 │   ├── otlp2parquet-runtime/ # Platform adapters
-│   │   ├── cloudflare/       # CF Workers
-│   │   ├── lambda/           # AWS Lambda
-│   │   └── standalone/       # Local dev
-│   └── otlp2parquet-proto/   # Generated protobuf
+│   │   ├── cloudflare.rs     # ✅ R2Storage (no trait)
+│   │   ├── lambda.rs         # ✅ S3Storage (no trait)
+│   │   └── standalone.rs     # ✅ LocalStorage (no trait)
+│   └── otlp2parquet-proto/   # ✅ Generated protobuf (v1.3.2)
+│       └── proto/            # ✅ OpenTelemetry proto files
 └── src/
-    └── main.rs               # Universal entry point
+    └── main.rs               # ✅ Platform-specific entry points
 ```
+
+**Key Change:** No storage/ directory - removed the Storage trait per Brooks's principles.
 
 ---
 
@@ -236,9 +252,9 @@ pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
 
 ## Core Implementation Priorities
 
-### Phase 1: Foundation (Do First)
+### Phase 1: Foundation ✅ COMPLETED
 
-1. **Project Setup**
+1. **Project Setup** ✅
    ```bash
    cargo new --lib otlp2parquet
    cd otlp2parquet
@@ -246,7 +262,7 @@ pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
    # Configure Cargo.toml with size optimizations
    ```
 
-2. **Generate OTLP Protobuf Code**
+2. **Generate OTLP Protobuf Code** ✅
    ```rust
    // build.rs
    fn main() {
@@ -260,11 +276,11 @@ pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
    }
    ```
 
-3. **Define Arrow Schema**
-   - Implement `otel_logs_schema()` function
-   - Test schema creation
+3. **Define Arrow Schema** ✅
+   - Implemented `otel_logs_schema()` function (15 fields)
+   - Tests passing
 
-4. **Platform Detection**
+4. **Platform Detection** ✅ (via conditional compilation in main.rs)
    ```rust
    // crates/runtime/src/lib.rs
    pub enum Platform {
@@ -284,9 +300,9 @@ pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
    }
    ```
 
-### Phase 2: Core Processing
+### Phase 2: Core Processing ✅ COMPLETED
 
-5. **OTLP → Arrow Conversion**
+5. **OTLP → Arrow Conversion** ✅
    ```rust
    // crates/core/src/otlp/to_arrow.rs
 
@@ -318,7 +334,7 @@ pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
    }
    ```
 
-6. **Minimal Parquet Writer**
+6. **Minimal Parquet Writer** ✅
    ```rust
    // crates/core/src/parquet/writer.rs
 
@@ -346,7 +362,7 @@ pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
    }
    ```
 
-7. **Partition Path Generation**
+7. **Partition Path Generation** ✅
    ```rust
    // crates/core/src/parquet/partition.rs
 
@@ -368,41 +384,39 @@ pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
    }
    ```
 
-### Phase 3: Storage Layer
+### Phase 3: Storage Layer ✅ COMPLETED
 
-8. **Storage Trait**
+**IMPORTANT:** No Storage trait - each platform implements storage directly.
+
+8. **~~Storage Trait~~** ❌ REMOVED (violates conceptual integrity)
+   - Each platform uses its native idioms
+   - No forced abstraction
+   - Simpler, clearer code
+
+9. **R2 Implementation** ✅ (CF Workers)
    ```rust
-   // crates/core/src/storage/mod.rs
-
-   #[async_trait::async_trait]
-   pub trait Storage: Send + Sync {
-       async fn write(&self, path: &str, data: &[u8]) -> Result<()>;
-   }
-   ```
-
-9. **R2 Implementation** (CF Workers)
-   ```rust
-   // crates/runtime/src/cloudflare/storage.rs
-
+   // crates/runtime/src/cloudflare.rs
    use worker::*;
 
    pub struct R2Storage {
        bucket: Bucket,
    }
 
-   #[async_trait::async_trait]
-   impl Storage for R2Storage {
-       async fn write(&self, path: &str, data: &[u8]) -> Result<()> {
-           self.bucket.put(path, data).await?;
+   impl R2Storage {
+       pub async fn write(&self, path: &str, data: &[u8]) -> anyhow::Result<()> {
+           self.bucket
+               .put(path, data.to_vec())
+               .execute()
+               .await
+               .map_err(|e| anyhow::anyhow!("R2 write error: {}", e))?;
            Ok(())
        }
    }
    ```
 
-10. **S3 Implementation** (Lambda)
+10. **S3 Implementation** ✅ (Lambda)
     ```rust
-    // crates/runtime/src/lambda/storage.rs
-
+    // crates/runtime/src/lambda.rs
     use aws_sdk_s3::Client;
 
     pub struct S3Storage {
@@ -410,24 +424,26 @@ pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
         bucket: String,
     }
 
-    #[async_trait::async_trait]
-    impl Storage for S3Storage {
-        async fn write(&self, path: &str, data: &[u8]) -> Result<()> {
+    impl S3Storage {
+        pub async fn write(&self, path: &str, data: &[u8]) -> Result<()> {
             self.client
                 .put_object()
                 .bucket(&self.bucket)
                 .key(path)
                 .body(data.to_vec().into())
                 .send()
-                .await?;
+                .await
+                .map_err(|e| anyhow::anyhow!("S3 write error: {}", e))?;
             Ok(())
         }
     }
     ```
 
-### Phase 4: Protocol Handlers
+### Phase 4: Protocol Handlers 🚧 IN PROGRESS
 
-11. **HTTP Handler** (Both platforms)
+**Core Function Available:** `otlp2parquet_core::process_otlp_logs(bytes) -> Result<Vec<u8>>`
+
+11. **HTTP Handler** 🚧 (Both platforms)
     ```rust
     // crates/core/src/http.rs
 
