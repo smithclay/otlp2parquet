@@ -21,10 +21,11 @@ tonic = { workspace = true, optional = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+base64 = { version = "0.22", optional = true }
 
 [features]
 default = []
 cloudflare = ["worker"]
-lambda = ["lambda_runtime", "aws_lambda_events", "aws-config", "aws-sdk-s3"]
+lambda = ["lambda_runtime", "aws_lambda_events", "aws-config", "aws-sdk-s3", "base64"]
 grpc = ["tonic", "lambda"]
 standalone = []
