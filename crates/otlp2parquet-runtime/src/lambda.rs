@@ -196,11 +196,8 @@ fn decode_body<'a>(
     })?;
 
     if is_base64_encoded {
-        let input = body.as_bytes();
-        let mut decoded =
-            Vec::with_capacity(base64::engine::general_purpose::STANDARD.decoded_len(input.len()));
-        base64::engine::general_purpose::STANDARD
-            .decode_vec(input, &mut decoded)
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(body.as_bytes())
             .map_err(|_| {
                 HttpResponseData::json(400, json!({ "error": "invalid base64 body" }).to_string())
             })?;
