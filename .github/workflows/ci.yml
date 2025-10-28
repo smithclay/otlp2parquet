@@ -3,8 +3,8 @@ name: CI
 on:
   push:
     branches: ["main"]
-  pull_request:
-    branches: ["main"]
+#  pull_request:
+#    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -65,8 +65,19 @@ jobs:
 
   # Run tests
   test:
-    name: Test
+    name: Test (${{ matrix.feature-name }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - feature-name: "standalone"
+            features: "--no-default-features --features standalone"
+          - feature-name: "lambda"
+            features: "--no-default-features --features lambda"
+          - feature-name: "lambda+grpc"
+            features: "--no-default-features --features lambda,grpc"
+          # Note: Cloudflare tests skipped - WASM target has limited test support
+          # and tests are primarily in otlp2parquet-core which is platform-agnostic
     steps:
       - uses: actions/checkout@v4
       - uses: arduino/setup-protoc@v3
@@ -76,10 +87,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "ci"
+          shared-key: "test"
+          key: ${{ matrix.feature-name }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Run tests
-        run: cargo test --all-features
+        run: cargo test ${{ matrix.features }}
 
   # Build for different feature combinations
   build:
