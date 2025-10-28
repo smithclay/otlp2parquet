@@ -6,6 +6,20 @@
 // - Cloudflare: worker::event macro, not main()
 
 // =============================================================================
+// COMPILE-TIME PLATFORM CHECKS
+// =============================================================================
+// Cloudflare Workers requires WASM target
+#[cfg(all(feature = "cloudflare", not(target_arch = "wasm32")))]
+compile_error!("Cloudflare Workers feature requires wasm32 target. Build with: cargo build --target wasm32-unknown-unknown --features cloudflare");
+
+// Lambda and Standalone should NOT be built for WASM
+#[cfg(all(feature = "lambda", target_arch = "wasm32"))]
+compile_error!("Lambda feature cannot be built for WASM target. Use native target: cargo build --features lambda");
+
+#[cfg(all(feature = "standalone", target_arch = "wasm32"))]
+compile_error!("Standalone feature cannot be built for WASM target. Use native target: cargo build --features standalone");
+
+// =============================================================================
 // LAMBDA ENTRY POINT
 // =============================================================================
 // Lambda runtime provides tokio - lambda_runtime::run() sets it up for us

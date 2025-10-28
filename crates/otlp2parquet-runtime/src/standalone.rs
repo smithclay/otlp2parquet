@@ -9,11 +9,11 @@ use anyhow::Result;
 use std::fs;
 use std::path::PathBuf;
 
-pub struct LocalStorage {
+pub struct FilesystemStorage {
     base_path: PathBuf,
 }
 
-impl LocalStorage {
+impl FilesystemStorage {
     pub fn new(base_path: PathBuf) -> Self {
         Self { base_path }
     }
@@ -48,7 +48,7 @@ pub fn run() -> Result<()> {
 
     // TODO: Start simple HTTP server for OTLP endpoint
     // Could use tiny_http or just std::net::TcpListener
-    // TODO: Initialize LocalStorage
+    // TODO: Initialize FilesystemStorage
 
     println!("Standalone server not yet implemented");
     println!("This will be a simple blocking HTTP server");

@@ -18,6 +18,21 @@ use std::sync::Arc;
 
 use crate::schema::{otel_logs_schema, EXTRACTED_RESOURCE_ATTRS};
 
+/// Size of OpenTelemetry TraceId in bytes (128 bits)
+const TRACE_ID_SIZE: i32 = 16;
+
+/// Size of OpenTelemetry SpanId in bytes (64 bits)
+const SPAN_ID_SIZE: i32 = 8;
+
+/// Field names for Map types in Arrow schema
+fn map_field_names() -> MapFieldNames {
+    MapFieldNames {
+        entry: "entries".to_string(),
+        key: "key".to_string(),
+        value: "value".to_string(),
+    }
+}
+
 /// Converts OTLP log records to Arrow RecordBatch
 pub struct ArrowConverter {
     // Column builders
@@ -42,13 +57,6 @@ impl ArrowConverter {
     pub fn new() -> Self {
         let schema = otel_logs_schema();
 
-        // Define field names for Map types to match schema
-        let map_field_names = MapFieldNames {
-            entry: "entries".to_string(),
-            key: "key".to_string(),
-            value: "value".to_string(),
-        };
-
         Self {
             timestamp_builder: TimestampNanosecondBuilder::new()
                 .with_timezone("UTC")
@@ -56,8 +64,8 @@ impl ArrowConverter {
             observed_timestamp_builder: TimestampNanosecondBuilder::new()
                 .with_timezone("UTC")
                 .with_data_type(schema.field(1).data_type().clone()),
-            trace_id_builder: FixedSizeBinaryBuilder::new(16),
-            span_id_builder: FixedSizeBinaryBuilder::new(8),
+            trace_id_builder: FixedSizeBinaryBuilder::new(TRACE_ID_SIZE),
+            span_id_builder: FixedSizeBinaryBuilder::new(SPAN_ID_SIZE),
             trace_flags_builder: UInt32Builder::new(),
             severity_text_builder: StringBuilder::new(),
             severity_number_builder: Int32Builder::new(),
@@ -68,12 +76,12 @@ impl ArrowConverter {
             scope_name_builder: StringBuilder::new(),
             scope_version_builder: StringBuilder::new(),
             resource_attributes_builder: MapBuilder::new(
-                Some(map_field_names.clone()),
+                Some(map_field_names()),
                 StringBuilder::new(),
                 StringBuilder::new(),
             ),
             log_attributes_builder: MapBuilder::new(
-                Some(map_field_names),
+                Some(map_field_names()),
                 StringBuilder::new(),
                 StringBuilder::new(),
             ),

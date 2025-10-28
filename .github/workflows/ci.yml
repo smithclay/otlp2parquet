@@ -28,8 +28,19 @@ jobs:
 
   # Run clippy lints
   clippy:
-    name: Clippy
+    name: Clippy (${{ matrix.feature-name }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - feature-name: "standalone"
+            features: "--no-default-features --features standalone"
+          - feature-name: "lambda"
+            features: "--no-default-features --features lambda"
+          - feature-name: "lambda+grpc"
+            features: "--no-default-features --features lambda,grpc"
+          - feature-name: "cloudflare"
+            features: "--no-default-features --features cloudflare"
     steps:
       - uses: actions/checkout@v4
       - uses: arduino/setup-protoc@v3
@@ -41,10 +52,11 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "ci"
+          shared-key: "clippy"
+          key: ${{ matrix.feature-name }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets ${{ matrix.features }} -- -D warnings
 
   # Run tests
   test:
