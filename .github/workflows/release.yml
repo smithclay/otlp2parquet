@@ -59,7 +59,7 @@ jobs:
           cd -
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.asset_name }}
           path: target/${{ matrix.target }}/release/${{ matrix.asset_name }}.tar.gz
@@ -109,7 +109,7 @@ jobs:
           echo "Compressed WASM size: ${SIZE_MB} MB"
 
       - name: Upload WASM artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: otlp2parquet-wasm
           path: |
