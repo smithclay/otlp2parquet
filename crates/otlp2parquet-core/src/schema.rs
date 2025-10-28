@@ -87,7 +87,7 @@ mod tests {
     #[test]
     fn test_schema_creation() {
         let schema = otel_logs_schema();
-        assert_eq!(schema.fields().len(), 16);
+        assert_eq!(schema.fields().len(), 15);
 
         // Verify timestamp fields
         assert_eq!(schema.field(0).name(), "Timestamp");

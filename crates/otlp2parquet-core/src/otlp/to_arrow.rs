@@ -5,8 +5,8 @@
 
 use anyhow::{Context, Result};
 use arrow::array::{
-    FixedSizeBinaryBuilder, Int32Builder, MapBuilder, RecordBatch, StringBuilder,
-    TimestampNanosecondBuilder, UInt32Builder,
+    builder::MapFieldNames, FixedSizeBinaryBuilder, Int32Builder, MapBuilder, RecordBatch,
+    StringBuilder, TimestampNanosecondBuilder, UInt32Builder,
 };
 use otlp2parquet_proto::opentelemetry::proto::{
     collector::logs::v1::ExportLogsServiceRequest,
@@ -42,6 +42,13 @@ impl ArrowConverter {
     pub fn new() -> Self {
         let schema = otel_logs_schema();
 
+        // Define field names for Map types to match schema
+        let map_field_names = MapFieldNames {
+            entry: "entries".to_string(),
+            key: "key".to_string(),
+            value: "value".to_string(),
+        };
+
         Self {
             timestamp_builder: TimestampNanosecondBuilder::new()
                 .with_timezone("UTC")
@@ -61,12 +68,12 @@ impl ArrowConverter {
             scope_name_builder: StringBuilder::new(),
             scope_version_builder: StringBuilder::new(),
             resource_attributes_builder: MapBuilder::new(
-                None,
+                Some(map_field_names.clone()),
                 StringBuilder::new(),
                 StringBuilder::new(),
             ),
             log_attributes_builder: MapBuilder::new(
-                None,
+                Some(map_field_names),
                 StringBuilder::new(),
                 StringBuilder::new(),
             ),
