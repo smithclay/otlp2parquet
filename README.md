@@ -78,14 +78,84 @@ otlp2parquet/
 
 **Note:** No shared Storage trait - each platform uses its native idioms directly.
 
-## Building
+## Development Setup
 
-### Cloudflare Workers (WASM)
+### Prerequisites
 
 ```bash
-# Install target
+# Install Rust toolchain
+rustup toolchain install stable
+rustup component add rustfmt clippy
 rustup target add wasm32-unknown-unknown
 
+# Install wasm-opt (required for WASM optimization)
+# macOS:
+brew install binaryen
+
+# Linux (Ubuntu/Debian):
+sudo apt install binaryen
+
+# Or download from: https://github.com/WebAssembly/binaryen/releases
+
+# Install development tools (optional but recommended)
+cargo install twiggy          # WASM binary profiler
+curl -LsSf https://astral.sh/uv/install.sh | sh  # uv for Python tools
+
+# Setup pre-commit hooks
+uvx pre-commit install
+```
+
+### Quick Start with Makefile
+
+```bash
+# Show all available commands
+make help
+
+# Quick development check (fast)
+make dev
+
+# Format and lint
+make fmt
+make clippy
+
+# Run tests
+make test
+
+# Build for specific platform
+make build-standalone
+make build-lambda
+make build-cloudflare
+
+# Full WASM pipeline: build → optimize → compress → profile
+make wasm-full
+```
+
+## Building
+
+### Using Makefile (Recommended)
+
+```bash
+# Cloudflare Workers - full WASM pipeline
+make wasm-full
+
+# AWS Lambda
+make build-lambda
+
+# Standalone server
+make build-standalone
+
+# Run pre-commit checks before committing
+make pre-commit
+
+# Run full CI locally
+make ci
+```
+
+### Manual Build Commands
+
+#### Cloudflare Workers (WASM)
+
+```bash
 # Build with minimal features
 cargo build --release \
   --target wasm32-unknown-unknown \
@@ -93,30 +163,33 @@ cargo build --release \
   --features cloudflare
 
 # Optimize
-wasm-opt -Oz -o optimized.wasm target/wasm32-unknown-unknown/release/otlp2parquet.wasm
+wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
+  -o optimized.wasm target/wasm32-unknown-unknown/release/otlp2parquet.wasm
+
+# Compress
 gzip -9 optimized.wasm
 
 # Check size (must be <3MB)
 ls -lh optimized.wasm.gz
 ```
 
-### AWS Lambda
+#### AWS Lambda
 
 ```bash
-# Install cargo-lambda
+# Install cargo-lambda (optional, for local testing)
 cargo install cargo-lambda
 
 # Build
-cargo lambda build --release --features lambda
+cargo build --release --no-default-features --features lambda
 
-# Deploy
-cargo lambda deploy
+# Or with gRPC support
+cargo build --release --no-default-features --features lambda,grpc
 ```
 
-### Standalone (Development)
+#### Standalone (Development)
 
 ```bash
-cargo build --release --features standalone
+cargo build --release --no-default-features --features standalone
 ./target/release/otlp2parquet
 ```
 

@@ -25,6 +25,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "lambda")]
 use serde_json::json;
 #[cfg(feature = "lambda")]
+use std::borrow::Cow;
+#[cfg(feature = "lambda")]
 use std::sync::Arc;
 
 #[cfg(feature = "lambda")]
@@ -148,16 +150,17 @@ async fn handle_post(
     };
 
     let mut parquet_bytes = Vec::new();
-    let metadata = match otlp2parquet_core::process_otlp_logs_into(&body, &mut parquet_bytes) {
-        Ok(metadata) => metadata,
-        Err(err) => {
-            eprintln!("Failed to process OTLP logs: {}", err);
-            return HttpResponseData::json(
-                400,
-                json!({ "error": "invalid OTLP payload" }).to_string(),
-            );
-        }
-    };
+    let metadata =
+        match otlp2parquet_core::process_otlp_logs_into(body.as_ref(), &mut parquet_bytes) {
+            Ok(metadata) => metadata,
+            Err(err) => {
+                eprintln!("Failed to process OTLP logs: {}", err);
+                return HttpResponseData::json(
+                    400,
+                    json!({ "error": "invalid OTLP payload" }).to_string(),
+                );
+            }
+        };
 
     let partition_path = crate::partition::generate_partition_path(
         &metadata.service_name,
@@ -184,19 +187,26 @@ fn handle_get(path: &str) -> HttpResponseData {
 }
 
 #[cfg(feature = "lambda")]
-fn decode_body(body: Option<&str>, is_base64_encoded: bool) -> Result<Vec<u8>, HttpResponseData> {
+fn decode_body<'a>(
+    body: Option<&'a str>,
+    is_base64_encoded: bool,
+) -> Result<Cow<'a, [u8]>, HttpResponseData> {
     let body = body.ok_or_else(|| {
         HttpResponseData::json(400, json!({ "error": "missing request body" }).to_string())
     })?;
 
     if is_base64_encoded {
+        let input = body.as_bytes();
+        let mut decoded =
+            Vec::with_capacity(base64::engine::general_purpose::STANDARD.decoded_len(input.len()));
         base64::engine::general_purpose::STANDARD
-            .decode(body.as_bytes())
+            .decode_vec(input, &mut decoded)
             .map_err(|_| {
                 HttpResponseData::json(400, json!({ "error": "invalid base64 body" }).to_string())
-            })
+            })?;
+        Ok(Cow::Owned(decoded))
     } else {
-        Ok(body.as_bytes().to_vec())
+        Ok(Cow::Borrowed(body.as_bytes()))
     }
 }
 

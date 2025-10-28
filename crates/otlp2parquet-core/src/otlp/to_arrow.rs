@@ -15,7 +15,7 @@ use otlp2parquet_proto::opentelemetry::proto::{
 use prost::Message;
 use std::sync::Arc;
 
-use crate::schema::{otel_logs_schema, EXTRACTED_RESOURCE_ATTRS};
+use crate::schema::{otel_logs_schema_arc, EXTRACTED_RESOURCE_ATTRS};
 
 /// Size of OpenTelemetry TraceId in bytes (128 bits)
 const TRACE_ID_SIZE: i32 = 16;
@@ -65,7 +65,7 @@ pub struct ArrowConverter {
 
 impl ArrowConverter {
     pub fn new() -> Self {
-        let schema = otel_logs_schema();
+        let schema = otel_logs_schema_arc();
 
         Self {
             timestamp_builder: TimestampNanosecondBuilder::new()
@@ -246,7 +246,7 @@ impl ArrowConverter {
     }
 
     pub fn finish(mut self) -> Result<(RecordBatch, LogMetadata)> {
-        let schema = Arc::new(otel_logs_schema());
+        let schema = otel_logs_schema_arc();
 
         let batch = RecordBatch::try_new(
             schema,

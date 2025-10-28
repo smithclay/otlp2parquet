@@ -4,10 +4,20 @@
 // Common resource attributes are extracted to dedicated columns.
 
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// Returns the Arrow schema for OpenTelemetry logs compatible with ClickHouse
 pub fn otel_logs_schema() -> Schema {
+    otel_logs_schema_arc().as_ref().clone()
+}
+
+/// Returns a cached `Arc<Schema>` for the OTLP logs schema.
+pub fn otel_logs_schema_arc() -> Arc<Schema> {
+    static SCHEMA: OnceLock<Arc<Schema>> = OnceLock::new();
+    Arc::clone(SCHEMA.get_or_init(|| Arc::new(build_schema())))
+}
+
+fn build_schema() -> Schema {
     Schema::new(vec![
         // Timestamps - nanosecond precision, UTC
         Field::new(

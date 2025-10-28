@@ -9,12 +9,16 @@ use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use std::io::Write;
+use std::sync::OnceLock;
 
-fn writer_properties() -> WriterProperties {
-    WriterProperties::builder()
-        .set_compression(Compression::SNAPPY)
-        .set_dictionary_enabled(true)
-        .build()
+fn writer_properties() -> &'static WriterProperties {
+    static PROPERTIES: OnceLock<WriterProperties> = OnceLock::new();
+    PROPERTIES.get_or_init(|| {
+        WriterProperties::builder()
+            .set_compression(Compression::SNAPPY)
+            .set_dictionary_enabled(true)
+            .build()
+    })
 }
 
 /// Write Arrow `RecordBatch` into an arbitrary `Write` sink.
@@ -25,7 +29,7 @@ pub fn write_parquet_into<W>(batch: &RecordBatch, writer: &mut W) -> Result<()>
 where
     W: Write + Send,
 {
-    let props = writer_properties();
+    let props = writer_properties().clone();
     let mut arrow_writer = ArrowWriter::try_new(writer, batch.schema(), Some(props))?;
 
     arrow_writer.write(batch)?;
