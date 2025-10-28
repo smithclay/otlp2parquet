@@ -172,7 +172,7 @@ jobs:
           echo "Original WASM size: ${ORIGINAL_SIZE} bytes (${ORIGINAL_KB} KB, ${ORIGINAL_MB} MB)"
 
           # Optimize with wasm-opt
-          wasm-opt -Oz -o optimized.wasm target/wasm32-unknown-unknown/release/otlp2parquet.wasm
+          wasm-opt -Oz --enable-bulk-memory -o optimized.wasm target/wasm32-unknown-unknown/release/otlp2parquet.wasm
           OPTIMIZED_SIZE=$(stat -c%s optimized.wasm)
           OPTIMIZED_KB=$(echo "scale=1; $OPTIMIZED_SIZE / 1024" | bc)
           OPTIMIZED_MB=$(echo "scale=3; $OPTIMIZED_SIZE / 1024 / 1024" | bc)

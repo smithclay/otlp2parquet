@@ -102,7 +102,7 @@ jobs:
 
       - name: Optimize WASM
         run: |
-          wasm-opt -Oz -o optimized.wasm target/wasm32-unknown-unknown/release/otlp2parquet.wasm
+          wasm-opt -Oz --enable-bulk-memory -o optimized.wasm target/wasm32-unknown-unknown/release/otlp2parquet.wasm
           gzip -9 -k optimized.wasm
           SIZE=$(stat -c%s optimized.wasm.gz)
           SIZE_MB=$(echo "scale=2; $SIZE / 1024 / 1024" | bc)

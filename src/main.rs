@@ -31,9 +31,6 @@ async fn main() -> Result<(), lambda_runtime::Error> {
     otlp2parquet_runtime::lambda::run().await
 }
 
-#[cfg(feature = "lambda")]
-use lambda_runtime;
-
 // =============================================================================
 // STANDALONE ENTRY POINT
 // =============================================================================

@@ -63,7 +63,8 @@ async fn handle_request(
     let (request, _context) = event.into_parts();
 
     match request {
-        HttpRequestEvent::ApiGateway(request) => {
+        HttpRequestEvent::ApiGateway(boxed_request) => {
+            let request = &*boxed_request;
             let method = request.http_method.as_str();
             let path = canonical_path(request.path.as_deref());
             let response = handle_http_request(
@@ -76,7 +77,8 @@ async fn handle_request(
             .await;
             Ok(build_api_gateway_response(response))
         }
-        HttpRequestEvent::FunctionUrl(request) => {
+        HttpRequestEvent::FunctionUrl(boxed_request) => {
+            let request = &*boxed_request;
             let method = request
                 .request_context
                 .http
@@ -87,7 +89,7 @@ async fn handle_request(
                 request
                     .raw_path
                     .as_deref()
-                    .or_else(|| request.request_context.http.path.as_deref()),
+                    .or(request.request_context.http.path.as_deref()),
             );
             let response = handle_http_request(
                 method,
@@ -202,8 +204,8 @@ fn decode_body(body: Option<&str>, is_base64_encoded: bool) -> Result<Vec<u8>, H
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum HttpRequestEvent {
-    ApiGateway(ApiGatewayProxyRequest),
-    FunctionUrl(LambdaFunctionUrlRequest),
+    ApiGateway(Box<ApiGatewayProxyRequest>),
+    FunctionUrl(Box<LambdaFunctionUrlRequest>),
 }
 
 #[cfg(feature = "lambda")]
