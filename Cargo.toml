@@ -47,6 +47,8 @@ anyhow = "1"
 thiserror = "1"
 uuid = { version = "1", default-features = false, features = ["v4", "fast-rng"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros"] }
+base64 = "0.22"
 
 # Build dependencies
 prost-build = "0.13"
@@ -67,12 +69,13 @@ otlp2parquet-runtime = { path = "crates/otlp2parquet-runtime" }
 # Platform-specific dependencies (optional)
 worker = { workspace = true, optional = true }
 lambda_runtime = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 anyhow = { workspace = true }
 
 [features]
 default = ["standalone"]
 cloudflare = ["worker", "otlp2parquet-runtime/cloudflare"]
-lambda = ["lambda_runtime", "otlp2parquet-runtime/lambda"]
+lambda = ["lambda_runtime", "tokio", "otlp2parquet-runtime/lambda"]
 grpc = ["otlp2parquet-runtime/grpc"]
 standalone = ["otlp2parquet-runtime/standalone"]
 

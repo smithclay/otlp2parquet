@@ -5,4 +5,4 @@
 
 pub mod to_arrow;
 
-pub use to_arrow::ArrowConverter;
+pub use to_arrow::{ArrowConverter, LogMetadata};

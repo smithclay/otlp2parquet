@@ -560,6 +560,82 @@ pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
 
 ---
 
+## Phase 6: Input Format Support
+
+**Current Status:** Protobuf only ✅
+
+### Supported Input Formats
+
+**Currently Implemented:**
+- ✅ **Protobuf (Binary)** - `application/x-protobuf`
+  - OTLP's native format
+  - Most efficient (smallest, fastest)
+  - Fully implemented via `prost::Message::decode()`
+
+**TODO - OTLP Compliance:**
+- [ ] **JSON** - `application/json`
+  - Required by OTLP specification
+  - Use `prost-serde` for automatic protobuf ↔ JSON conversion
+  - Parse `Content-Type` header and route to appropriate decoder
+  - Larger payloads but easier debugging/testing
+
+**TODO - Bonus Features:**
+- [ ] **JSONL (Newline-Delimited JSON)**
+  - Not part of OTLP spec, but common for bulk log ingestion
+  - Parse each line as a separate `LogRecord`
+  - Useful for importing from log files or streaming pipelines
+  - Example: `{"resourceLogs":[...]}\n{"resourceLogs":[...]}\n`
+
+### Implementation Plan
+
+1. **Add JSON Support** (OTLP-compliant)
+   ```toml
+   # Cargo.toml
+   prost-serde = { version = "0.13", optional = true }
+   ```
+
+   ```rust
+   // crates/core/src/otlp/mod.rs
+   pub enum InputFormat {
+       Protobuf,
+       Json,
+       Jsonl,
+   }
+
+   pub fn parse_otlp_logs(bytes: &[u8], format: InputFormat) -> Result<ExportLogsServiceRequest> {
+       match format {
+           InputFormat::Protobuf => {
+               ExportLogsServiceRequest::decode(bytes)
+           }
+           InputFormat::Json => {
+               serde_json::from_slice(bytes)
+           }
+           InputFormat::Jsonl => {
+               // Parse line-by-line and merge into single request
+               parse_jsonl(bytes)
+           }
+       }
+   }
+   ```
+
+2. **Update HTTP Handlers**
+   ```rust
+   // Detect format from Content-Type header
+   let format = match content_type {
+       "application/x-protobuf" => InputFormat::Protobuf,
+       "application/json" => InputFormat::Json,
+       "application/x-ndjson" | "application/jsonl" => InputFormat::Jsonl,
+       _ => return error("Unsupported Content-Type"),
+   };
+   ```
+
+3. **Size Impact Analysis**
+   - `prost-serde`: ~50KB to binary
+   - `serde_json`: Already included (used for responses)
+   - Net impact: ~50KB for OTLP compliance ✅ Acceptable
+
+---
+
 ## Size Optimization Checklist
 
 After implementation, profile and optimize:
@@ -712,15 +788,33 @@ aws lambda create-function-url-config \
 
 ## Success Criteria
 
+**Core Functionality:**
+- [x] Parses OTLP protobuf correctly ✅
+- [ ] Parses OTLP JSON (OTLP spec compliance)
+- [ ] Parses JSONL (bonus feature)
+- [x] Generates ClickHouse-compatible Parquet ✅
+- [x] Platform detection works ✅
+- [x] End-to-end test passes ✅
+
+**Platform Support:**
+- [x] Cloudflare Workers implementation ✅
+- [x] AWS Lambda implementation ✅
+- [x] Standalone server implementation ✅
+- [x] Writes to R2 (CF Workers) ✅
+- [x] Writes to S3 (Lambda) ✅
+- [x] Writes to local filesystem (Standalone) ✅
+
+**Performance & Size:**
 - [ ] CF Workers binary <3MB compressed
 - [ ] Lambda binary compiles and deploys
-- [ ] Parses OTLP protobuf correctly
-- [ ] Generates ClickHouse-compatible Parquet
-- [ ] Writes to R2 (CF) and S3 (Lambda)
-- [ ] Platform detection works
 - [ ] HTTP endpoint handles 1000 req/s
 - [ ] Parquet files queryable in DuckDB
-- [ ] End-to-end test passes
+
+**Architecture Quality:**
+- [x] Core is PURE (no side effects) ✅
+- [x] Partition paths in runtime layer ✅
+- [x] Single, clear API ✅
+- [x] No information loss in pipeline ✅
 
 ---
 

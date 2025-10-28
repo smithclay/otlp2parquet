@@ -25,14 +25,14 @@ compile_error!("Standalone feature cannot be built for WASM target. Use native t
 // Lambda runtime provides tokio - lambda_runtime::run() sets it up for us
 // We don't use #[tokio::main] - lambda_runtime handles the runtime
 #[cfg(feature = "lambda")]
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> Result<(), lambda_runtime::Error> {
     println!("AWS Lambda - runtime provided by lambda_runtime crate");
-    // The lambda_runtime::run() function will set up tokio and run our handler
-    // For now, just a placeholder until we implement the actual handler
-    println!("Lambda handler not yet implemented");
-    println!("Use: lambda_runtime::run(service_fn(handler)).await");
-    Ok(())
+    otlp2parquet_runtime::lambda::run().await
 }
+
+#[cfg(feature = "lambda")]
+use lambda_runtime;
 
 // =============================================================================
 // STANDALONE ENTRY POINT
@@ -53,9 +53,27 @@ fn main() -> anyhow::Result<()> {
     not(feature = "lambda"),
     not(feature = "standalone")
 ))]
-fn main() {
-    panic!("Cloudflare Workers should use #[event(fetch)], not main()");
+use worker::*;
+
+#[cfg(all(
+    feature = "cloudflare",
+    not(feature = "lambda"),
+    not(feature = "standalone")
+))]
+#[event(fetch)]
+async fn worker_fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
+    console_log!("Cloudflare Workers OTLP endpoint started");
+    otlp2parquet_runtime::cloudflare::handle_otlp_request(req, env, ctx).await
 }
+
+// Provide an empty main stub so cargo can build the binary target for wasm.
+#[cfg(all(
+    feature = "cloudflare",
+    not(feature = "lambda"),
+    not(feature = "standalone"),
+    target_arch = "wasm32"
+))]
+fn main() {}
 
 // =============================================================================
 // FALLBACK (no features enabled)
