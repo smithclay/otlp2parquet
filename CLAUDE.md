@@ -640,10 +640,26 @@ pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
 
 After implementation, profile and optimize:
 
+### Using Makefile (Recommended)
+
+```bash
+# Full WASM pipeline: build → optimize → compress → profile
+make wasm-full
+
+# Show WASM sizes and check 3MB limit
+make wasm-size
+
+# Profile binary size with twiggy
+make wasm-profile
+```
+
+### Manual Commands
+
 1. **Build with optimizations**
    ```bash
-   cargo build --release --target wasm32-unknown-unknown
-   wasm-opt -Oz -o optimized.wasm target/wasm32-unknown-unknown/release/otlp2parquet.wasm
+   cargo build --release --target wasm32-unknown-unknown --no-default-features --features cloudflare
+   wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
+     -o optimized.wasm target/wasm32-unknown-unknown/release/otlp2parquet.wasm
    gzip -9 optimized.wasm
    ls -lh optimized.wasm.gz  # Must be <3MB
    ```
@@ -663,18 +679,45 @@ After implementation, profile and optimize:
 
 4. **Feature flags for builds**
    ```bash
-   # CF Workers - minimal
+   # CF Workers - minimal (or use: make build-cloudflare)
    cargo build --release --target wasm32-unknown-unknown \
      --no-default-features --features cloudflare
 
-   # Lambda - full featured
-   cargo build --release --target x86_64-unknown-linux-gnu \
-     --features lambda,grpc
+   # Lambda - full featured (or use: make build-lambda)
+   cargo build --release --no-default-features --features lambda,grpc
    ```
 
 ---
 
 ## Development Tooling
+
+### Makefile - Build Automation
+
+The project includes a comprehensive Makefile with Rust-idiomatic targets for all common development tasks.
+
+**Quick Reference:**
+```bash
+make help          # Show all available targets
+make dev           # Quick check + test (fast feedback loop)
+make pre-commit    # Run fmt, clippy, test before committing
+make ci            # Full CI pipeline locally
+make wasm-full     # Complete WASM pipeline: build → optimize → compress → profile
+```
+
+**Installation:**
+```bash
+# Install all required tools automatically
+make install-tools
+
+# Or manually install prerequisites
+rustup toolchain install stable
+rustup component add rustfmt clippy
+rustup target add wasm32-unknown-unknown
+brew install binaryen  # macOS (provides wasm-opt)
+cargo install twiggy   # WASM binary profiler
+```
+
+See `Makefile` for the complete list of targets.
 
 ### uv - Fast Python Package Manager
 
@@ -836,13 +879,25 @@ Priority order for AI agent:
 
 ## Notes for AI Agent
 
+### Development Workflow
+- **Use Makefile targets** - Comprehensive build automation is available
+  - `make dev` for quick iterations
+  - `make pre-commit` before committing
+  - `make wasm-full` for complete WASM pipeline
+  - `make help` to see all targets
+- **Run pre-commit hooks** - Use `make pre-commit` or `uvx pre-commit run --all-files`
+- **Fix clippy warnings** - Zero warnings policy enforced (`make clippy`)
+
+### Code Quality & Performance
 - **Prioritize binary size** over features
-- **Test size continuously** - don't discover at the end
+- **Test size continuously** - use `make wasm-size` after changes
 - **Use `default-features = false`** everywhere
 - **Minimize allocations** in hot path
 - **Prefer `&str` over `String`** where possible
 - **Use `Arc` for shared data** (schema, config)
-- **Profile before optimizing** - measure don't guess
+- **Profile before optimizing** - `make wasm-profile` to measure
+
+### Build & Deployment
 - **Document tradeoffs** made for size
-- **Run pre-commit hooks** - Use `uvx pre-commit run --all-files` before committing
-- **Fix clippy warnings** - The project enforces zero clippy warnings
+- **Test all feature combinations** - `make check` and `make test` cover all platforms
+- **WASM optimization flags** - Already configured in Makefile with nontrapping-float-to-int

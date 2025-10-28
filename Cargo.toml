@@ -23,6 +23,12 @@ panic = "abort"           # Smaller panic handler
 [profile.release.package."*"]
 opt-level = "z"
 
+[profile.release.package.otlp2parquet-core]
+opt-level = 3
+
+[profile.release.package.otlp2parquet-runtime]
+opt-level = 3
+
 [workspace.dependencies]
 # Arrow/Parquet - MINIMAL features only
 arrow = { version = "53", default-features = false, features = ["ipc"] }
