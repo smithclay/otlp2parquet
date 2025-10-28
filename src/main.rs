@@ -61,10 +61,19 @@ use worker::*;
     not(feature = "standalone")
 ))]
 #[event(fetch)]
-async fn main(req: Request, env: Env, ctx: Context) -> Result<Response> {
+async fn worker_fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
     console_log!("Cloudflare Workers OTLP endpoint started");
     otlp2parquet_runtime::cloudflare::handle_otlp_request(req, env, ctx).await
 }
+
+// Provide an empty main stub so cargo can build the binary target for wasm.
+#[cfg(all(
+    feature = "cloudflare",
+    not(feature = "lambda"),
+    not(feature = "standalone"),
+    target_arch = "wasm32"
+))]
+fn main() {}
 
 // =============================================================================
 // FALLBACK (no features enabled)
