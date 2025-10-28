@@ -1,0 +1,235 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+#  pull_request:
+#    branches: ["main"]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0  # Disable incremental compilation for CI (faster clean builds)
+  CARGO_PROFILE_DEV_DEBUG: 0  # Reduce debug info to save cache space
+  CARGO_NET_GIT_FETCH_WITH_CLI: true  # More reliable git fetching
+
+jobs:
+  # Check code formatting
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  # Run clippy lints
+  clippy:
+    name: Clippy (${{ matrix.feature-name }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - feature-name: "standalone"
+            features: "--no-default-features --features standalone"
+            target: ""
+          - feature-name: "lambda"
+            features: "--no-default-features --features lambda"
+            target: ""
+          - feature-name: "lambda+grpc"
+            features: "--no-default-features --features lambda,grpc"
+            target: ""
+          - feature-name: "cloudflare"
+            features: "--no-default-features --features cloudflare"
+            target: "wasm32-unknown-unknown"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "32.0"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "clippy"
+          key: ${{ matrix.feature-name }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Run clippy
+        run: cargo clippy --all-targets ${{ matrix.features }} ${{ matrix.target && format('--target {0}', matrix.target) || '' }} -- -D warnings
+
+  # Run tests
+  test:
+    name: Test (${{ matrix.feature-name }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - feature-name: "standalone"
+            features: "--no-default-features --features standalone"
+          - feature-name: "lambda"
+            features: "--no-default-features --features lambda"
+          - feature-name: "lambda+grpc"
+            features: "--no-default-features --features lambda,grpc"
+          # Note: Cloudflare tests skipped - WASM target has limited test support
+          # and tests are primarily in otlp2parquet-core which is platform-agnostic
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "32.0"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "test"
+          key: ${{ matrix.feature-name }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Run tests
+        run: cargo test ${{ matrix.features }}
+
+  # Build for different feature combinations
+  build:
+    name: Build (${{ matrix.feature-name }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - feature-name: "standalone"
+            features: "--no-default-features --features standalone"
+            target: ""
+          - feature-name: "lambda"
+            features: "--no-default-features --features lambda"
+            target: ""
+          - feature-name: "lambda+grpc"
+            features: "--no-default-features --features lambda,grpc"
+            target: ""
+          - feature-name: "cloudflare"
+            features: "--no-default-features --features cloudflare"
+            target: "wasm32-unknown-unknown"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "32.0"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "build"
+          key: ${{ matrix.feature-name }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build with features "${{ matrix.feature-name }}"
+        run: cargo build --release ${{ matrix.features }} ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+
+  # Check WASM build size for Cloudflare Workers
+  wasm-size:
+    name: WASM Size Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "32.0"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "wasm"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Cache wasm-opt
+        uses: actions/cache@v4
+        id: wasm-opt-cache
+        with:
+          path: ~/.local/bin/wasm-opt
+          key: wasm-opt-version_116
+      - name: Install wasm-opt
+        if: steps.wasm-opt-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.local/bin
+          wget https://github.com/WebAssembly/binaryen/releases/download/version_116/binaryen-version_116-x86_64-linux.tar.gz
+          tar xzf binaryen-version_116-x86_64-linux.tar.gz
+          cp binaryen-version_116/bin/wasm-opt ~/.local/bin/
+      - name: Add wasm-opt to PATH
+        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Build WASM (Cloudflare Workers)
+        run: cargo build --release --target wasm32-unknown-unknown --no-default-features --features cloudflare
+      - name: Optimize WASM
+        run: |
+          # Show original size
+          ORIGINAL_SIZE=$(stat -c%s target/wasm32-unknown-unknown/release/otlp2parquet.wasm)
+          ORIGINAL_KB=$(echo "scale=1; $ORIGINAL_SIZE / 1024" | bc)
+          ORIGINAL_MB=$(echo "scale=3; $ORIGINAL_SIZE / 1024 / 1024" | bc)
+          echo "Original WASM size: ${ORIGINAL_SIZE} bytes (${ORIGINAL_KB} KB, ${ORIGINAL_MB} MB)"
+
+          # Optimize with wasm-opt
+          wasm-opt -Oz -o optimized.wasm target/wasm32-unknown-unknown/release/otlp2parquet.wasm
+          OPTIMIZED_SIZE=$(stat -c%s optimized.wasm)
+          OPTIMIZED_KB=$(echo "scale=1; $OPTIMIZED_SIZE / 1024" | bc)
+          OPTIMIZED_MB=$(echo "scale=3; $OPTIMIZED_SIZE / 1024 / 1024" | bc)
+          echo "Optimized WASM size: ${OPTIMIZED_SIZE} bytes (${OPTIMIZED_KB} KB, ${OPTIMIZED_MB} MB)"
+
+          # Compress with gzip (keep original with -k)
+          gzip -9 -k optimized.wasm
+
+          # Check compressed size
+          if [ ! -f optimized.wasm.gz ]; then
+            echo "::error::Failed to create optimized.wasm.gz"
+            exit 1
+          fi
+
+          COMPRESSED_SIZE=$(stat -c%s optimized.wasm.gz)
+          COMPRESSED_KB=$(echo "scale=1; $COMPRESSED_SIZE / 1024" | bc)
+          COMPRESSED_MB=$(echo "scale=3; $COMPRESSED_SIZE / 1024 / 1024" | bc)
+          echo "Compressed WASM size: ${COMPRESSED_SIZE} bytes (${COMPRESSED_KB} KB, ${COMPRESSED_MB} MB)"
+
+          # Check against 3MB limit
+          MAX_SIZE=3145728  # 3MB in bytes
+          if [ $COMPRESSED_SIZE -gt $MAX_SIZE ]; then
+            echo "::error::WASM binary is ${COMPRESSED_MB} MB (${COMPRESSED_SIZE} bytes), exceeds 3MB limit for Cloudflare Workers"
+            exit 1
+          fi
+
+          # Calculate percentage of limit used
+          PERCENT=$(echo "scale=1; ($COMPRESSED_SIZE * 100) / $MAX_SIZE" | bc)
+          echo "::notice::✓ WASM binary size OK: ${COMPRESSED_MB} MB (${COMPRESSED_SIZE} bytes, ${PERCENT}% of 3MB limit)"
+          echo "::notice::Size reduction: ${ORIGINAL_KB} KB → ${OPTIMIZED_KB} KB → ${COMPRESSED_KB} KB"
+
+  # Security audit
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Check documentation builds
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "32.0"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "ci"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Check documentation
+        run: cargo doc --features standalone,lambda,grpc --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings

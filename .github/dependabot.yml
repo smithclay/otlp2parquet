@@ -1,0 +1,35 @@
+version: 2
+updates:
+  # Cargo dependencies
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "rust"
+    groups:
+      # Group AWS SDK updates
+      aws-sdk:
+        patterns:
+          - "aws-*"
+      # Group Arrow/Parquet updates
+      arrow:
+        patterns:
+          - "arrow*"
+          - "parquet*"
+      # Group protobuf updates
+      protobuf:
+        patterns:
+          - "prost*"
+          - "tonic*"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "github-actions"

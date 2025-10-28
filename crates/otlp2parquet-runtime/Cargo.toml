@@ -11,14 +11,13 @@ otlp2parquet-proto = { path = "../otlp2parquet-proto" }
 
 # Platform-specific (optional)
 worker = { workspace = true, optional = true }
-aws-lambda-runtime = { workspace = true, optional = true }
-aws-lambda-events = { workspace = true, optional = true }
+lambda_runtime = { workspace = true, optional = true }
+aws_lambda_events = { workspace = true, optional = true }
 aws-config = { workspace = true, optional = true }
 aws-sdk-s3 = { workspace = true, optional = true }
 tonic = { workspace = true, optional = true }
 
 # Core utilities
-tokio = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -26,6 +25,6 @@ serde_json = { workspace = true }
 [features]
 default = []
 cloudflare = ["worker"]
-lambda = ["aws-lambda-runtime", "aws-lambda-events", "aws-config", "aws-sdk-s3"]
+lambda = ["lambda_runtime", "aws_lambda_events", "aws-config", "aws-sdk-s3"]
 grpc = ["tonic", "lambda"]
 standalone = []

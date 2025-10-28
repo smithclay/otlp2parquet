@@ -1,48 +1,57 @@
 // Standalone runtime for local development and testing
 //
-// Uses local filesystem for storage
+// Uses blocking I/O and local filesystem
+//
+// Philosophy: Simple, single-threaded, blocking I/O
+// No tokio needed - just std::fs and std::net
 
 use anyhow::Result;
-use otlp2parquet_core::Storage;
+use std::fs;
 use std::path::PathBuf;
 
-pub struct LocalStorage {
+pub struct FilesystemStorage {
     base_path: PathBuf,
 }
 
-impl LocalStorage {
+impl FilesystemStorage {
     pub fn new(base_path: PathBuf) -> Self {
         Self { base_path }
     }
-}
 
-#[async_trait::async_trait]
-impl Storage for LocalStorage {
-    async fn write(&self, path: &str, data: &[u8]) -> Result<()> {
+    /// Write data to local filesystem (blocking)
+    pub fn write(&self, path: &str, data: &[u8]) -> Result<()> {
         let full_path = self.base_path.join(path);
 
         // Create parent directories
         if let Some(parent) = full_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
+            fs::create_dir_all(parent)?;
         }
 
-        // Write file
-        tokio::fs::write(&full_path, data).await?;
+        // Write file (blocking)
+        fs::write(&full_path, data)?;
 
         Ok(())
     }
 
-    async fn read(&self, path: &str) -> Result<Vec<u8>> {
+    /// Read data from local filesystem (blocking)
+    pub fn read(&self, path: &str) -> Result<Vec<u8>> {
         let full_path = self.base_path.join(path);
-        let data = tokio::fs::read(&full_path).await?;
+        let data = fs::read(&full_path)?;
         Ok(data)
     }
 }
 
 /// Entry point for standalone mode
-pub async fn run() -> Result<()> {
+pub fn run() -> Result<()> {
     println!("Running in standalone mode");
-    // TODO: Start HTTP server for OTLP endpoint
-    // TODO: Initialize LocalStorage
+    println!("Using blocking I/O - no tokio, simple and direct");
+
+    // TODO: Start simple HTTP server for OTLP endpoint
+    // Could use tiny_http or just std::net::TcpListener
+    // TODO: Initialize FilesystemStorage
+
+    println!("Standalone server not yet implemented");
+    println!("This will be a simple blocking HTTP server");
+
     Ok(())
 }
