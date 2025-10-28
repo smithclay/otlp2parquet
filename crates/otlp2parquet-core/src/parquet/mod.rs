@@ -1,10 +1,7 @@
-// Parquet file writing and partitioning
+// Parquet file writing
 //
-// This module handles writing Arrow RecordBatches to Parquet format
-// and generating partition paths for time-based organization.
+// This module handles writing Arrow RecordBatches to Parquet format.
 
-pub mod partition;
 pub mod writer;
 
-pub use partition::generate_partition_path;
 pub use writer::write_parquet;

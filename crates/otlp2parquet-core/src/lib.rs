@@ -7,99 +7,60 @@
 // - Essence: OTLP bytes → Parquet bytes conversion
 // - Accident: Storage, networking, runtime (platform-specific)
 
-use anyhow::{anyhow, Result};
-use arrow::array::{Array, RecordBatch, StringArray, TimestampNanosecondArray};
+use anyhow::Result;
 
 pub mod otlp;
 pub mod parquet;
 pub mod schema;
 
 // Re-export commonly used types
+pub use otlp::LogMetadata;
 pub use schema::otel_logs_schema;
 
-/// Metadata extracted from OTLP logs for partitioning
-#[derive(Debug, Clone)]
-pub struct LogMetadata {
+/// Result of processing OTLP logs
+///
+/// Contains the Parquet file bytes and metadata extracted during parsing.
+/// Metadata is needed by platform-specific storage layers for partitioning.
+#[derive(Debug)]
+pub struct ProcessingResult {
+    pub parquet_bytes: Vec<u8>,
     pub service_name: String,
     pub timestamp_nanos: i64,
 }
 
-/// Extract metadata from the first log record in a RecordBatch
-///
-/// This is used to determine the partition path for storing the Parquet file.
-/// We use the first log's service name and timestamp since logs in a single
-/// batch are typically from the same service and time period.
-pub fn extract_metadata(batch: &RecordBatch) -> Result<LogMetadata> {
-    if batch.num_rows() == 0 {
-        return Ok(LogMetadata {
-            service_name: "unknown".to_string(),
-            timestamp_nanos: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
-        });
-    }
-
-    // Extract service name (column 8)
-    let service_name_col = batch
-        .column(8)
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .ok_or_else(|| anyhow!("ServiceName column is not a StringArray"))?;
-
-    let service_name = service_name_col.value(0).to_string();
-
-    // Extract timestamp (column 0)
-    let timestamp_col = batch
-        .column(0)
-        .as_any()
-        .downcast_ref::<TimestampNanosecondArray>()
-        .ok_or_else(|| anyhow!("Timestamp column is not a TimestampNanosecondArray"))?;
-
-    let timestamp_nanos = timestamp_col.value(0);
-
-    Ok(LogMetadata {
-        service_name,
-        timestamp_nanos,
-    })
-}
-
 /// Process OTLP log data and convert to Parquet format
 ///
-/// This is the main entry point for the core processing logic.
-/// Takes OTLP protobuf bytes, converts to Arrow RecordBatch, then to Parquet.
+/// This is the PURE core processing logic: OTLP bytes → Parquet bytes + metadata.
+/// No I/O, no side effects, deterministic for the same input.
 ///
 /// # Arguments
 /// * `otlp_bytes` - Raw OTLP ExportLogsServiceRequest protobuf bytes
 ///
 /// # Returns
-/// * `Ok(Vec<u8>)` - Parquet file as bytes
+/// * `Ok(ProcessingResult)` - Parquet file bytes and metadata
 /// * `Err` - If parsing or conversion fails
-pub fn process_otlp_logs(otlp_bytes: &[u8]) -> Result<Vec<u8>> {
-    let (parquet_bytes, _metadata) = process_otlp_logs_with_metadata(otlp_bytes)?;
-    Ok(parquet_bytes)
-}
-
-/// Process OTLP log data and convert to Parquet format with metadata
 ///
-/// Similar to `process_otlp_logs` but also returns metadata for partitioning.
+/// # Philosophy
+/// "Show me your tables, and I won't usually need your flowcharts; they'll be obvious."
+/// - Fred Brooks
 ///
-/// # Arguments
-/// * `otlp_bytes` - Raw OTLP ExportLogsServiceRequest protobuf bytes
-///
-/// # Returns
-/// * `Ok((Vec<u8>, LogMetadata))` - Parquet file as bytes and metadata
-/// * `Err` - If parsing or conversion fails
-pub fn process_otlp_logs_with_metadata(otlp_bytes: &[u8]) -> Result<(Vec<u8>, LogMetadata)> {
-    // Parse OTLP and convert to Arrow
+/// This function preserves information flow: we extract metadata during parsing
+/// and return it alongside the Parquet bytes. No information is lost and
+/// re-extracted via brittle column indexing.
+pub fn process_otlp_logs(otlp_bytes: &[u8]) -> Result<ProcessingResult> {
+    // Parse OTLP and convert to Arrow (tracks metadata during parsing)
     let mut converter = otlp::ArrowConverter::new();
     converter.add_from_proto_bytes(otlp_bytes)?;
-    let batch = converter.finish()?;
-
-    // Extract metadata for partitioning
-    let metadata = extract_metadata(&batch)?;
+    let (batch, metadata) = converter.finish()?;
 
     // Convert Arrow to Parquet
     let parquet_bytes = parquet::write_parquet(&batch)?;
 
-    Ok((parquet_bytes, metadata))
+    Ok(ProcessingResult {
+        parquet_bytes,
+        service_name: metadata.service_name,
+        timestamp_nanos: metadata.first_timestamp_nanos,
+    })
 }
 
 #[cfg(test)]
@@ -126,9 +87,10 @@ mod tests {
         }
         assert!(result.is_ok());
 
-        let parquet_bytes = result.unwrap();
-        assert!(!parquet_bytes.is_empty());
+        let processing_result = result.unwrap();
+        assert!(!processing_result.parquet_bytes.is_empty());
         // Parquet files start with "PAR1" magic bytes
-        assert_eq!(&parquet_bytes[0..4], b"PAR1");
+        assert_eq!(&processing_result.parquet_bytes[0..4], b"PAR1");
+        assert_eq!(processing_result.service_name, "unknown");
     }
 }

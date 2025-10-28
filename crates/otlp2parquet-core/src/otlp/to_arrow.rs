@@ -33,6 +33,13 @@ fn map_field_names() -> MapFieldNames {
     }
 }
 
+/// Metadata extracted during OTLP parsing
+#[derive(Debug, Clone)]
+pub struct LogMetadata {
+    pub service_name: String,
+    pub first_timestamp_nanos: i64,
+}
+
 /// Converts OTLP log records to Arrow RecordBatch
 pub struct ArrowConverter {
     // Column builders
@@ -51,6 +58,10 @@ pub struct ArrowConverter {
     scope_version_builder: StringBuilder,
     resource_attributes_builder: MapBuilder<StringBuilder, StringBuilder>,
     log_attributes_builder: MapBuilder<StringBuilder, StringBuilder>,
+
+    // Metadata tracking (not part of schema)
+    service_name: String,
+    first_timestamp: Option<i64>,
 }
 
 impl ArrowConverter {
@@ -85,6 +96,8 @@ impl ArrowConverter {
                 StringBuilder::new(),
                 StringBuilder::new(),
             ),
+            service_name: String::new(),
+            first_timestamp: None,
         }
     }
 
@@ -108,7 +121,13 @@ impl ArrowConverter {
                     if let Some(val) = value {
                         // Check if this is an extracted attribute
                         match key.as_str() {
-                            "service.name" => extracted_service_name = val,
+                            "service.name" => {
+                                extracted_service_name = val.clone();
+                                // Track service name for metadata (first occurrence)
+                                if self.service_name.is_empty() {
+                                    self.service_name = val;
+                                }
+                            }
                             "service.namespace" => extracted_service_namespace = Some(val),
                             "service.instance.id" => extracted_service_instance_id = Some(val),
                             _ => {
@@ -140,10 +159,15 @@ impl ArrowConverter {
                 // Process each log record
                 for log_record in scope_logs.log_records {
                     // Timestamps
-                    self.timestamp_builder
-                        .append_value(log_record.time_unix_nano as i64);
+                    let timestamp = log_record.time_unix_nano as i64;
+                    self.timestamp_builder.append_value(timestamp);
                     self.observed_timestamp_builder
                         .append_value(log_record.observed_time_unix_nano as i64);
+
+                    // Track first timestamp for metadata
+                    if self.first_timestamp.is_none() {
+                        self.first_timestamp = Some(timestamp);
+                    }
 
                     // Trace context
                     if log_record.trace_id.len() == 16 {
@@ -220,7 +244,7 @@ impl ArrowConverter {
         Ok(())
     }
 
-    pub fn finish(mut self) -> Result<RecordBatch> {
+    pub fn finish(mut self) -> Result<(RecordBatch, LogMetadata)> {
         let schema = Arc::new(otel_logs_schema());
 
         let batch = RecordBatch::try_new(
@@ -244,7 +268,17 @@ impl ArrowConverter {
             ],
         )?;
 
-        Ok(batch)
+        // Build metadata from tracked values
+        let metadata = LogMetadata {
+            service_name: if self.service_name.is_empty() {
+                "unknown".to_string()
+            } else {
+                self.service_name
+            },
+            first_timestamp_nanos: self.first_timestamp.unwrap_or(0),
+        };
+
+        Ok((batch, metadata))
     }
 }
 

@@ -89,19 +89,17 @@ async fn handle_request(
         body.into_bytes()
     };
 
-    // Process OTLP logs
-    let (parquet_bytes, metadata) = otlp2parquet_core::process_otlp_logs_with_metadata(&body_bytes)
-        .context("Failed to process OTLP logs")?;
+    // Process OTLP logs (PURE - no I/O, deterministic)
+    let result =
+        otlp2parquet_core::process_otlp_logs(&body_bytes).context("Failed to process OTLP logs")?;
 
-    // Generate partition path
-    let path = otlp2parquet_core::parquet::generate_partition_path(
-        &metadata.service_name,
-        metadata.timestamp_nanos,
-    );
+    // Generate partition path (ACCIDENT - platform-specific storage decision)
+    let path =
+        crate::partition::generate_partition_path(&result.service_name, result.timestamp_nanos);
 
     // Write to S3
     storage
-        .write(&path, &parquet_bytes)
+        .write(&path, &result.parquet_bytes)
         .await
         .context("Failed to write to S3")?;
 

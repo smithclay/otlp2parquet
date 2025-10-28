@@ -83,20 +83,19 @@ fn handle_request(mut stream: TcpStream, storage: &FilesystemStorage) -> Result<
             let mut body = vec![0u8; content_length];
             std::io::Read::read_exact(&mut reader, &mut body)?;
 
-            // Process OTLP logs
-            let (parquet_bytes, metadata) =
-                otlp2parquet_core::process_otlp_logs_with_metadata(&body)
-                    .context("Failed to process OTLP logs")?;
+            // Process OTLP logs (PURE - no I/O, deterministic)
+            let result = otlp2parquet_core::process_otlp_logs(&body)
+                .context("Failed to process OTLP logs")?;
 
-            // Generate partition path
-            let path = otlp2parquet_core::parquet::generate_partition_path(
-                &metadata.service_name,
-                metadata.timestamp_nanos,
+            // Generate partition path (ACCIDENT - platform-specific storage decision)
+            let path = crate::partition::generate_partition_path(
+                &result.service_name,
+                result.timestamp_nanos,
             );
 
             // Write to filesystem
             storage
-                .write(&path, &parquet_bytes)
+                .write(&path, &result.parquet_bytes)
                 .context("Failed to write to filesystem")?;
 
             // Return success response

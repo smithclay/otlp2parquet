@@ -5,6 +5,8 @@
 // - AWS Lambda (S3 storage)
 // - Standalone (local filesystem)
 
+pub mod partition;
+
 #[cfg(feature = "cloudflare")]
 pub mod cloudflare;
 
