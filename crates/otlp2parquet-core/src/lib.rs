@@ -8,6 +8,8 @@
 // - Accident: Storage, networking, runtime (platform-specific)
 
 use anyhow::Result;
+use arrow::array::RecordBatch;
+use std::io::Write;
 
 pub mod otlp;
 pub mod parquet;
@@ -48,19 +50,43 @@ pub struct ProcessingResult {
 /// and return it alongside the Parquet bytes. No information is lost and
 /// re-extracted via brittle column indexing.
 pub fn process_otlp_logs(otlp_bytes: &[u8]) -> Result<ProcessingResult> {
-    // Parse OTLP and convert to Arrow (tracks metadata during parsing)
-    let mut converter = otlp::ArrowConverter::new();
-    converter.add_from_proto_bytes(otlp_bytes)?;
-    let (batch, metadata) = converter.finish()?;
+    let (batch, metadata) = otlp_to_record_batch(otlp_bytes)?;
+    let mut parquet_bytes = Vec::new();
+    parquet::write_parquet_into(&batch, &mut parquet_bytes)?;
 
-    // Convert Arrow to Parquet
-    let parquet_bytes = parquet::write_parquet(&batch)?;
+    let otlp::LogMetadata {
+        service_name,
+        first_timestamp_nanos,
+    } = metadata;
 
     Ok(ProcessingResult {
         parquet_bytes,
-        service_name: metadata.service_name,
-        timestamp_nanos: metadata.first_timestamp_nanos,
+        service_name,
+        timestamp_nanos: first_timestamp_nanos,
     })
+}
+
+/// Process OTLP log data and stream the resulting Parquet bytes into `writer`
+///
+/// Returns log metadata alongside writing the Parquet file into the caller
+/// provided sink.
+pub fn process_otlp_logs_into<W>(otlp_bytes: &[u8], writer: &mut W) -> Result<otlp::LogMetadata>
+where
+    W: Write + Send,
+{
+    let (batch, metadata) = otlp_to_record_batch(otlp_bytes)?;
+    parquet::write_parquet_into(&batch, writer)?;
+    Ok(metadata)
+}
+
+/// Convert raw OTLP log protobuf bytes into an Arrow `RecordBatch` plus metadata.
+///
+/// Exposed for runtimes that need to inspect metadata before deciding where and
+/// how to write the resulting Parquet bytes.
+pub fn otlp_to_record_batch(otlp_bytes: &[u8]) -> Result<(RecordBatch, otlp::LogMetadata)> {
+    let mut converter = otlp::ArrowConverter::new();
+    converter.add_from_proto_bytes(otlp_bytes)?;
+    converter.finish()
 }
 
 #[cfg(test)]

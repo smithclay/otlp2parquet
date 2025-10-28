@@ -6,8 +6,8 @@
 // No tokio needed - just std::fs and std::net
 
 use anyhow::{Context, Result};
-use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 
@@ -22,6 +22,14 @@ impl FilesystemStorage {
 
     /// Write data to local filesystem (blocking)
     pub fn write(&self, path: &str, data: &[u8]) -> Result<()> {
+        let mut file = BufWriter::new(self.create_file(path)?);
+        file.write_all(data)?;
+        file.flush()?;
+        Ok(())
+    }
+
+    /// Create (and truncate) a file for writing, ensuring parent directories exist.
+    pub fn create_file(&self, path: &str) -> Result<File> {
         let full_path = self.base_path.join(path);
 
         // Create parent directories
@@ -29,10 +37,7 @@ impl FilesystemStorage {
             fs::create_dir_all(parent)?;
         }
 
-        // Write file (blocking)
-        fs::write(&full_path, data)?;
-
-        Ok(())
+        Ok(File::create(&full_path)?)
     }
 
     /// Read data from local filesystem (blocking)
@@ -83,20 +88,24 @@ fn handle_request(mut stream: TcpStream, storage: &FilesystemStorage) -> Result<
             let mut body = vec![0u8; content_length];
             std::io::Read::read_exact(&mut reader, &mut body)?;
 
-            // Process OTLP logs (PURE - no I/O, deterministic)
-            let result = otlp2parquet_core::process_otlp_logs(&body)
+            // Process OTLP logs into Arrow to capture metadata before writing
+            let (batch, metadata) = otlp2parquet_core::otlp_to_record_batch(&body)
                 .context("Failed to process OTLP logs")?;
 
             // Generate partition path (ACCIDENT - platform-specific storage decision)
             let path = crate::partition::generate_partition_path(
-                &result.service_name,
-                result.timestamp_nanos,
+                &metadata.service_name,
+                metadata.first_timestamp_nanos,
             );
 
-            // Write to filesystem
-            storage
-                .write(&path, &result.parquet_bytes)
-                .context("Failed to write to filesystem")?;
+            // Stream Parquet directly to filesystem without additional buffering
+            let file = storage
+                .create_file(&path)
+                .context("Failed to create destination file")?;
+            let mut writer = BufWriter::new(file);
+            otlp2parquet_core::parquet::write_parquet_into(&batch, &mut writer)
+                .context("Failed to write Parquet data")?;
+            writer.flush()?;
 
             // Return success response
             send_response(&mut stream, 200, "OK", b"{\"status\":\"ok\"}")?;

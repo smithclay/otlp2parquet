@@ -21,9 +21,9 @@ impl R2Storage {
     }
 
     /// Write parquet data to R2 (async, uses worker runtime)
-    pub async fn write(&self, path: &str, data: &[u8]) -> anyhow::Result<()> {
+    pub async fn write(&self, path: &str, data: Vec<u8>) -> anyhow::Result<()> {
         self.bucket
-            .put(path, data.to_vec())
+            .put(path, data)
             .execute()
             .await
             .map_err(|e| anyhow::anyhow!("R2 write error: {}", e))?;
@@ -59,23 +59,24 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
     })?;
 
     // Process OTLP logs (PURE - no I/O, deterministic)
-    let result = otlp2parquet_core::process_otlp_logs(&body_bytes).map_err(|e| {
-        console_error!("Failed to process OTLP logs: {:?}", e);
-        worker::Error::RustError(format!("Processing error: {}", e))
-    })?;
+    let mut parquet_bytes = Vec::new();
+    let metadata = otlp2parquet_core::process_otlp_logs_into(&body_bytes, &mut parquet_bytes)
+        .map_err(|e| {
+            console_error!("Failed to process OTLP logs: {:?}", e);
+            worker::Error::RustError(format!("Processing error: {}", e))
+        })?;
 
     // Generate partition path (ACCIDENT - platform-specific storage decision)
-    let path =
-        crate::partition::generate_partition_path(&result.service_name, result.timestamp_nanos);
+    let path = crate::partition::generate_partition_path(
+        &metadata.service_name,
+        metadata.first_timestamp_nanos,
+    );
 
     // Write to R2
-    storage
-        .write(&path, &result.parquet_bytes)
-        .await
-        .map_err(|e| {
-            console_error!("Failed to write to R2: {:?}", e);
-            worker::Error::RustError(format!("Storage error: {}", e))
-        })?;
+    storage.write(&path, parquet_bytes).await.map_err(|e| {
+        console_error!("Failed to write to R2: {:?}", e);
+        worker::Error::RustError(format!("Storage error: {}", e))
+    })?;
 
     // Return success response
     Response::ok("OK")

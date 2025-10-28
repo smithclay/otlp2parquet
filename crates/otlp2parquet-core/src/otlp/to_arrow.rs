@@ -13,7 +13,6 @@ use otlp2parquet_proto::opentelemetry::proto::{
     common::v1::{any_value, AnyValue},
 };
 use prost::Message;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::schema::{otel_logs_schema, EXTRACTED_RESOURCE_ATTRS};
@@ -108,7 +107,11 @@ impl ArrowConverter {
 
         for resource_logs in request.resource_logs {
             // Extract resource attributes
-            let mut resource_attrs = HashMap::new();
+            let mut resource_attrs = if let Some(resource) = &resource_logs.resource {
+                Vec::with_capacity(resource.attributes.len())
+            } else {
+                Vec::new()
+            };
             let mut extracted_service_name = String::new();
             let mut extracted_service_namespace = None;
             let mut extracted_service_instance_id = None;
@@ -130,12 +133,10 @@ impl ArrowConverter {
                             }
                             "service.namespace" => extracted_service_namespace = Some(val),
                             "service.instance.id" => extracted_service_instance_id = Some(val),
-                            _ => {
-                                // Keep non-extracted attributes in the map
-                                if !EXTRACTED_RESOURCE_ATTRS.contains(&key.as_str()) {
-                                    resource_attrs.insert(key.clone(), val);
-                                }
+                            _ if !EXTRACTED_RESOURCE_ATTRS.contains(&key.as_str()) => {
+                                resource_attrs.push((key.clone(), val));
                             }
+                            _ => {}
                         }
                     }
                 }

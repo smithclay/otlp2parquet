@@ -156,16 +156,17 @@ fn test_parquet_structure() {
     let processing_result = process_otlp_logs(&otlp_bytes).unwrap();
 
     // Verify Parquet structure by reading it back
-    use arrow::array::{Array, RecordBatch, StringArray, TimestampNanosecondArray};
+    use arrow::array::{Array, StringArray, TimestampNanosecondArray};
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-    use std::io::Cursor;
 
-    let cursor = Cursor::new(processing_result.parquet_bytes);
-    let builder =
-        ParquetRecordBatchReaderBuilder::try_new(cursor).expect("Failed to create Parquet reader");
+    // Use Bytes to satisfy ChunkReader trait bound (Bytes implements ChunkReader)
+    let bytes = prost::bytes::Bytes::from(processing_result.parquet_bytes);
+    let mut arrow_reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
+        .expect("Failed to create Arrow reader")
+        .build()
+        .expect("Failed to build reader");
 
-    let mut reader = builder.build().expect("Failed to build reader");
-    let batch = reader
+    let batch = arrow_reader
         .next()
         .expect("Should have at least one batch")
         .expect("Failed to read batch");
@@ -200,4 +201,18 @@ fn test_parquet_structure() {
         .expect("Column 7 should be StringArray");
     assert_eq!(body_col.value(0), "Test log message");
     assert_eq!(body_col.value(1), "Error log message");
+}
+
+#[test]
+fn test_process_into_writer() {
+    let otlp_bytes = create_sample_otlp_request();
+
+    let mut buffer = Vec::new();
+    let metadata =
+        otlp2parquet_core::process_otlp_logs_into(&otlp_bytes, &mut buffer).expect("processing");
+
+    assert_eq!(metadata.service_name, "test-service");
+    assert_eq!(metadata.first_timestamp_nanos, 1705327800000000000);
+    assert!(!buffer.is_empty());
+    assert_eq!(&buffer[0..4], b"PAR1");
 }

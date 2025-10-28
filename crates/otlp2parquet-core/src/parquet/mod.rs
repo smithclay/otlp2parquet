@@ -4,4 +4,4 @@
 
 pub mod writer;
 
-pub use writer::write_parquet;
+pub use writer::{write_parquet, write_parquet_into};

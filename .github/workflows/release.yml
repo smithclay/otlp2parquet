@@ -27,7 +27,7 @@ jobs:
             artifact_name: otlp2parquet
             asset_name: otlp2parquet-linux-arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: arduino/setup-protoc@v3
         with:
           version: "32.0"
@@ -59,7 +59,7 @@ jobs:
           cd -
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.asset_name }}
           path: target/${{ matrix.target }}/release/${{ matrix.asset_name }}.tar.gz
@@ -69,7 +69,7 @@ jobs:
     name: Build WASM
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: arduino/setup-protoc@v3
         with:
           version: "32.0"
@@ -109,7 +109,7 @@ jobs:
           echo "Compressed WASM size: ${SIZE_MB} MB"
 
       - name: Upload WASM artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: otlp2parquet-wasm
           path: |
@@ -123,10 +123,10 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           path: artifacts
 
@@ -137,7 +137,7 @@ jobs:
           cd ..
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/**/*.tar.gz

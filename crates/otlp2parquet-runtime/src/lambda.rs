@@ -31,12 +31,12 @@ impl S3Storage {
     }
 
     /// Write parquet data to S3 (async, uses lambda_runtime's tokio)
-    pub async fn write(&self, path: &str, data: &[u8]) -> Result<()> {
+    pub async fn write(&self, path: &str, data: Vec<u8>) -> Result<()> {
         self.client
             .put_object()
             .bucket(&self.bucket)
             .key(path)
-            .body(data.to_vec().into())
+            .body(data.into())
             .send()
             .await
             .map_err(|e| anyhow::anyhow!("S3 write error: {}", e))?;
@@ -90,16 +90,19 @@ async fn handle_request(
     };
 
     // Process OTLP logs (PURE - no I/O, deterministic)
-    let result =
-        otlp2parquet_core::process_otlp_logs(&body_bytes).context("Failed to process OTLP logs")?;
+    let mut parquet_bytes = Vec::new();
+    let metadata = otlp2parquet_core::process_otlp_logs_into(&body_bytes, &mut parquet_bytes)
+        .context("Failed to process OTLP logs")?;
 
     // Generate partition path (ACCIDENT - platform-specific storage decision)
-    let path =
-        crate::partition::generate_partition_path(&result.service_name, result.timestamp_nanos);
+    let path = crate::partition::generate_partition_path(
+        &metadata.service_name,
+        metadata.first_timestamp_nanos,
+    );
 
     // Write to S3
     storage
-        .write(&path, &result.parquet_bytes)
+        .write(&path, parquet_bytes)
         .await
         .context("Failed to write to S3")?;
 
