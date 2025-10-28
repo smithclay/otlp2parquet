@@ -19,7 +19,7 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -46,7 +46,7 @@ jobs:
             features: "--no-default-features --features cloudflare"
             target: "wasm32-unknown-unknown"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: arduino/setup-protoc@v3
         with:
           version: "32.0"
@@ -79,7 +79,7 @@ jobs:
           # Note: Cloudflare tests skipped - WASM target has limited test support
           # and tests are primarily in otlp2parquet-core which is platform-agnostic
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: arduino/setup-protoc@v3
         with:
           version: "32.0"
@@ -113,7 +113,7 @@ jobs:
             features: "--no-default-features --features cloudflare"
             target: "wasm32-unknown-unknown"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: arduino/setup-protoc@v3
         with:
           version: "32.0"
@@ -134,7 +134,7 @@ jobs:
     name: WASM Size Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: arduino/setup-protoc@v3
         with:
           version: "32.0"
@@ -209,7 +209,7 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: rustsec/audit-check@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -219,7 +219,7 @@ jobs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: arduino/setup-protoc@v3
         with:
           version: "32.0"
