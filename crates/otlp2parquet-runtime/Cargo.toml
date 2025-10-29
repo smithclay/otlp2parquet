@@ -17,6 +17,9 @@ aws-config = { workspace = true, optional = true }
 aws-sdk-s3 = { workspace = true, optional = true }
 tonic = { workspace = true, optional = true }
 
+# OpenDAL - unified storage (testing)
+opendal = { workspace = true, optional = true }
+
 # Core utilities
 anyhow = { workspace = true }
 serde = { workspace = true }
@@ -25,9 +28,18 @@ base64 = { version = "0.22", optional = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
+
 [features]
 default = []
 cloudflare = ["worker"]
 lambda = ["lambda_runtime", "aws_lambda_events", "aws-config", "aws-sdk-s3", "base64"]
 grpc = ["tonic", "lambda"]
 standalone = []
+
+# OpenDAL testing features
+opendal-s3 = ["opendal/services-s3"]
+opendal-fs = ["opendal/services-fs"]
+opendal-lambda = ["lambda_runtime", "aws_lambda_events", "opendal/services-s3", "base64"]
+opendal-standalone = ["opendal/services-fs"]

@@ -46,6 +46,9 @@ aws_lambda_events = { version = "0.18" }
 aws-config = { version = "1", default-features = false, features = ["rustls"] }
 aws-sdk-s3 = { version = "1", default-features = false, features = ["rustls"] }
 
+# OpenDAL - unified storage layer (testing)
+opendal = { version = "0.54", default-features = false }
+
 # Core utilities - minimal, no tokio (platforms provide their own runtimes)
 serde = { version = "1", default-features = false, features = ["derive"] }
 serde_json = { version = "1", default-features = false, features = ["std"] }
@@ -84,6 +87,12 @@ cloudflare = ["worker", "otlp2parquet-runtime/cloudflare"]
 lambda = ["lambda_runtime", "tokio", "otlp2parquet-runtime/lambda"]
 grpc = ["otlp2parquet-runtime/grpc"]
 standalone = ["otlp2parquet-runtime/standalone"]
+
+# OpenDAL testing features
+opendal-s3 = ["otlp2parquet-runtime/opendal-s3"]
+opendal-fs = ["otlp2parquet-runtime/opendal-fs"]
+opendal-lambda = ["lambda_runtime", "tokio", "otlp2parquet-runtime/opendal-lambda"]
+opendal-standalone = ["otlp2parquet-runtime/opendal-standalone"]
 
 [[bin]]
 name = "otlp2parquet"

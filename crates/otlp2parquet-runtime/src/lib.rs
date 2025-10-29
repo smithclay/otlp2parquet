@@ -16,6 +16,10 @@ pub mod lambda;
 #[cfg(feature = "standalone")]
 pub mod standalone;
 
+// OpenDAL storage implementation (SPIKE - testing only)
+#[cfg(any(feature = "opendal-s3", feature = "opendal-fs"))]
+pub mod opendal_storage;
+
 /// Platform detection based on environment variables
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
