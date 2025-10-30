@@ -16,7 +16,7 @@ pub mod parquet;
 pub mod schema;
 
 // Re-export commonly used types
-pub use otlp::LogMetadata;
+pub use otlp::{InputFormat, LogMetadata};
 pub use schema::otel_logs_schema;
 
 /// Result of processing OTLP logs
@@ -87,6 +87,105 @@ where
 pub fn otlp_to_record_batch(otlp_bytes: &[u8]) -> Result<(RecordBatch, otlp::LogMetadata)> {
     let mut converter = otlp::ArrowConverter::new();
     converter.add_from_proto_bytes(otlp_bytes)?;
+    converter.finish()
+}
+
+// ============================================================================
+// Format-aware API (Phase 1: JSON/JSONL support)
+// ============================================================================
+
+/// Process OTLP log data in the specified format and convert to Parquet
+///
+/// This is the format-aware version of `process_otlp_logs()` that supports
+/// multiple input formats: Protobuf (default), JSON, and JSONL.
+///
+/// # Arguments
+/// * `otlp_bytes` - Raw OTLP data in the specified format
+/// * `format` - Input format (Protobuf, JSON, or JSONL)
+///
+/// # Returns
+/// * `Ok(ProcessingResult)` - Parquet file bytes and metadata
+/// * `Err` - If parsing or conversion fails
+///
+/// # Example
+/// ```ignore
+/// use otlp2parquet_core::{process_otlp_logs_with_format, InputFormat};
+///
+/// // JSON input
+/// let json_bytes = br#"{"resourceLogs":[...]}"#;
+/// let result = process_otlp_logs_with_format(json_bytes, InputFormat::Json)?;
+///
+/// // JSONL input (newline-delimited)
+/// let jsonl_bytes = b"{\"resourceLogs\":[...]}\n{\"resourceLogs\":[...]}";
+/// let result = process_otlp_logs_with_format(jsonl_bytes, InputFormat::Jsonl)?;
+/// ```
+pub fn process_otlp_logs_with_format(
+    otlp_bytes: &[u8],
+    format: InputFormat,
+) -> Result<ProcessingResult> {
+    let (batch, metadata) = otlp_to_record_batch_with_format(otlp_bytes, format)?;
+    let mut parquet_bytes = Vec::new();
+    parquet::write_parquet_into(&batch, &mut parquet_bytes)?;
+
+    let otlp::LogMetadata {
+        service_name,
+        first_timestamp_nanos,
+        record_count: _,
+    } = metadata;
+
+    Ok(ProcessingResult {
+        parquet_bytes,
+        service_name,
+        timestamp_nanos: first_timestamp_nanos,
+    })
+}
+
+/// Process OTLP log data with format detection and stream the resulting Parquet bytes
+///
+/// Format-aware version of `process_otlp_logs_into()` that supports JSON and JSONL.
+///
+/// # Arguments
+/// * `otlp_bytes` - Raw OTLP data in the specified format
+/// * `format` - Input format (Protobuf, JSON, or JSONL)
+/// * `writer` - Destination for Parquet bytes
+///
+/// # Returns
+/// * `Ok(LogMetadata)` - Metadata extracted during parsing
+/// * `Err` - If parsing or conversion fails
+pub fn process_otlp_logs_into_with_format<W>(
+    otlp_bytes: &[u8],
+    format: InputFormat,
+    writer: &mut W,
+) -> Result<otlp::LogMetadata>
+where
+    W: Write + Send,
+{
+    let (batch, metadata) = otlp_to_record_batch_with_format(otlp_bytes, format)?;
+    parquet::write_parquet_into(&batch, writer)?;
+    Ok(metadata)
+}
+
+/// Convert OTLP log data in the specified format into an Arrow `RecordBatch` plus metadata
+///
+/// Format-aware version of `otlp_to_record_batch()` that supports JSON and JSONL.
+///
+/// # Arguments
+/// * `otlp_bytes` - Raw OTLP data in the specified format
+/// * `format` - Input format (Protobuf, JSON, or JSONL)
+///
+/// # Returns
+/// * `Ok((RecordBatch, LogMetadata))` - Arrow batch and extracted metadata
+/// * `Err` - If parsing or conversion fails
+pub fn otlp_to_record_batch_with_format(
+    otlp_bytes: &[u8],
+    format: InputFormat,
+) -> Result<(RecordBatch, otlp::LogMetadata)> {
+    // Parse the input format into an ExportLogsServiceRequest
+    let request = otlp::parse_otlp_request(otlp_bytes, format)?;
+
+    // Convert to Arrow using the existing converter
+    let mut converter = otlp::ArrowConverter::new();
+    converter.add_from_request(&request)?;
     converter.finish()
 }
 

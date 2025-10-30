@@ -16,15 +16,16 @@
 use anyhow::{Context, Result};
 use axum::{
     extract::State,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
+use otlp2parquet_core::InputFormat;
 use serde_json::json;
 use std::sync::Arc;
 use tokio::signal;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::opendal_storage::OpenDalStorage;
 
@@ -62,18 +63,29 @@ where
 /// POST /v1/logs - OTLP log ingestion endpoint
 async fn handle_logs(
     State(state): State<AppState>,
+    headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    info!("Received OTLP logs request ({} bytes)", body.len());
+    // Detect input format from Content-Type header
+    let content_type = headers.get("content-type").and_then(|v| v.to_str().ok());
+    let format = InputFormat::from_content_type(content_type);
 
-    // Process OTLP logs (PURE - no I/O, deterministic)
+    debug!(
+        "Received OTLP logs request ({} bytes, format: {:?}, content-type: {:?})",
+        body.len(),
+        format,
+        content_type
+    );
+
+    // Process OTLP logs with format awareness (PURE - no I/O, deterministic)
     let mut parquet_bytes = Vec::new();
-    let metadata = otlp2parquet_core::process_otlp_logs_into(&body, &mut parquet_bytes)
-        .context("Failed to process OTLP logs")?;
+    let metadata =
+        otlp2parquet_core::process_otlp_logs_into_with_format(&body, format, &mut parquet_bytes)
+            .context("Failed to process OTLP logs")?;
 
     info!(
-        "Processed {} log records from service '{}'",
-        metadata.record_count, metadata.service_name
+        "Processed {} log records from service '{}' (format: {:?})",
+        metadata.record_count, metadata.service_name, format
     );
 
     // Generate partition path (platform-specific storage decision)

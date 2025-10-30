@@ -105,8 +105,15 @@ impl ArrowConverter {
     pub fn add_from_proto_bytes(&mut self, bytes: &[u8]) -> Result<()> {
         let request = ExportLogsServiceRequest::decode(bytes)
             .context("Failed to decode OTLP ExportLogsServiceRequest")?;
+        self.add_from_request(&request)
+    }
 
-        for resource_logs in request.resource_logs {
+    /// Add OTLP log records from an ExportLogsServiceRequest
+    ///
+    /// This method accepts a pre-parsed request, enabling support for
+    /// multiple input formats (JSON, JSONL) without duplicating conversion logic.
+    pub fn add_from_request(&mut self, request: &ExportLogsServiceRequest) -> Result<()> {
+        for resource_logs in &request.resource_logs {
             // Extract resource attributes
             let mut resource_attrs = if let Some(resource) = &resource_logs.resource {
                 Vec::with_capacity(resource.attributes.len())
@@ -144,7 +151,7 @@ impl ArrowConverter {
             }
 
             // Process each scope's logs
-            for scope_logs in resource_logs.scope_logs {
+            for scope_logs in &resource_logs.scope_logs {
                 let scope_name = scope_logs
                     .scope
                     .as_ref()
@@ -159,7 +166,7 @@ impl ArrowConverter {
                 });
 
                 // Process each log record
-                for log_record in scope_logs.log_records {
+                for log_record in &scope_logs.log_records {
                     // Timestamps
                     let timestamp = log_record.time_unix_nano as i64;
                     self.timestamp_builder.append_value(timestamp);

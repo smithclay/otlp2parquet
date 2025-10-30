@@ -19,6 +19,7 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+serde_json = { workspace = true }  # For JSON/JSONL format support
 
 # Platform-specific uuid features
 [target.'cfg(target_arch = "wasm32")'.dependencies]

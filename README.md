@@ -394,6 +394,7 @@ make wasm-profile
 
 - [ ] JSON input format support (OTLP spec compliance)
 - [ ] JSONL support (bonus feature)
+- [ ] Docker image for server (arm/amd)
 - [ ] One-click Cloudflare deployment
 - [ ] CloudFormation template for Lambda
 - [ ] Load testing

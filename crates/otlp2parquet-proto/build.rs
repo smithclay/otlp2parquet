@@ -7,6 +7,9 @@ fn main() {
     // Compile OpenTelemetry proto files
     // Using prost-build for pure protobuf message types (no gRPC)
     prost_build::Config::new()
+        // Enable serde derives for JSON support
+        .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // Note: Not using #[serde(default)] as it breaks enum variants
         .compile_protos(
             &[
                 "proto/opentelemetry/proto/collector/logs/v1/logs_service.proto",
