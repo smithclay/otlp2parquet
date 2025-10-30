@@ -44,9 +44,6 @@ jobs:
           - feature-name: "lambda"
             features: "--no-default-features --features lambda"
             target: ""
-          - feature-name: "lambda+grpc"
-            features: "--no-default-features --features lambda,grpc"
-            target: ""
           - feature-name: "cloudflare"
             features: "--no-default-features --features cloudflare"
             target: "wasm32-unknown-unknown"
@@ -81,8 +78,6 @@ jobs:
             features: "--no-default-features --features server"
           - feature-name: "lambda"
             features: "--no-default-features --features lambda"
-          - feature-name: "lambda+grpc"
-            features: "--no-default-features --features lambda,grpc"
           # Note: Cloudflare tests skipped - WASM target has limited test support
           # and tests are primarily in otlp2parquet-core which is platform-agnostic
     steps:
@@ -114,9 +109,6 @@ jobs:
             target: ""
           - feature-name: "lambda"
             features: "--no-default-features --features lambda"
-            target: ""
-          - feature-name: "lambda+grpc"
-            features: "--no-default-features --features lambda,grpc"
             target: ""
           - feature-name: "cloudflare"
             features: "--no-default-features --features cloudflare"
@@ -251,6 +243,6 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: '.'
       - name: Check documentation
-        run: cargo doc --features server,lambda,grpc --no-deps
+        run: cargo doc --features server,lambda --no-deps
         env:
           RUSTDOCFLAGS: -D warnings

@@ -16,8 +16,6 @@ check: ## Run cargo check on all feature combinations
 	@cargo check --no-default-features --features server
 	@echo "==> Checking lambda..."
 	@cargo check --no-default-features --features lambda
-	@echo "==> Checking lambda+grpc..."
-	@cargo check --no-default-features --features lambda,grpc
 	@echo "==> Checking cloudflare..."
 	@cargo check --no-default-features --features cloudflare --target wasm32-unknown-unknown
 
@@ -35,8 +33,6 @@ clippy: ## Run clippy on all feature combinations
 	@cargo clippy --all-targets --no-default-features --features server -- -D warnings
 	@echo "==> Clippy lambda..."
 	@cargo clippy --all-targets --no-default-features --features lambda -- -D warnings
-	@echo "==> Clippy lambda+grpc..."
-	@cargo clippy --all-targets --no-default-features --features lambda,grpc -- -D warnings
 	@echo "==> Clippy cloudflare..."
 	@cargo clippy --all-targets --no-default-features --features cloudflare --target wasm32-unknown-unknown -- -D warnings
 
@@ -46,8 +42,6 @@ test: ## Run tests for all testable feature combinations
 	@cargo test --no-default-features --features server
 	@echo "==> Testing lambda..."
 	@cargo test --no-default-features --features lambda
-	@echo "==> Testing lambda+grpc..."
-	@cargo test --no-default-features --features lambda,grpc
 	@echo "==> Testing core (no features)..."
 	@cargo test -p otlp2parquet-core
 
@@ -65,8 +59,6 @@ build: ## Build all feature combinations (debug mode)
 	@cargo build --no-default-features --features server
 	@echo "==> Building lambda..."
 	@cargo build --no-default-features --features lambda
-	@echo "==> Building lambda+grpc..."
-	@cargo build --no-default-features --features lambda,grpc
 	@echo "==> Building cloudflare..."
 	@cargo build --no-default-features --features cloudflare --target wasm32-unknown-unknown
 
@@ -76,8 +68,6 @@ build-release: ## Build all feature combinations (release mode)
 	@cargo build --release --no-default-features --features server
 	@echo "==> Building lambda (release)..."
 	@cargo build --release --no-default-features --features lambda
-	@echo "==> Building lambda+grpc (release)..."
-	@cargo build --release --no-default-features --features lambda,grpc
 	@echo "==> Building cloudflare (release)..."
 	@cargo build --release --no-default-features --features cloudflare --target wasm32-unknown-unknown
 
@@ -88,10 +78,6 @@ build-server: ## Build server binary only (default mode)
 .PHONY: build-lambda
 build-lambda: ## Build Lambda binary only
 	@cargo build --release --no-default-features --features lambda
-
-.PHONY: build-lambda-grpc
-build-lambda-grpc: ## Build Lambda binary with gRPC support
-	@cargo build --release --no-default-features --features lambda,grpc
 
 .PHONY: build-cloudflare
 build-cloudflare: ## Build Cloudflare Workers WASM binary
@@ -205,11 +191,11 @@ dev: check test ## Quick development check (fast)
 
 .PHONY: doc
 doc: ## Build documentation
-	@cargo doc --no-deps --features server,lambda,grpc
+	@cargo doc --no-deps --features server,lambda
 
 .PHONY: doc-open
 doc-open: ## Build and open documentation in browser
-	@cargo doc --no-deps --features server,lambda,grpc --open
+	@cargo doc --no-deps --features server,lambda --open
 
 #
 # Utility Commands

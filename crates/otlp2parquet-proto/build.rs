@@ -5,10 +5,8 @@
 
 fn main() {
     // Compile OpenTelemetry proto files
-    // We don't need server or client stubs (just the message types)
-    tonic_build::configure()
-        .build_server(false)
-        .build_client(false)
+    // Using prost-build for pure protobuf message types (no gRPC)
+    prost_build::Config::new()
         .compile_protos(
             &[
                 "proto/opentelemetry/proto/collector/logs/v1/logs_service.proto",

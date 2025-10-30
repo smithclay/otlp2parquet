@@ -37,7 +37,6 @@ parquet = { version = "53", default-features = false, features = ["arrow", "snap
 # OTLP Protocol - minimal
 prost = { version = "0.13", default-features = false, features = ["std"] }
 prost-types = { version = "0.13", default-features = false }
-tonic = { version = "0.12", default-features = false, features = ["transport", "codegen", "prost"] }
 
 # Platform-specific
 worker = { version = "0.4" }
@@ -68,7 +67,6 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["e
 
 # Build dependencies
 prost-build = "0.13"
-tonic-build = "0.12"
 
 [package]
 name = "otlp2parquet"
@@ -92,7 +90,6 @@ anyhow = { workspace = true }
 default = ["server"]
 cloudflare = ["worker", "otlp2parquet-runtime/cloudflare"]
 lambda = ["lambda_runtime", "tokio", "otlp2parquet-runtime/lambda"]
-grpc = ["otlp2parquet-runtime/grpc"]
 server = ["tokio", "otlp2parquet-runtime/server"]
 
 # OpenDAL testing features

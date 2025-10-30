@@ -2,7 +2,7 @@
 **Universal OTel Log Ingestion Pipeline (Rust)**
 
 ## Mission
-Build a Rust binary that ingests OpenTelemetry logs via OTLP (HTTP/gRPC), converts to Arrow RecordBatch, writes Parquet files to object storage. Must compile to <3MB compressed WASM for Cloudflare Workers free plan AND native binary for AWS Lambda.
+Build a Rust binary that ingests OpenTelemetry logs via OTLP HTTP (protobuf), converts to Arrow RecordBatch, writes Parquet files to object storage. Must compile to <3MB compressed WASM for Cloudflare Workers free plan AND native binary for AWS Lambda.
 
 ---
 
@@ -134,18 +134,10 @@ parquet = { version = "53", default-features = false, features = [
 
 # OTLP Protocol - minimal
 prost = { version = "0.13", default-features = false, features = ["std"] }
-tonic = { version = "0.12", default-features = false, optional = true, features = [
-    "transport",          # Lambda only
-    "codegen",
-    "prost"
-] }
 
 # Platform-specific (behind features)
 worker = { version = "0.4", optional = true }
 aws-lambda-runtime = { version = "0.13", optional = true }
-aws-sdk-s3 = { version = "1", optional = true, default-features = false, features = [
-    "rustls"              # Smaller than native-tls
-] }
 
 # Core utilities - minimal
 tokio = { version = "1", default-features = false, features = ["rt", "macros"] }
@@ -156,8 +148,7 @@ uuid = { version = "1", default-features = false, features = ["v4", "fast-rng"] 
 [features]
 default = []
 cloudflare = ["worker"]
-lambda = ["tonic", "aws-lambda-runtime", "aws-sdk-s3"]
-grpc = ["tonic"]            # Can be disabled for size
+lambda = ["aws-lambda-runtime"]
 
 [build-dependencies]
 prost-build = "0.13"
@@ -268,9 +259,8 @@ pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
    ```rust
    // build.rs
    fn main() {
-       tonic_build::configure()
-           .build_server(true)
-           .compile(
+       prost_build::Config::new()
+           .compile_protos(
                &["proto/opentelemetry/proto/collector/logs/v1/logs_service.proto"],
                &["proto/"],
            )
@@ -310,7 +300,7 @@ pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
 
    use arrow::array::*;
    use arrow::record_batch::RecordBatch;
-   use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
+   use opentelemetry_proto::collector::logs::v1::ExportLogsServiceRequest;
 
    pub struct ArrowConverter {
        schema: Schema,
@@ -476,7 +466,7 @@ We use **Apache OpenDAL (v0.54+)** as a unified storage layer across all platfor
 
 **Core Function Available:** `otlp2parquet_core::process_otlp_logs(bytes) -> Result<Vec<u8>>`
 
-11. **HTTP Handler** 🚧 (Both platforms)
+11. **HTTP Handler** ✅ (All platforms)
     ```rust
     // crates/core/src/http.rs
 
@@ -506,28 +496,6 @@ We use **Apache OpenDAL (v0.54+)** as a unified storage layer across all platfor
 
         // Return success
         Ok(Response::success())
-    }
-    ```
-
-12. **gRPC Handler** (Lambda only, optional)
-    ```rust
-    // crates/runtime/src/lambda/grpc.rs
-
-    #[cfg(feature = "grpc")]
-    use tonic::{Request, Response, Status};
-
-    pub struct LogsServiceImpl {
-        storage: Arc<dyn Storage>,
-    }
-
-    #[tonic::async_trait]
-    impl LogsService for LogsServiceImpl {
-        async fn export(
-            &self,
-            request: Request<ExportLogsServiceRequest>,
-        ) -> Result<Response<ExportLogsServiceResponse>, Status> {
-            // Similar to HTTP handler
-        }
     }
     ```
 
@@ -705,7 +673,6 @@ make wasm-profile
    ```
 
 3. **If over 3MB, eliminate features:**
-   - Remove `tonic` from CF Workers build (HTTP only)
    - Use Arrow IPC instead of Parquet for CF Workers
    - Strip more arrow features
    - Consider custom protobuf parser (no prost)
@@ -717,7 +684,7 @@ make wasm-profile
      --no-default-features --features cloudflare
 
    # Lambda - full featured (or use: make build-lambda)
-   cargo build --release --no-default-features --features lambda,grpc
+   cargo build --release --no-default-features --features lambda
    ```
 
 ---

@@ -306,9 +306,6 @@ cargo install cargo-lambda
 
 # Build
 cargo build --release --no-default-features --features lambda
-
-# Or with gRPC support
-cargo build --release --no-default-features --features lambda,grpc
 ```
 
 **Server Mode (Default - Docker/Kubernetes/Development):**
@@ -400,7 +397,6 @@ make wasm-profile
 - [ ] One-click Cloudflare deployment
 - [ ] CloudFormation template for Lambda
 - [ ] Load testing
-- [ ] gRPC support (Lambda, optional)
 
 See [CLAUDE.md](./CLAUDE.md) for detailed implementation instructions and architecture decisions.
 
