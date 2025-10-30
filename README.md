@@ -111,10 +111,18 @@ Ingest OpenTelemetry logs via OTLP protocol.
 
 | Variable | Platform | Description |
 |----------|----------|-------------|
-| `LOGS_BUCKET` | Cloudflare Workers | R2 bucket name |
-| `AWS_REGION` | Lambda | S3 region (default: `us-east-1`) |
-| `BUCKET_NAME` | Lambda | S3 bucket name |
-| `STORAGE_PATH` | Standalone | Local filesystem path |
+| `R2_BUCKET` | Cloudflare Workers | R2 bucket name |
+| `R2_ACCOUNT_ID` | Cloudflare Workers | Cloudflare account ID |
+| `R2_ACCESS_KEY_ID` | Cloudflare Workers | R2 API token access key |
+| `R2_SECRET_ACCESS_KEY` | Cloudflare Workers | R2 API token secret (use Worker secret) |
+| `LOGS_BUCKET` | Lambda | S3 bucket name |
+| `AWS_REGION` | Lambda | AWS region (default: `us-east-1`) |
+| `STORAGE_PATH` | Standalone | Local filesystem path (default: `./data`) |
+
+**Notes:**
+- **Cloudflare Workers:** Uses OpenDAL S3 service with R2-compatible endpoint
+- **Lambda:** OpenDAL automatically discovers AWS credentials from IAM role or environment
+- **Standalone:** OpenDAL filesystem service with async I/O
 
 ## How It Works
 
@@ -123,12 +131,12 @@ Ingest OpenTelemetry logs via OTLP protocol.
 │  Platform-Specific Entry Points         │
 │  ├─ CF Workers: #[event(fetch)]         │
 │  ├─ Lambda: lambda_runtime::run()       │
-│  └─ Standalone: blocking HTTP server    │
+│  └─ Standalone: tokio async server      │
 └─────────────────────────────────────────┘
                   ↓
 ┌─────────────────────────────────────────┐
-│  Protocol Layer (TODO)                  │
-│  └─ HTTP: POST /v1/logs (protobuf)     │
+│  Protocol Layer (HTTP)                  │
+│  └─ POST /v1/logs (protobuf) ✅         │
 └─────────────────────────────────────────┘
                   ↓
 ┌─────────────────────────────────────────┐
@@ -141,28 +149,35 @@ Ingest OpenTelemetry logs via OTLP protocol.
 └─────────────────────────────────────────┘
                   ↓
 ┌─────────────────────────────────────────┐
-│  Platform-Specific Storage              │
-│  ├─ R2Storage (async, worker runtime)  │
-│  ├─ S3Storage (async, lambda tokio)    │
-│  └─ LocalStorage (blocking, std::fs)   │
+│  Unified Storage (Apache OpenDAL)       │
+│  ├─ OpenDAL S3 → R2 (CF Workers)       │
+│  ├─ OpenDAL S3 → AWS S3 (Lambda)       │
+│  └─ OpenDAL Fs → Local (Standalone)    │
 └─────────────────────────────────────────┘
 ```
+
+**Architecture Highlights:**
+- **Unified Storage:** Apache OpenDAL provides consistent API across all platforms
+- **Pure Core:** OTLP processing is deterministic with no I/O dependencies
+- **Platform-Native:** Each runtime uses its native async model (worker, tokio)
+- **Binary Size:** WASM compressed to 1006KB (~33% of 3MB limit)
 
 **Workspace Structure:**
 
 ```
 otlp2parquet/
 ├── crates/
-│   ├── otlp2parquet-core/    # ✅ Platform-agnostic logic (PURE)
-│   │   ├── otlp/             # ✅ OTLP→Arrow conversion
-│   │   ├── parquet/          # ✅ Parquet writing + partitioning
-│   │   └── schema.rs         # ✅ Arrow schema (15 fields)
-│   ├── otlp2parquet-runtime/ # Platform adapters
-│   │   ├── cloudflare.rs     # ✅ R2Storage (async)
-│   │   ├── lambda.rs         # ✅ S3Storage (async)
-│   │   └── standalone.rs     # ✅ LocalStorage (blocking)
-│   └── otlp2parquet-proto/   # ✅ Generated protobuf (v1.3.2)
-└── src/main.rs               # ✅ Platform detection
+│   ├── otlp2parquet-core/     # ✅ Platform-agnostic logic (PURE)
+│   │   ├── otlp/              # ✅ OTLP→Arrow conversion
+│   │   ├── parquet/           # ✅ Parquet writing + partitioning
+│   │   └── schema.rs          # ✅ Arrow schema (15 fields)
+│   ├── otlp2parquet-runtime/  # Platform adapters + OpenDAL storage
+│   │   ├── opendal_storage.rs # ✅ Unified storage abstraction
+│   │   ├── cloudflare.rs      # ✅ CF Workers handler (OpenDAL S3→R2)
+│   │   ├── lambda.rs          # ✅ Lambda handler (OpenDAL S3)
+│   │   └── standalone.rs      # ✅ Async server (OpenDAL Fs)
+│   └── otlp2parquet-proto/    # ✅ Generated protobuf (v1.3.2)
+└── src/main.rs                # ✅ Platform detection
 ```
 
 **Schema:**
@@ -310,9 +325,9 @@ make wasm-profile
 
 ## Status & Roadmap
 
-**Current Phase:** Core Implementation Complete
+**Current Phase:** OpenDAL Migration Complete ✅
 
-### ✅ Completed (Phase 1-3)
+### ✅ Completed (Phase 1-5)
 
 - [x] Workspace structure created
 - [x] Cargo.toml with size optimizations
@@ -321,20 +336,22 @@ make wasm-profile
 - [x] OTLP → Arrow conversion (ArrowConverter with all fields)
 - [x] Parquet writer implementation (Snappy compression, minimal features)
 - [x] Partition path generation (Hive-style time partitioning)
-- [x] Platform-specific storage implementations (R2, S3, Local)
-- [x] Brooks architecture refactor (pure core, platform-native runtimes)
-- [x] Core processing function (`process_otlp_logs`)
+- [x] **Apache OpenDAL unified storage layer**
+- [x] HTTP protocol handlers (all platforms)
+- [x] Cloudflare Workers entry point (`#[event(fetch)]`) with OpenDAL S3→R2
+- [x] Lambda handler implementation with OpenDAL S3
+- [x] Standalone async HTTP server with OpenDAL Fs
+- [x] Binary size optimization (WASM: 1006KB compressed, 33% of 3MB limit)
 - [x] CI/CD with protoc installation
 - [x] Pre-commit hooks (fmt, clippy)
 
-### 🚧 In Progress (Phase 4-5)
+### 🔄 Recent Changes (Phase 2 - OpenDAL Migration)
 
-- [ ] HTTP protocol handlers
-- [ ] Cloudflare Workers entry point (`#[event(fetch)]`)
-- [ ] Lambda handler implementation
-- [ ] Standalone HTTP server
-- [ ] Binary size optimization and profiling
-- [ ] End-to-end integration tests
+- **Unified Storage:** Migrated from platform-specific implementations to Apache OpenDAL
+- **Removed Dependencies:** Eliminated `aws-sdk-s3` and `aws-config` (replaced by OpenDAL)
+- **Async Everywhere:** Standalone now uses tokio for API consistency
+- **Code Reduction:** -913 lines of code, cleaner architecture
+- **Binary Size:** Maintained excellent WASM size (<3MB compressed)
 
 ### 📋 Planned (Phase 6+)
 

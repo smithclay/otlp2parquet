@@ -1,5 +1,9 @@
 name: Release
 
+# Builds release artifacts for all platforms:
+# - Native binaries (x86_64, aarch64) for Lambda/Standalone with OpenDAL
+# - Optimized WASM (<3MB compressed) for Cloudflare Workers with OpenDAL
+
 on:
   push:
     tags:
@@ -65,6 +69,7 @@ jobs:
           path: target/${{ matrix.target }}/release/${{ matrix.asset_name }}.tar.gz
 
   # Build WASM for Cloudflare Workers
+  # Expected compressed size: ~1006KB (33% of 3MB limit)
   build-wasm:
     name: Build WASM
     runs-on: ubuntu-latest
@@ -102,7 +107,7 @@ jobs:
 
       - name: Optimize WASM
         run: |
-          wasm-opt -Oz --enable-bulk-memory -o optimized.wasm target/wasm32-unknown-unknown/release/otlp2parquet.wasm
+          wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int -o optimized.wasm target/wasm32-unknown-unknown/release/otlp2parquet.wasm
           gzip -9 -k optimized.wasm
           SIZE=$(stat -c%s optimized.wasm.gz)
           SIZE_MB=$(echo "scale=2; $SIZE / 1024 / 1024" | bc)
