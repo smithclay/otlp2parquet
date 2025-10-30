@@ -266,7 +266,9 @@ pub async fn run() -> Result<(), Error> {
     // - AWS credentials file
     let storage = Arc::new(
         crate::opendal_storage::OpenDalStorage::new_s3(&bucket, &region, None, None, None)
-            .map_err(|e| lambda_runtime::Error::from(format!("Failed to initialize storage: {}", e)))?
+            .map_err(|e| {
+                lambda_runtime::Error::from(format!("Failed to initialize storage: {}", e))
+            })?,
     );
 
     // Run Lambda runtime

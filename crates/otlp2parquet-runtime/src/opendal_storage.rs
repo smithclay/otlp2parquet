@@ -3,10 +3,11 @@
 // Unified storage abstraction across all platforms:
 // - S3 (Lambda)
 // - R2 via S3-compatible endpoint (Cloudflare Workers)
-// - Filesystem (Standalone)
+// - Filesystem (Server)
 //
 // Philosophy: Leverage mature, battle-tested external abstractions
 
+use futures_util::TryStreamExt;
 use opendal::Operator;
 
 #[derive(Clone)]
@@ -26,9 +27,7 @@ impl OpenDalStorage {
     ) -> anyhow::Result<Self> {
         use opendal::services;
 
-        let mut builder = services::S3::default()
-            .bucket(bucket)
-            .region(region);
+        let mut builder = services::S3::default().bucket(bucket).region(region);
 
         if let Some(ep) = endpoint {
             builder = builder.endpoint(ep);
@@ -55,7 +54,13 @@ impl OpenDalStorage {
         secret_access_key: &str,
     ) -> anyhow::Result<Self> {
         let endpoint = format!("https://{}.r2.cloudflarestorage.com", account_id);
-        Self::new_s3(bucket, "auto", Some(&endpoint), Some(access_key_id), Some(secret_access_key))
+        Self::new_s3(
+            bucket,
+            "auto",
+            Some(&endpoint),
+            Some(access_key_id),
+            Some(secret_access_key),
+        )
     }
 
     /// Create storage for local filesystem
@@ -63,8 +68,7 @@ impl OpenDalStorage {
     pub fn new_fs(root: &str) -> anyhow::Result<Self> {
         use opendal::services;
 
-        let builder = services::Fs::default()
-            .root(root);
+        let builder = services::Fs::default().root(root);
 
         let operator = Operator::new(builder)?.finish();
         Ok(Self { operator })
@@ -90,6 +94,18 @@ impl OpenDalStorage {
             Err(e) if e.kind() == opendal::ErrorKind::NotFound => Ok(false),
             Err(e) => Err(e.into()),
         }
+    }
+
+    /// List files in a directory (used for readiness checks)
+    pub async fn list(&self, path: &str) -> anyhow::Result<Vec<String>> {
+        let lister = self.operator.lister(path).await?;
+        let entries: Vec<String> = lister
+            .try_collect::<Vec<_>>()
+            .await?
+            .into_iter()
+            .map(|entry| entry.path().to_string())
+            .collect();
+        Ok(entries)
     }
 }
 

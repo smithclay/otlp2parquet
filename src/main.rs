@@ -1,9 +1,9 @@
 // Entry points for different platforms
 //
 // Philosophy: Leverage mature abstractions (OpenDAL) consistently across platforms
-// - Lambda: tokio + OpenDAL S3
-// - Standalone: tokio + OpenDAL filesystem (async for API consistency)
-// - Cloudflare: worker runtime + OpenDAL S3 → R2
+// - Server (default): Full-featured HTTP server with multi-backend storage
+// - Lambda: Event-driven handler with S3 storage (constrained runtime)
+// - Cloudflare: WASM handler with R2 storage (most constrained)
 
 // =============================================================================
 // COMPILE-TIME PLATFORM CHECKS
@@ -12,12 +12,12 @@
 #[cfg(all(feature = "cloudflare", not(target_arch = "wasm32")))]
 compile_error!("Cloudflare Workers feature requires wasm32 target. Build with: cargo build --target wasm32-unknown-unknown --features cloudflare");
 
-// Lambda and Standalone should NOT be built for WASM
+// Lambda and Server should NOT be built for WASM
 #[cfg(all(feature = "lambda", target_arch = "wasm32"))]
 compile_error!("Lambda feature cannot be built for WASM target. Use native target: cargo build --features lambda");
 
-#[cfg(all(feature = "standalone", target_arch = "wasm32"))]
-compile_error!("Standalone feature cannot be built for WASM target. Use native target: cargo build --features standalone");
+#[cfg(all(feature = "server", target_arch = "wasm32"))]
+compile_error!("Server feature cannot be built for WASM target. Use native target: cargo build --features server");
 
 // =============================================================================
 // LAMBDA ENTRY POINT
@@ -32,14 +32,14 @@ async fn main() -> Result<(), lambda_runtime::Error> {
 }
 
 // =============================================================================
-// STANDALONE ENTRY POINT
+// SERVER ENTRY POINT (DEFAULT MODE)
 // =============================================================================
-// Async I/O with tokio + OpenDAL filesystem
-#[cfg(all(feature = "standalone", not(feature = "lambda")))]
+// Full-featured HTTP server with multi-backend storage
+#[cfg(all(feature = "server", not(feature = "lambda")))]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("Standalone mode - async I/O with OpenDAL filesystem");
-    otlp2parquet_runtime::standalone::run().await
+    println!("Server mode - full-featured HTTP server with multi-backend storage");
+    otlp2parquet_runtime::server::run().await
 }
 
 // =============================================================================
@@ -49,14 +49,14 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(all(
     feature = "cloudflare",
     not(feature = "lambda"),
-    not(feature = "standalone")
+    not(feature = "server")
 ))]
 use worker::*;
 
 #[cfg(all(
     feature = "cloudflare",
     not(feature = "lambda"),
-    not(feature = "standalone")
+    not(feature = "server")
 ))]
 #[event(fetch)]
 async fn worker_fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
@@ -68,7 +68,7 @@ async fn worker_fetch(req: Request, env: Env, ctx: Context) -> Result<Response> 
 #[cfg(all(
     feature = "cloudflare",
     not(feature = "lambda"),
-    not(feature = "standalone"),
+    not(feature = "server"),
     target_arch = "wasm32"
 ))]
 fn main() {}
@@ -76,9 +76,9 @@ fn main() {}
 // =============================================================================
 // FALLBACK (no features enabled)
 // =============================================================================
-#[cfg(not(any(feature = "lambda", feature = "standalone", feature = "cloudflare")))]
+#[cfg(not(any(feature = "lambda", feature = "server", feature = "cloudflare")))]
 fn main() {
     eprintln!("Error: No platform feature enabled!");
-    eprintln!("Build with: --features lambda|standalone|cloudflare");
+    eprintln!("Build with: --features lambda|server|cloudflare");
     std::process::exit(1);
 }

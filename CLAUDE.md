@@ -23,13 +23,13 @@ Build a Rust binary that ingests OpenTelemetry logs via OTLP (HTTP/gRPC), conver
 3. **Platform Detection: Auto-detect at runtime**
    - CF Workers: `CF_WORKER` env var
    - Lambda: `AWS_LAMBDA_FUNCTION_NAME` env var
-   - Standalone: neither present
+   - Server (default): neither present
 
-4. **Storage: Platform-native implementations (NO shared trait)**
-   - R2 for CF Workers (async, worker runtime)
-   - S3 for Lambda (async, lambda_runtime's tokio)
-   - Local filesystem for Standalone (blocking, std::fs)
-   - **No abstraction** - each platform uses its idioms
+4. **Storage: Apache OpenDAL unified abstraction**
+   - Server (default): S3, R2, Filesystem, GCS, Azure (configurable via env vars)
+   - Lambda: S3 only (event-driven constraint)
+   - CF Workers: R2 only (WASM constraint)
+   - **Philosophy**: Leverage mature external abstractions vs NIH
 
 ---
 
@@ -37,21 +37,21 @@ Build a Rust binary that ingests OpenTelemetry logs via OTLP (HTTP/gRPC), conver
 
 **Philosophy (Fred Brooks):** "Conceptual integrity is the most important consideration in system design."
 
-The architecture separates **essence** (pure OTLP→Parquet conversion) from **accident** (platform I/O, networking, runtime). There is **NO shared Storage trait** - each platform uses its native idioms directly.
+The architecture separates **essence** (pure OTLP→Parquet conversion) from **accident** (platform I/O, networking, runtime). We use **Apache OpenDAL** as a mature, battle-tested storage abstraction instead of building custom implementations.
 
-### Core Principle: Three Different Systems
+### Core Principle: Default + Constrained Runtimes
 
-CF Workers, Lambda, and Standalone are **fundamentally different systems** that happen to share the same core processing logic. Forcing them through a common abstraction violates conceptual integrity.
+**Server mode** is the default, full-featured implementation. Lambda and Cloudflare are **constrained runtime** special cases that use the same core processing logic but have platform-specific limitations.
 
 ```
 ┌─────────────────────────────────────────┐
 │  Platform-Specific Entry Points         │
-│  ├─ CF Workers: #[event(fetch)]         │
-│  │   (single-threaded JS runtime)       │
+│  ├─ Server (default): Axum HTTP server │
+│  │   Full-featured, multi-backend       │
 │  ├─ Lambda: lambda_runtime::run()       │
-│  │   (uses lambda_runtime's tokio)      │
-│  └─ Standalone: blocking HTTP server    │
-│      (std::net, no async)               │
+│  │   Event-driven, S3 only             │
+│  └─ Cloudflare: #[event(fetch)]        │
+│      WASM-constrained, R2 only          │
 └─────────────────────────────────────────┘
                   ↓
 ┌─────────────────────────────────────────┐
@@ -69,10 +69,11 @@ CF Workers, Lambda, and Standalone are **fundamentally different systems** that 
 └─────────────────────────────────────────┘
                   ↓
 ┌─────────────────────────────────────────┐
-│  Platform-Specific Storage (no trait)   │
-│  ├─ R2Storage::write() (async)         │
-│  ├─ S3Storage::write() (async)         │
-│  └─ LocalStorage::write() (blocking)   │
+│  Unified Storage Layer (OpenDAL)        │
+│  ├─ S3 (Lambda, Server)                │
+│  ├─ R2 (Cloudflare, Server)            │
+│  ├─ Filesystem (Server)                │
+│  └─ GCS, Azure, etc. (Server-ready)    │
 └─────────────────────────────────────────┘
 ```
 
@@ -89,16 +90,17 @@ otlp2parquet/
 │   │   ├── parquet/          # ✅ Parquet writing + partitioning
 │   │   └── schema.rs         # ✅ Arrow schema (15 fields)
 │   ├── otlp2parquet-runtime/ # Platform adapters
-│   │   ├── cloudflare.rs     # ✅ R2Storage (no trait)
-│   │   ├── lambda.rs         # ✅ S3Storage (no trait)
-│   │   └── standalone.rs     # ✅ LocalStorage (no trait)
+│   │   ├── server.rs         # ✅ Default mode (Axum + multi-backend)
+│   │   ├── lambda.rs         # ✅ Event-driven (OpenDAL S3)
+│   │   ├── cloudflare.rs     # ✅ WASM mode (OpenDAL R2)
+│   │   └── opendal_storage.rs # ✅ Unified storage abstraction
 │   └── otlp2parquet-proto/   # ✅ Generated protobuf (v1.3.2)
 │       └── proto/            # ✅ OpenTelemetry proto files
 └── src/
     └── main.rs               # ✅ Platform-specific entry points
 ```
 
-**Key Change:** No storage/ directory - removed the Storage trait per Brooks's principles.
+**Key Change:** Adopted Apache OpenDAL for unified storage - leverages mature external abstractions vs NIH syndrome.
 
 ---
 
@@ -286,7 +288,7 @@ pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
    pub enum Platform {
        CloudflareWorkers,
        Lambda,
-       Standalone,
+       Server,
    }
 
    pub fn detect() -> Platform {
@@ -295,7 +297,7 @@ pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
        } else if std::env::var("AWS_LAMBDA_FUNCTION_NAME").is_ok() {
            Platform::Lambda
        } else {
-           Platform::Standalone
+           Platform::Server
        }
    }
    ```
@@ -393,7 +395,7 @@ pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
 We use **Apache OpenDAL (v0.54+)** as a unified storage layer across all platforms:
 - **Cloudflare Workers:** OpenDAL S3 service → R2 (via S3-compatible endpoint)
 - **AWS Lambda:** OpenDAL S3 service → S3 (replaces aws-sdk-s3)
-- **Standalone:** OpenDAL Fs service → local filesystem
+- **Server (default):** OpenDAL supports S3, R2, Fs, GCS, Azure (configurable via env vars)
 
 **Benefits:**
 - ✅ Unified API reduces code duplication (3 implementations → 1)
@@ -434,7 +436,7 @@ We use **Apache OpenDAL (v0.54+)** as a unified storage layer across all platfor
            Self::new_s3(bucket, "auto", Some(&endpoint), ...)
        }
 
-       // Filesystem (for Standalone)
+       // Filesystem (for Server)
        pub fn new_fs(root: &str) -> Result<Self> {
            let builder = services::Fs::default().root(root);
            let operator = Operator::new(builder)?.finish();
@@ -462,7 +464,7 @@ We use **Apache OpenDAL (v0.54+)** as a unified storage layer across all platfor
    [features]
    cloudflare = ["worker", "opendal/services-s3"]
    lambda = ["lambda_runtime", "opendal/services-s3"]
-   standalone = ["opendal/services-fs"]
+   server = ["opendal/services-fs", "opendal/services-s3", "axum", "tracing"]
    ```
 
 10. **Removed Dependencies** 🗑️
@@ -582,8 +584,8 @@ We use **Apache OpenDAL (v0.54+)** as a unified storage layer across all platfor
             Platform::Lambda => {
                 runtime::lambda::main()
             }
-            Platform::Standalone => {
-                runtime::standalone::main()
+            Platform::Server => {
+                runtime::server::main()
             }
         }
     }
@@ -873,10 +875,10 @@ aws lambda create-function-url-config \
 **Platform Support:**
 - [x] Cloudflare Workers implementation ✅
 - [x] AWS Lambda implementation ✅
-- [x] Standalone server implementation ✅
+- [x] Server mode implementation (default) ✅
 - [x] Writes to R2 (CF Workers) ✅
 - [x] Writes to S3 (Lambda) ✅
-- [x] Writes to local filesystem (Standalone) ✅
+- [x] Multi-backend storage (Server: S3/R2/Filesystem) ✅
 
 **Performance & Size:**
 - [ ] CF Workers binary <3MB compressed

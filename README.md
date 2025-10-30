@@ -2,13 +2,15 @@
 
 OpenTelemetry ingestion pipeline that writes ClickHouse-compatible Parquet files to object storage.
 
-**Built for multi-platform serverless deployment:** Compiles to <3MB WASM for Cloudflare Workers (free tier) or native binary for AWS Lambda.
+**Built for multi-platform deployment:** Runs as a full-featured HTTP server (Docker/K8s), compiles to <3MB WASM for Cloudflare Workers (free tier), or native binary for AWS Lambda.
 
 ## Why otlp2parquet?
 
 - **Minimal footprint:** <3MB compressed WASM binary fits Cloudflare Workers free tier
 - **ClickHouse-compatible:** Direct Parquet schema compatibility for seamless querying
-- **Multi-platform:** Single codebase deploys to Cloudflare Workers, AWS Lambda, or standalone servers
+- **Multi-platform:** Single codebase deploys to Server (Docker/K8s), Cloudflare Workers, or AWS Lambda
+- **Multi-backend storage:** Server mode supports S3, R2, Filesystem, GCS, Azure (configurable via env vars)
+- **Production-ready:** Structured logging, graceful shutdown, health checks (server mode)
 - **Time-partitioned:** Automatic Hive-style partitioning for efficient querying
 
 ## Quick Start
@@ -111,32 +113,42 @@ Ingest OpenTelemetry logs via OTLP protocol.
 
 | Variable | Platform | Description |
 |----------|----------|-------------|
-| `R2_BUCKET` | Cloudflare Workers | R2 bucket name |
-| `R2_ACCOUNT_ID` | Cloudflare Workers | Cloudflare account ID |
-| `R2_ACCESS_KEY_ID` | Cloudflare Workers | R2 API token access key |
-| `R2_SECRET_ACCESS_KEY` | Cloudflare Workers | R2 API token secret (use Worker secret) |
-| `LOGS_BUCKET` | Lambda | S3 bucket name |
-| `AWS_REGION` | Lambda | AWS region (default: `us-east-1`) |
-| `STORAGE_PATH` | Standalone | Local filesystem path (default: `./data`) |
+| `LISTEN_ADDR` | Server | HTTP server address (default: `0.0.0.0:8080`) |
+| `STORAGE_BACKEND` | Server | Storage backend: `fs`, `s3`, `r2` (default: `fs`) |
+| `STORAGE_PATH` | Server (fs) | Local filesystem path (default: `./data`) |
+| `S3_BUCKET` | Server (s3), Lambda | S3 bucket name |
+| `S3_REGION` | Server (s3), Lambda | AWS region |
+| `S3_ENDPOINT` | Server (s3) | Custom S3 endpoint (optional, for MinIO/etc) |
+| `R2_BUCKET` | Server (r2), Cloudflare | R2 bucket name |
+| `R2_ACCOUNT_ID` | Server (r2), Cloudflare | Cloudflare account ID |
+| `R2_ACCESS_KEY_ID` | Server (r2), Cloudflare | R2 API access key |
+| `R2_SECRET_ACCESS_KEY` | Server (r2), Cloudflare | R2 API secret key |
+| `LOG_LEVEL` | Server | Log level: `trace`, `debug`, `info`, `warn`, `error` (default: `info`) |
+| `LOG_FORMAT` | Server | Log format: `text`, `json` (default: `text`) |
 
 **Notes:**
-- **Cloudflare Workers:** Uses OpenDAL S3 service with R2-compatible endpoint
-- **Lambda:** OpenDAL automatically discovers AWS credentials from IAM role or environment
-- **Standalone:** OpenDAL filesystem service with async I/O
+- **Server (default):** Full-featured Axum HTTP server with multi-backend storage
+- **Cloudflare Workers:** Uses OpenDAL S3 service with R2-compatible endpoint (WASM-constrained)
+- **Lambda:** OpenDAL automatically discovers AWS credentials from IAM role or environment (event-driven)
 
 ## How It Works
 
 ```
 ┌─────────────────────────────────────────┐
 │  Platform-Specific Entry Points         │
-│  ├─ CF Workers: #[event(fetch)]         │
+│  ├─ Server (default): Axum HTTP server │
+│  │   Full-featured, multi-backend       │
 │  ├─ Lambda: lambda_runtime::run()       │
-│  └─ Standalone: tokio async server      │
+│  │   Event-driven, S3 only             │
+│  └─ Cloudflare: #[event(fetch)]        │
+│      WASM-constrained, R2 only          │
 └─────────────────────────────────────────┘
                   ↓
 ┌─────────────────────────────────────────┐
 │  Protocol Layer (HTTP)                  │
-│  └─ POST /v1/logs (protobuf) ✅         │
+│  ├─ POST /v1/logs (protobuf) ✅         │
+│  ├─ GET /health (health check) ✅       │
+│  └─ GET /ready (readiness) ✅           │
 └─────────────────────────────────────────┘
                   ↓
 ┌─────────────────────────────────────────┐
@@ -149,18 +161,20 @@ Ingest OpenTelemetry logs via OTLP protocol.
 └─────────────────────────────────────────┘
                   ↓
 ┌─────────────────────────────────────────┐
-│  Unified Storage (Apache OpenDAL)       │
-│  ├─ OpenDAL S3 → R2 (CF Workers)       │
-│  ├─ OpenDAL S3 → AWS S3 (Lambda)       │
-│  └─ OpenDAL Fs → Local (Standalone)    │
+│  Unified Storage (Apache OpenDAL)        │
+│  ├─ S3 (Lambda, Server)                │
+│  ├─ R2 (Cloudflare, Server)            │
+│  ├─ Filesystem (Server)                │
+│  └─ GCS, Azure, etc. (Server-ready)    │
 └─────────────────────────────────────────┘
 ```
 
 **Architecture Highlights:**
+- **Server is Default:** Full-featured mode with Axum HTTP server, structured logging, graceful shutdown
 - **Unified Storage:** Apache OpenDAL provides consistent API across all platforms
 - **Pure Core:** OTLP processing is deterministic with no I/O dependencies
 - **Platform-Native:** Each runtime uses its native async model (worker, tokio)
-- **Binary Size:** WASM compressed to 1006KB (~33% of 3MB limit)
+- **Binary Size:** WASM compressed to 720KB (~24% of 3MB limit)
 
 **Workspace Structure:**
 
@@ -173,9 +187,9 @@ otlp2parquet/
 │   │   └── schema.rs          # ✅ Arrow schema (15 fields)
 │   ├── otlp2parquet-runtime/  # Platform adapters + OpenDAL storage
 │   │   ├── opendal_storage.rs # ✅ Unified storage abstraction
-│   │   ├── cloudflare.rs      # ✅ CF Workers handler (OpenDAL S3→R2)
+│   │   ├── server.rs          # ✅ Default mode (Axum + multi-backend)
 │   │   ├── lambda.rs          # ✅ Lambda handler (OpenDAL S3)
-│   │   └── standalone.rs      # ✅ Async server (OpenDAL Fs)
+│   │   └── cloudflare.rs      # ✅ CF Workers handler (OpenDAL S3→R2)
 │   └── otlp2parquet-proto/    # ✅ Generated protobuf (v1.3.2)
 └── src/main.rs                # ✅ Platform detection
 ```
@@ -235,7 +249,7 @@ make clippy
 make test
 
 # Build for specific platform
-make build-standalone
+make build-server
 make build-lambda
 make build-cloudflare
 
@@ -254,8 +268,8 @@ make wasm-full
 # AWS Lambda
 make build-lambda
 
-# Standalone server
-make build-standalone
+# Server mode (default)
+make build-server
 
 # Run pre-commit checks before committing
 make pre-commit
@@ -297,11 +311,37 @@ cargo build --release --no-default-features --features lambda
 cargo build --release --no-default-features --features lambda,grpc
 ```
 
-**Standalone (Development):**
+**Server Mode (Default - Docker/Kubernetes/Development):**
 
 ```bash
-cargo build --release --no-default-features --features standalone
+# Build
+cargo build --release --no-default-features --features server
+
+# Run with filesystem storage (default)
 ./target/release/otlp2parquet
+
+# Run with S3 storage
+STORAGE_BACKEND=s3 \
+S3_BUCKET=my-logs-bucket \
+S3_REGION=us-east-1 \
+./target/release/otlp2parquet
+
+# Run with R2 storage
+STORAGE_BACKEND=r2 \
+R2_BUCKET=my-r2-bucket \
+R2_ACCOUNT_ID=your_account_id \
+R2_ACCESS_KEY_ID=your_key_id \
+R2_SECRET_ACCESS_KEY=your_secret \
+./target/release/otlp2parquet
+
+# Docker deployment example
+docker build -t otlp2parquet .
+docker run -p 8080:8080 \
+  -e STORAGE_BACKEND=s3 \
+  -e S3_BUCKET=my-logs-bucket \
+  -e S3_REGION=us-east-1 \
+  -e LOG_FORMAT=json \
+  otlp2parquet
 ```
 
 ### Size Optimization
@@ -397,8 +437,11 @@ otel-cli logs --protocol http/protobuf --dry-run
 - Verify IAM role has `s3:PutObject` permission
 - Check `AWS_REGION` and `BUCKET_NAME` environment variables
 
-**Standalone:**
-- Verify `STORAGE_PATH` directory exists and is writable
+**Server Mode:**
+- **Filesystem:** Verify `STORAGE_PATH` directory exists and is writable
+- **S3:** Verify AWS credentials and S3 bucket permissions
+- **R2:** Verify R2 credentials and bucket permissions
+- Check `/health` and `/ready` endpoints for diagnostics
 
 ## License
 

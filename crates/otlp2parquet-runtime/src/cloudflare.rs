@@ -26,28 +26,32 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
 
     // Get R2 configuration from environment variables
     // Note: R2 uses S3-compatible API, so we use OpenDAL's S3 service
-    let bucket = env.var("R2_BUCKET")
+    let bucket = env
+        .var("R2_BUCKET")
         .map_err(|e| {
             console_error!("R2_BUCKET environment variable not set: {:?}", e);
             e
         })?
         .to_string();
 
-    let account_id = env.var("R2_ACCOUNT_ID")
+    let account_id = env
+        .var("R2_ACCOUNT_ID")
         .map_err(|e| {
             console_error!("R2_ACCOUNT_ID environment variable not set: {:?}", e);
             e
         })?
         .to_string();
 
-    let access_key_id = env.var("R2_ACCESS_KEY_ID")
+    let access_key_id = env
+        .var("R2_ACCESS_KEY_ID")
         .map_err(|e| {
             console_error!("R2_ACCESS_KEY_ID environment variable not set: {:?}", e);
             e
         })?
         .to_string();
 
-    let secret_access_key = env.secret("R2_SECRET_ACCESS_KEY")
+    let secret_access_key = env
+        .secret("R2_SECRET_ACCESS_KEY")
         .map_err(|e| {
             console_error!("R2_SECRET_ACCESS_KEY secret not set: {:?}", e);
             e

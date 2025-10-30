@@ -26,8 +26,20 @@ base64 = { version = "0.22", optional = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 
-# Async runtime (used by standalone with OpenDAL)
-tokio = { workspace = true, optional = true, features = ["rt-multi-thread", "net", "io-util", "macros"] }
+# Async runtime (used by server with OpenDAL)
+tokio = { workspace = true, optional = true, features = ["rt-multi-thread", "net", "io-util", "macros", "signal"] }
+
+# HTTP server (server mode only)
+axum = { workspace = true, optional = true }
+tower = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
+
+# Structured logging (server mode only)
+tracing = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+
+# Async utilities (for OpenDAL list operations)
+futures-util = "0.3"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
@@ -37,7 +49,7 @@ default = []
 cloudflare = ["worker", "services-s3"]
 lambda = ["lambda_runtime", "aws_lambda_events", "services-s3", "base64"]
 grpc = ["tonic", "lambda"]
-standalone = ["services-fs"]
+server = ["services-fs", "services-s3", "axum", "tower", "tower-http", "tracing", "tracing-subscriber"]
 
 # Internal feature flags for conditional compilation
 services-s3 = ["opendal", "opendal/services-s3"]
@@ -47,4 +59,4 @@ services-fs = ["opendal", "opendal/services-fs", "tokio"]
 opendal-s3 = ["services-s3"]
 opendal-fs = ["services-fs"]
 opendal-lambda = ["lambda_runtime", "aws_lambda_events", "services-s3", "base64"]
-opendal-standalone = ["services-fs", "tokio"]
+opendal-server = ["services-fs", "services-s3", "tokio"]
