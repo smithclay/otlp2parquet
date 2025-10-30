@@ -13,7 +13,6 @@ otlp2parquet-proto = { path = "../otlp2parquet-proto" }
 worker = { workspace = true, optional = true }
 lambda_runtime = { workspace = true, optional = true }
 aws_lambda_events = { workspace = true, optional = true }
-tonic = { workspace = true, optional = true }
 
 # OpenDAL - unified storage
 opendal = { workspace = true, optional = true }
@@ -48,7 +47,6 @@ tokio = { workspace = true, features = ["rt", "macros"] }
 default = []
 cloudflare = ["worker", "services-s3"]
 lambda = ["lambda_runtime", "aws_lambda_events", "services-s3", "base64"]
-grpc = ["tonic", "lambda"]
 server = ["services-fs", "services-s3", "axum", "tower", "tower-http", "tracing", "tracing-subscriber"]
 
 # Internal feature flags for conditional compilation

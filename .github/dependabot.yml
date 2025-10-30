@@ -23,7 +23,6 @@ updates:
       protobuf:
         patterns:
           - "prost*"
-          - "tonic*"
 
   # GitHub Actions
   - package-ecosystem: "github-actions"
