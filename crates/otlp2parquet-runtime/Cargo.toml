@@ -13,11 +13,9 @@ otlp2parquet-proto = { path = "../otlp2parquet-proto" }
 worker = { workspace = true, optional = true }
 lambda_runtime = { workspace = true, optional = true }
 aws_lambda_events = { workspace = true, optional = true }
-aws-config = { workspace = true, optional = true }
-aws-sdk-s3 = { workspace = true, optional = true }
 tonic = { workspace = true, optional = true }
 
-# OpenDAL - unified storage (testing)
+# OpenDAL - unified storage
 opendal = { workspace = true, optional = true }
 
 # Core utilities
@@ -36,13 +34,17 @@ tokio = { workspace = true, features = ["rt", "macros"] }
 
 [features]
 default = []
-cloudflare = ["worker"]
-lambda = ["lambda_runtime", "aws_lambda_events", "aws-config", "aws-sdk-s3", "base64"]
+cloudflare = ["worker", "services-s3"]
+lambda = ["lambda_runtime", "aws_lambda_events", "services-s3", "base64"]
 grpc = ["tonic", "lambda"]
-standalone = ["opendal", "opendal/services-fs", "tokio"]
+standalone = ["services-fs"]
+
+# Internal feature flags for conditional compilation
+services-s3 = ["opendal", "opendal/services-s3"]
+services-fs = ["opendal", "opendal/services-fs", "tokio"]
 
 # OpenDAL testing features (will be merged into main features)
-opendal-s3 = ["opendal", "opendal/services-s3"]
-opendal-fs = ["opendal", "opendal/services-fs", "tokio"]
-opendal-lambda = ["lambda_runtime", "aws_lambda_events", "opendal", "opendal/services-s3", "base64"]
-opendal-standalone = ["opendal", "opendal/services-fs", "tokio"]
+opendal-s3 = ["services-s3"]
+opendal-fs = ["services-fs"]
+opendal-lambda = ["lambda_runtime", "aws_lambda_events", "services-s3", "base64"]
+opendal-standalone = ["services-fs", "tokio"]

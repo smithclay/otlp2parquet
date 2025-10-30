@@ -7,7 +7,7 @@
 //
 // Philosophy: Leverage mature, battle-tested external abstractions
 
-use opendal::{services, Operator};
+use opendal::Operator;
 
 #[derive(Clone)]
 pub struct OpenDalStorage {
@@ -16,6 +16,7 @@ pub struct OpenDalStorage {
 
 impl OpenDalStorage {
     /// Create storage for S3 (including R2 with custom endpoint)
+    #[cfg(feature = "services-s3")]
     pub fn new_s3(
         bucket: &str,
         region: &str,
@@ -23,6 +24,8 @@ impl OpenDalStorage {
         access_key_id: Option<&str>,
         secret_access_key: Option<&str>,
     ) -> anyhow::Result<Self> {
+        use opendal::services;
+
         let mut builder = services::S3::default()
             .bucket(bucket)
             .region(region);
@@ -44,6 +47,7 @@ impl OpenDalStorage {
     }
 
     /// Create storage for R2 (Cloudflare)
+    #[cfg(feature = "services-s3")]
     pub fn new_r2(
         bucket: &str,
         account_id: &str,
@@ -55,7 +59,10 @@ impl OpenDalStorage {
     }
 
     /// Create storage for local filesystem
+    #[cfg(feature = "services-fs")]
     pub fn new_fs(root: &str) -> anyhow::Result<Self> {
+        use opendal::services;
+
         let builder = services::Fs::default()
             .root(root);
 
@@ -87,7 +94,7 @@ impl OpenDalStorage {
 }
 
 #[cfg(test)]
-#[cfg(feature = "opendal-fs")]
+#[cfg(feature = "services-fs")]
 mod tests {
     use super::*;
 
