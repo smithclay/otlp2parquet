@@ -1,64 +1,28 @@
 // Standalone runtime for local development and testing
 //
-// Uses blocking I/O and local filesystem
+// Uses OpenDAL filesystem with async I/O
 //
-// Philosophy: Simple, single-threaded, blocking I/O
-// No tokio needed - just std::fs and std::net
+// Philosophy: Leverage OpenDAL's mature filesystem abstraction
+// Uses tokio for async runtime (consistent with Lambda/CF Workers)
 
 use anyhow::{Context, Result};
-use std::fs::{self, File};
-use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{TcpListener, TcpStream};
 
-pub struct FilesystemStorage {
-    base_path: PathBuf,
-}
-
-impl FilesystemStorage {
-    pub fn new(base_path: PathBuf) -> Self {
-        Self { base_path }
-    }
-
-    /// Write data to local filesystem (blocking)
-    pub fn write(&self, path: &str, data: &[u8]) -> Result<()> {
-        let mut file = BufWriter::new(self.create_file(path)?);
-        file.write_all(data)?;
-        file.flush()?;
-        Ok(())
-    }
-
-    /// Create (and truncate) a file for writing, ensuring parent directories exist.
-    pub fn create_file(&self, path: &str) -> Result<File> {
-        let full_path = self.base_path.join(path);
-
-        // Create parent directories
-        if let Some(parent) = full_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        Ok(File::create(&full_path)?)
-    }
-
-    /// Read data from local filesystem (blocking)
-    pub fn read(&self, path: &str) -> Result<Vec<u8>> {
-        let full_path = self.base_path.join(path);
-        let data = fs::read(&full_path)?;
-        Ok(data)
-    }
-}
+#[cfg(feature = "standalone")]
+use crate::opendal_storage::OpenDalStorage;
 
 /// Handle a single HTTP request
-fn handle_request(mut stream: TcpStream, storage: &FilesystemStorage) -> Result<()> {
-    let mut reader = BufReader::new(stream.try_clone()?);
+async fn handle_request(mut stream: TcpStream, storage: &OpenDalStorage) -> Result<()> {
+    let mut reader = BufReader::new(&mut stream);
 
     // Read request line
     let mut request_line = String::new();
-    reader.read_line(&mut request_line)?;
+    reader.read_line(&mut request_line).await?;
 
     let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() < 2 {
-        send_response(&mut stream, 400, "Bad Request", b"Invalid request")?;
+        send_response(&mut stream, 400, "Bad Request", b"Invalid request").await?;
         return Ok(());
     }
 
@@ -70,7 +34,7 @@ fn handle_request(mut stream: TcpStream, storage: &FilesystemStorage) -> Result<
     let mut line = String::new();
     loop {
         line.clear();
-        reader.read_line(&mut line)?;
+        reader.read_line(&mut line).await?;
         if line.trim().is_empty() {
             break;
         }
@@ -86,35 +50,33 @@ fn handle_request(mut stream: TcpStream, storage: &FilesystemStorage) -> Result<
         ("POST", "/v1/logs") => {
             // Read request body
             let mut body = vec![0u8; content_length];
-            std::io::Read::read_exact(&mut reader, &mut body)?;
+            reader.read_exact(&mut body).await?;
 
-            // Process OTLP logs into Arrow to capture metadata before writing
-            let (batch, metadata) = otlp2parquet_core::otlp_to_record_batch(&body)
+            // Process OTLP logs (PURE - no I/O, deterministic)
+            let mut parquet_bytes = Vec::new();
+            let metadata = otlp2parquet_core::process_otlp_logs_into(&body, &mut parquet_bytes)
                 .context("Failed to process OTLP logs")?;
 
             // Generate partition path (ACCIDENT - platform-specific storage decision)
-            let path = crate::partition::generate_partition_path(
+            let partition_path = crate::partition::generate_partition_path(
                 &metadata.service_name,
                 metadata.first_timestamp_nanos,
             );
 
-            // Stream Parquet directly to filesystem without additional buffering
-            let file = storage
-                .create_file(&path)
-                .context("Failed to create destination file")?;
-            let mut writer = BufWriter::new(file);
-            otlp2parquet_core::parquet::write_parquet_into(&batch, &mut writer)
-                .context("Failed to write Parquet data")?;
-            writer.flush()?;
+            // Write to OpenDAL filesystem storage (async)
+            storage
+                .write(&partition_path, parquet_bytes)
+                .await
+                .context("Failed to write to storage")?;
 
             // Return success response
-            send_response(&mut stream, 200, "OK", b"{\"status\":\"ok\"}")?;
+            send_response(&mut stream, 200, "OK", b"{\"status\":\"ok\"}").await?;
         }
         ("GET", "/health") => {
-            send_response(&mut stream, 200, "OK", b"Healthy")?;
+            send_response(&mut stream, 200, "OK", b"Healthy").await?;
         }
         _ => {
-            send_response(&mut stream, 404, "Not Found", b"Not found")?;
+            send_response(&mut stream, 404, "Not Found", b"Not found").await?;
         }
     }
 
@@ -122,7 +84,7 @@ fn handle_request(mut stream: TcpStream, storage: &FilesystemStorage) -> Result<
 }
 
 /// Send HTTP response
-fn send_response(
+async fn send_response(
     stream: &mut TcpStream,
     status: u16,
     status_text: &str,
@@ -134,45 +96,51 @@ fn send_response(
         status_text,
         body.len()
     );
-    stream.write_all(response.as_bytes())?;
-    stream.write_all(body)?;
-    stream.flush()?;
+    stream.write_all(response.as_bytes()).await?;
+    stream.write_all(body).await?;
+    stream.flush().await?;
     Ok(())
 }
 
 /// Entry point for standalone mode
-pub fn run() -> Result<()> {
-    println!("Running in standalone mode");
-    println!("Using blocking I/O - no tokio, simple and direct");
+#[cfg(feature = "standalone")]
+pub async fn run() -> Result<()> {
+    println!("Running in standalone mode with OpenDAL filesystem");
+    println!("Using async I/O with tokio runtime");
 
     // Get configuration from environment
     let addr = std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
     let storage_path = std::env::var("STORAGE_PATH").unwrap_or_else(|_| "./data".to_string());
 
-    // Initialize storage
-    let storage = FilesystemStorage::new(PathBuf::from(storage_path));
-    println!("Storage path: {}", storage.base_path.display());
+    // Initialize OpenDAL filesystem storage
+    let storage = OpenDalStorage::new_fs(&storage_path)
+        .context("Failed to initialize OpenDAL filesystem storage")?;
+    println!("Storage path: {}", storage_path);
 
     // Start HTTP server
-    let listener = TcpListener::bind(&addr).context(format!("Failed to bind to {}", addr))?;
+    let listener = TcpListener::bind(&addr)
+        .await
+        .context(format!("Failed to bind to {}", addr))?;
 
     println!("OTLP HTTP endpoint listening on http://{}", addr);
     println!("POST logs to http://{}/v1/logs", addr);
     println!("Press Ctrl+C to stop");
 
     // Accept connections
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                if let Err(e) = handle_request(stream, &storage) {
-                    eprintln!("Error handling request: {}", e);
-                }
+    loop {
+        match listener.accept().await {
+            Ok((stream, _addr)) => {
+                // Spawn a new task for each connection
+                let storage_clone = storage.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = handle_request(stream, &storage_clone).await {
+                        eprintln!("Error handling request: {}", e);
+                    }
+                });
             }
             Err(e) => {
                 eprintln!("Error accepting connection: {}", e);
             }
         }
     }
-
-    Ok(())
 }

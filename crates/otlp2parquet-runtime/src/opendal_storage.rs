@@ -1,27 +1,21 @@
-// OpenDAL-based storage implementation (SPIKE - for validation only)
+// OpenDAL-based storage implementation
 //
-// This is a test implementation to validate:
-// 1. Binary size impact
-// 2. WASM compilation compatibility
-// 3. API ergonomics
+// Unified storage abstraction across all platforms:
+// - S3 (Lambda)
+// - R2 via S3-compatible endpoint (Cloudflare Workers)
+// - Filesystem (Standalone)
 //
-// Philosophy: Testing whether a unified abstraction via OpenDAL is viable
+// Philosophy: Leverage mature, battle-tested external abstractions
 
-#[cfg(feature = "opendal-s3")]
 use opendal::{services, Operator};
 
-#[cfg(feature = "opendal-fs")]
-use opendal::{services, Operator};
-
-#[cfg(any(feature = "opendal-s3", feature = "opendal-fs"))]
+#[derive(Clone)]
 pub struct OpenDalStorage {
     operator: Operator,
 }
 
-#[cfg(any(feature = "opendal-s3", feature = "opendal-fs"))]
 impl OpenDalStorage {
     /// Create storage for S3 (including R2 with custom endpoint)
-    #[cfg(feature = "opendal-s3")]
     pub fn new_s3(
         bucket: &str,
         region: &str,
@@ -50,7 +44,6 @@ impl OpenDalStorage {
     }
 
     /// Create storage for R2 (Cloudflare)
-    #[cfg(feature = "opendal-s3")]
     pub fn new_r2(
         bucket: &str,
         account_id: &str,
@@ -62,7 +55,6 @@ impl OpenDalStorage {
     }
 
     /// Create storage for local filesystem
-    #[cfg(feature = "opendal-fs")]
     pub fn new_fs(root: &str) -> anyhow::Result<Self> {
         let builder = services::Fs::default()
             .root(root);

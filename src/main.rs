@@ -1,9 +1,9 @@
 // Entry points for different platforms
 //
-// Philosophy (Fred Brooks): Each platform uses its native idioms
-// - Lambda: lambda_runtime provides tokio, we just use it
-// - Standalone: Simple blocking I/O, no async needed
-// - Cloudflare: worker::event macro, not main()
+// Philosophy: Leverage mature abstractions (OpenDAL) consistently across platforms
+// - Lambda: tokio + OpenDAL S3
+// - Standalone: tokio + OpenDAL filesystem (async for API consistency)
+// - Cloudflare: worker runtime + OpenDAL S3 → R2
 
 // =============================================================================
 // COMPILE-TIME PLATFORM CHECKS
@@ -34,11 +34,12 @@ async fn main() -> Result<(), lambda_runtime::Error> {
 // =============================================================================
 // STANDALONE ENTRY POINT
 // =============================================================================
-// Simple blocking I/O - no tokio needed
+// Async I/O with tokio + OpenDAL filesystem
 #[cfg(all(feature = "standalone", not(feature = "lambda")))]
-fn main() -> anyhow::Result<()> {
-    println!("Standalone mode - blocking I/O");
-    otlp2parquet_runtime::standalone::run()
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    println!("Standalone mode - async I/O with OpenDAL filesystem");
+    otlp2parquet_runtime::standalone::run().await
 }
 
 // =============================================================================

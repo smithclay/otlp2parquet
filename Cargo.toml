@@ -86,7 +86,7 @@ default = ["standalone"]
 cloudflare = ["worker", "otlp2parquet-runtime/cloudflare"]
 lambda = ["lambda_runtime", "tokio", "otlp2parquet-runtime/lambda"]
 grpc = ["otlp2parquet-runtime/grpc"]
-standalone = ["otlp2parquet-runtime/standalone"]
+standalone = ["tokio", "otlp2parquet-runtime/standalone"]
 
 # OpenDAL testing features
 opendal-s3 = ["otlp2parquet-runtime/opendal-s3"]
