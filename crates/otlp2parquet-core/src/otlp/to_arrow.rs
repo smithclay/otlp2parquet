@@ -37,6 +37,7 @@ fn map_field_names() -> MapFieldNames {
 pub struct LogMetadata {
     pub service_name: String,
     pub first_timestamp_nanos: i64,
+    pub record_count: usize,
 }
 
 /// Converts OTLP log records to Arrow RecordBatch
@@ -270,6 +271,7 @@ impl ArrowConverter {
         )?;
 
         // Build metadata from tracked values
+        let record_count = batch.num_rows();
         let metadata = LogMetadata {
             service_name: if self.service_name.is_empty() {
                 "unknown".to_string()
@@ -277,6 +279,7 @@ impl ArrowConverter {
                 self.service_name
             },
             first_timestamp_nanos: self.first_timestamp.unwrap_or(0),
+            record_count,
         };
 
         Ok((batch, metadata))

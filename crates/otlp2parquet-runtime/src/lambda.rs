@@ -1,6 +1,6 @@
 // AWS Lambda runtime adapter
 //
-// Uses S3 for storage and handles Lambda function events
+// Uses OpenDAL S3 for storage and handles Lambda function events
 //
 // Philosophy: Use lambda_runtime's provided tokio
 // We don't add our own tokio - lambda_runtime provides it
@@ -15,8 +15,6 @@ use aws_lambda_events::{
     lambda_function_urls::{LambdaFunctionUrlRequest, LambdaFunctionUrlResponse},
 };
 #[cfg(feature = "lambda")]
-use aws_sdk_s3::Client;
-#[cfg(feature = "lambda")]
 use base64::Engine;
 #[cfg(feature = "lambda")]
 use lambda_runtime::{service_fn, Error, LambdaEvent};
@@ -29,38 +27,13 @@ use std::borrow::Cow;
 #[cfg(feature = "lambda")]
 use std::sync::Arc;
 
-#[cfg(feature = "lambda")]
-pub struct S3Storage {
-    client: Client,
-    bucket: String,
-}
-
-#[cfg(feature = "lambda")]
-impl S3Storage {
-    pub fn new(client: Client, bucket: String) -> Self {
-        Self { client, bucket }
-    }
-
-    /// Write parquet data to S3 (async, uses lambda_runtime's tokio)
-    pub async fn write(&self, path: &str, data: Vec<u8>) -> Result<()> {
-        self.client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(path)
-            .body(data.into())
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("S3 write error: {}", e))?;
-
-        Ok(())
-    }
-}
+// Note: S3Storage removed - now using OpenDalStorage from opendal_storage.rs
 
 /// Lambda handler for OTLP HTTP requests
 #[cfg(feature = "lambda")]
 async fn handle_request(
     event: LambdaEvent<HttpRequestEvent>,
-    storage: Arc<S3Storage>,
+    storage: Arc<crate::opendal_storage::OpenDalStorage>,
 ) -> Result<HttpLambdaResponse, Error> {
     let (request, _context) = event.into_parts();
 
@@ -118,7 +91,7 @@ async fn handle_http_request(
     path: &str,
     body: Option<&str>,
     is_base64_encoded: bool,
-    storage: &S3Storage,
+    storage: &crate::opendal_storage::OpenDalStorage,
 ) -> HttpResponseData {
     let method = method.trim().to_ascii_uppercase();
     match method.as_str() {
@@ -138,7 +111,7 @@ async fn handle_post(
     path: &str,
     body: Option<&str>,
     is_base64_encoded: bool,
-    storage: &S3Storage,
+    storage: &crate::opendal_storage::OpenDalStorage,
 ) -> HttpResponseData {
     if path != "/v1/logs" {
         return HttpResponseData::json(404, json!({ "error": "not found" }).to_string());
@@ -280,17 +253,23 @@ fn build_function_url_response(data: HttpResponseData) -> HttpLambdaResponse {
 /// Lambda runtime entry point
 #[cfg(feature = "lambda")]
 pub async fn run() -> Result<(), Error> {
-    println!("Lambda runtime - using lambda_runtime's tokio");
+    println!("Lambda runtime - using lambda_runtime's tokio + OpenDAL S3");
 
-    // Get bucket name from environment
+    // Get configuration from environment
     let bucket = std::env::var("LOGS_BUCKET").unwrap_or_else(|_| "otlp-logs".to_string());
+    let region = std::env::var("AWS_REGION").unwrap_or_else(|_| "us-east-1".to_string());
 
-    // Initialize AWS SDK
-    let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-        .load()
-        .await;
-    let s3_client = aws_sdk_s3::Client::new(&config);
-    let storage = Arc::new(S3Storage::new(s3_client, bucket));
+    // Initialize OpenDAL S3 storage
+    // OpenDAL automatically discovers AWS credentials from:
+    // - IAM role (preferred for Lambda)
+    // - Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+    // - AWS credentials file
+    let storage = Arc::new(
+        crate::opendal_storage::OpenDalStorage::new_s3(&bucket, &region, None, None, None)
+            .map_err(|e| {
+                lambda_runtime::Error::from(format!("Failed to initialize storage: {}", e))
+            })?,
+    );
 
     // Run Lambda runtime
     lambda_runtime::run(service_fn(move |event: LambdaEvent<HttpRequestEvent>| {

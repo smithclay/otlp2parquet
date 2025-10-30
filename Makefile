@@ -12,8 +12,8 @@ help: ## Show this help message
 
 .PHONY: check
 check: ## Run cargo check on all feature combinations
-	@echo "==> Checking standalone..."
-	@cargo check --no-default-features --features standalone
+	@echo "==> Checking server..."
+	@cargo check --no-default-features --features server
 	@echo "==> Checking lambda..."
 	@cargo check --no-default-features --features lambda
 	@echo "==> Checking lambda+grpc..."
@@ -31,8 +31,8 @@ fmt-check: ## Check Rust code formatting
 
 .PHONY: clippy
 clippy: ## Run clippy on all feature combinations
-	@echo "==> Clippy standalone..."
-	@cargo clippy --all-targets --no-default-features --features standalone -- -D warnings
+	@echo "==> Clippy server..."
+	@cargo clippy --all-targets --no-default-features --features server -- -D warnings
 	@echo "==> Clippy lambda..."
 	@cargo clippy --all-targets --no-default-features --features lambda -- -D warnings
 	@echo "==> Clippy lambda+grpc..."
@@ -42,8 +42,8 @@ clippy: ## Run clippy on all feature combinations
 
 .PHONY: test
 test: ## Run tests for all testable feature combinations
-	@echo "==> Testing standalone..."
-	@cargo test --no-default-features --features standalone
+	@echo "==> Testing server..."
+	@cargo test --no-default-features --features server
 	@echo "==> Testing lambda..."
 	@cargo test --no-default-features --features lambda
 	@echo "==> Testing lambda+grpc..."
@@ -53,7 +53,7 @@ test: ## Run tests for all testable feature combinations
 
 .PHONY: test-verbose
 test-verbose: ## Run tests with verbose output
-	@cargo test --no-default-features --features standalone -- --nocapture
+	@cargo test --no-default-features --features server -- --nocapture
 
 #
 # Build Commands by Feature
@@ -61,8 +61,8 @@ test-verbose: ## Run tests with verbose output
 
 .PHONY: build
 build: ## Build all feature combinations (debug mode)
-	@echo "==> Building standalone..."
-	@cargo build --no-default-features --features standalone
+	@echo "==> Building server..."
+	@cargo build --no-default-features --features server
 	@echo "==> Building lambda..."
 	@cargo build --no-default-features --features lambda
 	@echo "==> Building lambda+grpc..."
@@ -72,8 +72,8 @@ build: ## Build all feature combinations (debug mode)
 
 .PHONY: build-release
 build-release: ## Build all feature combinations (release mode)
-	@echo "==> Building standalone (release)..."
-	@cargo build --release --no-default-features --features standalone
+	@echo "==> Building server (release)..."
+	@cargo build --release --no-default-features --features server
 	@echo "==> Building lambda (release)..."
 	@cargo build --release --no-default-features --features lambda
 	@echo "==> Building lambda+grpc (release)..."
@@ -81,9 +81,9 @@ build-release: ## Build all feature combinations (release mode)
 	@echo "==> Building cloudflare (release)..."
 	@cargo build --release --no-default-features --features cloudflare --target wasm32-unknown-unknown
 
-.PHONY: build-standalone
-build-standalone: ## Build standalone binary only
-	@cargo build --release --no-default-features --features standalone
+.PHONY: build-server
+build-server: ## Build server binary only (default mode)
+	@cargo build --release --no-default-features --features server
 
 .PHONY: build-lambda
 build-lambda: ## Build Lambda binary only
@@ -205,11 +205,11 @@ dev: check test ## Quick development check (fast)
 
 .PHONY: doc
 doc: ## Build documentation
-	@cargo doc --no-deps --features standalone,lambda,grpc
+	@cargo doc --no-deps --features server,lambda,grpc
 
 .PHONY: doc-open
 doc-open: ## Build and open documentation in browser
-	@cargo doc --no-deps --features standalone,lambda,grpc --open
+	@cargo doc --no-deps --features server,lambda,grpc --open
 
 #
 # Utility Commands

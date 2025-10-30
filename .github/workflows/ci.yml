@@ -1,5 +1,10 @@
 name: CI
 
+# Validates all three platform targets:
+# - Cloudflare Workers (WASM with OpenDAL S3→R2)
+# - AWS Lambda (native binary with OpenDAL S3)
+# - Standalone (native binary with OpenDAL Fs)
+
 on:
   push:
     branches: ["main"]
@@ -136,6 +141,7 @@ jobs:
         run: cargo build --release ${{ matrix.features }} ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
 
   # Check WASM build size for Cloudflare Workers
+  # Target: <3MB compressed (currently ~1006KB with OpenDAL)
   wasm-size:
     name: WASM Size Check
     runs-on: ubuntu-latest

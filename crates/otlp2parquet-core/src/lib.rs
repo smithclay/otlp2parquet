@@ -57,6 +57,7 @@ pub fn process_otlp_logs(otlp_bytes: &[u8]) -> Result<ProcessingResult> {
     let otlp::LogMetadata {
         service_name,
         first_timestamp_nanos,
+        record_count: _,
     } = metadata;
 
     Ok(ProcessingResult {

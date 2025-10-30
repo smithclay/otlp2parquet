@@ -43,8 +43,9 @@ tonic = { version = "0.12", default-features = false, features = ["transport", "
 worker = { version = "0.4" }
 lambda_runtime = { version = "0.14" }
 aws_lambda_events = { version = "0.18" }
-aws-config = { version = "1", default-features = false, features = ["rustls"] }
-aws-sdk-s3 = { version = "1", default-features = false, features = ["rustls"] }
+
+# OpenDAL - unified storage layer
+opendal = { version = "0.54", default-features = false }
 
 # Core utilities - minimal, no tokio (platforms provide their own runtimes)
 serde = { version = "1", default-features = false, features = ["derive"] }
@@ -55,6 +56,15 @@ uuid = { version = "1", default-features = false, features = ["v4", "fast-rng"] 
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 tokio = { version = "1", default-features = false, features = ["rt", "macros"] }
 base64 = "0.22"
+
+# HTTP server (server mode only)
+axum = { version = "0.7", default-features = false, features = ["tokio", "http1", "http2", "json"] }
+tower = { version = "0.4", default-features = false }
+tower-http = { version = "0.5", default-features = false, features = ["trace"] }
+
+# Structured logging (server mode only)
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "json"] }
 
 # Build dependencies
 prost-build = "0.13"
@@ -79,11 +89,17 @@ tokio = { workspace = true, optional = true }
 anyhow = { workspace = true }
 
 [features]
-default = ["standalone"]
+default = ["server"]
 cloudflare = ["worker", "otlp2parquet-runtime/cloudflare"]
 lambda = ["lambda_runtime", "tokio", "otlp2parquet-runtime/lambda"]
 grpc = ["otlp2parquet-runtime/grpc"]
-standalone = ["otlp2parquet-runtime/standalone"]
+server = ["tokio", "otlp2parquet-runtime/server"]
+
+# OpenDAL testing features
+opendal-s3 = ["otlp2parquet-runtime/opendal-s3"]
+opendal-fs = ["otlp2parquet-runtime/opendal-fs"]
+opendal-lambda = ["lambda_runtime", "tokio", "otlp2parquet-runtime/opendal-lambda"]
+opendal-server = ["otlp2parquet-runtime/opendal-server"]
 
 [[bin]]
 name = "otlp2parquet"
