@@ -3,7 +3,7 @@ name: CI
 # Validates all three platform targets:
 # - Cloudflare Workers (WASM with OpenDAL S3→R2)
 # - AWS Lambda (native binary with OpenDAL S3)
-# - Standalone (native binary with OpenDAL Fs)
+# - Server (default mode - native binary with OpenDAL multi-backend)
 
 on:
   push:
@@ -38,8 +38,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - feature-name: "standalone"
-            features: "--no-default-features --features standalone"
+          - feature-name: "server"
+            features: "--no-default-features --features server"
             target: ""
           - feature-name: "lambda"
             features: "--no-default-features --features lambda"
@@ -77,8 +77,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - feature-name: "standalone"
-            features: "--no-default-features --features standalone"
+          - feature-name: "server"
+            features: "--no-default-features --features server"
           - feature-name: "lambda"
             features: "--no-default-features --features lambda"
           - feature-name: "lambda+grpc"
@@ -109,8 +109,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - feature-name: "standalone"
-            features: "--no-default-features --features standalone"
+          - feature-name: "server"
+            features: "--no-default-features --features server"
             target: ""
           - feature-name: "lambda"
             features: "--no-default-features --features lambda"
@@ -251,6 +251,6 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: '.'
       - name: Check documentation
-        run: cargo doc --features standalone,lambda,grpc --no-deps
+        run: cargo doc --features server,lambda,grpc --no-deps
         env:
           RUSTDOCFLAGS: -D warnings

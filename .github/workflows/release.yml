@@ -1,7 +1,7 @@
 name: Release
 
 # Builds release artifacts for all platforms:
-# - Native binaries (x86_64, aarch64) for Lambda/Standalone with OpenDAL
+# - Native binaries (x86_64, aarch64) for Lambda/Server with OpenDAL
 # - Optimized WASM (<3MB compressed) for Cloudflare Workers with OpenDAL
 
 on:
