@@ -9,19 +9,14 @@ license.workspace = true
 otlp2parquet-core = { path = "../otlp2parquet-core" }
 otlp2parquet-proto = { path = "../otlp2parquet-proto" }
 
+# Arrow for RecordBatch accumulation and concatenation
+arrow = { workspace = true }
+
 # Batching dependencies
-parquet = { workspace = true }
-parking_lot = "0.12"
-blake3 = "1"
+parking_lot = { workspace = true }
 
 # Protocol
 prost = { workspace = true }
 
 # Utilities
 anyhow = { workspace = true }
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-parquet = { workspace = true, features = ["arrow", "snap"] }
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-parquet = { workspace = true, features = ["arrow", "snap", "zstd"] }

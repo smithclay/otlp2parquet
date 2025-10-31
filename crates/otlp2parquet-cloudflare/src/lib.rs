@@ -9,16 +9,56 @@
 use once_cell::sync::OnceCell;
 use otlp2parquet_batch::{BatchConfig, BatchManager, CompletedBatch, PassthroughBatcher};
 use otlp2parquet_core::otlp;
-use otlp2parquet_core::ProcessingOptions;
 use serde_json::json;
 use std::sync::Arc;
 use worker::*;
 
 static STORAGE: OnceCell<Arc<otlp2parquet_storage::opendal_storage::OpenDalStorage>> =
     OnceCell::new();
-static PROCESSING_OPTIONS: OnceCell<ProcessingOptions> = OnceCell::new();
 static BATCHER: OnceCell<Option<Arc<BatchManager>>> = OnceCell::new();
 static MAX_PAYLOAD_BYTES: OnceCell<usize> = OnceCell::new();
+
+/// WASM-specific Parquet writer helper
+///
+/// Why synchronous approach for WASM:
+/// - parquet_opendal uses tokio::spawn which requires Send trait
+/// - Send is not available in single-threaded wasm32-unknown-unknown target
+/// - OpenDAL S3 service DOES work in WASM for R2 uploads
+/// - Solution: Write Parquet synchronously to Vec<u8>, then upload via OpenDAL
+///
+/// This is platform-specific "accidental complexity" (storage format + I/O)
+/// and belongs in the platform layer, not core.
+mod wasm_parquet {
+    use arrow::array::RecordBatch;
+    use parquet::arrow::ArrowWriter;
+    use parquet::file::properties::WriterProperties;
+
+    /// Write RecordBatch to Parquet bytes synchronously (WASM-compatible)
+    pub fn write_batch_to_parquet(batch: &RecordBatch) -> anyhow::Result<Vec<u8>> {
+        let mut buffer = Vec::new();
+        let props = writer_properties();
+        let mut writer = ArrowWriter::try_new(&mut buffer, batch.schema(), Some(props))?;
+        writer.write(batch)?;
+        writer.close()?;
+        Ok(buffer)
+    }
+
+    /// Platform-specific writer properties for WASM (Snappy compression only)
+    fn writer_properties() -> WriterProperties {
+        use parquet::basic::Compression;
+        use parquet::file::properties::EnabledStatistics;
+
+        WriterProperties::builder()
+            .set_dictionary_enabled(true)
+            .set_statistics_enabled(EnabledStatistics::Page)
+            .set_compression(Compression::SNAPPY)
+            .set_data_page_size_limit(256 * 1024)
+            .set_write_batch_size(32 * 1024)
+            .set_max_row_group_size(32 * 1024)
+            .set_dictionary_page_size_limit(128 * 1024)
+            .build()
+    }
+}
 
 /// Handle OTLP HTTP POST request and write to R2
 pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
@@ -84,10 +124,6 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
         instance
     };
 
-    let processing_options = PROCESSING_OPTIONS
-        .get_or_init(processing_options_from_env)
-        .clone();
-
     let batcher = BATCHER
         .get_or_init(|| {
             let cfg = BatchConfig::from_env(100_000, 64 * 1024 * 1024, 5);
@@ -100,17 +136,12 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
                 None
             } else {
                 console_log!(
-                    "Cloudflare batching enabled (max_rows={} max_bytes={} max_age={}s, row_group_rows={})",
+                    "Cloudflare batching enabled (max_rows={} max_bytes={} max_age={}s)",
                     cfg.max_rows,
                     cfg.max_bytes,
-                    cfg.max_age.as_secs(),
-                    PROCESSING_OPTIONS.get().map(|p| p.max_rows_per_batch).unwrap_or(processing_options.max_rows_per_batch)
+                    cfg.max_age.as_secs()
                 );
-                let opts = PROCESSING_OPTIONS
-                    .get()
-                    .cloned()
-                    .unwrap_or_else(processing_options_from_env);
-                Some(Arc::new(BatchManager::new(cfg, opts)))
+                Some(Arc::new(BatchManager::new(cfg)))
             }
         })
         .clone();
@@ -165,13 +196,13 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
             }
         }
     } else {
-        match passthrough.ingest(request, &processing_options) {
+        match passthrough.ingest(request) {
             Ok(batch) => {
                 metadata = batch.metadata.clone();
                 uploads.push(batch);
             }
             Err(err) => {
-                console_error!("Failed to encode Parquet: {:?}", err);
+                console_error!("Failed to convert OTLP to Arrow: {:?}", err);
                 return Response::error("Internal encoding failure", 500);
             }
         }
@@ -179,15 +210,27 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
 
     let mut uploaded_paths = Vec::new();
     for batch in uploads {
-        let hash_hex = batch.content_hash.to_hex().to_string();
+        // WASM-specific: Write Parquet synchronously, then upload via OpenDAL
+        // (parquet_opendal doesn't work in WASM due to tokio::spawn requiring Send)
+        let parquet_bytes = wasm_parquet::write_batch_to_parquet(&batch.batch).map_err(|e| {
+            console_error!("Failed to serialize Parquet: {:?}", e);
+            worker::Error::RustError(format!("Parquet serialization error: {}", e))
+        })?;
+
+        // Compute Blake3 hash for content-addressable storage
+        let hash_bytes = blake3::hash(&parquet_bytes);
+        let hash_hex = hex::encode(hash_bytes.as_bytes());
+
+        // Generate partition path with hash
         let partition_path = otlp2parquet_storage::partition::generate_partition_path(
             &batch.metadata.service_name,
             batch.metadata.first_timestamp_nanos,
             &hash_hex,
         );
 
+        // Upload to R2 via OpenDAL (this DOES work in WASM)
         storage
-            .write(&partition_path, batch.bytes)
+            .write(&partition_path, parquet_bytes)
             .await
             .map_err(|e| {
                 console_error!("Failed to write to R2: {:?}", e);
@@ -205,19 +248,6 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
     });
 
     Response::from_json(&response_body)
-}
-
-/// Platform-specific helper: Read processing options from environment
-fn processing_options_from_env() -> ProcessingOptions {
-    let max_rows = std::env::var("ROW_GROUP_MAX_ROWS")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .map(|rows| rows.max(1024))
-        .unwrap_or(32 * 1024);
-
-    ProcessingOptions {
-        max_rows_per_batch: max_rows,
-    }
 }
 
 /// Platform-specific helper: Read max payload bytes from environment

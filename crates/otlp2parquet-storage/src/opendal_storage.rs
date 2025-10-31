@@ -75,6 +75,13 @@ impl OpenDalStorage {
         Ok(Self { operator })
     }
 
+    /// Get reference to the underlying OpenDAL operator
+    ///
+    /// Useful for creating ParquetWriter or other storage-aware components
+    pub fn operator(&self) -> &Operator {
+        &self.operator
+    }
+
     /// Write data to storage (async)
     pub async fn write(&self, path: &str, data: Vec<u8>) -> anyhow::Result<()> {
         self.operator.write(path, data).await?;

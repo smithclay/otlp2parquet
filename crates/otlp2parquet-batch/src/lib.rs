@@ -1,13 +1,19 @@
+// otlp2parquet-batch - Optimization layer for batching
+//
+// Accumulates OTLP requests in memory and merges them into larger Arrow batches.
+// This reduces the number of storage writes and improves compression efficiency.
+//
+// Philosophy (Fred Brooks): This is the "optimization" layer between essence (core)
+// and accident (storage). It's optional - systems can bypass batching entirely.
+
 use std::collections::HashMap;
-use std::io::Cursor;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ::parquet::arrow::arrow_writer::ArrowWriter;
 use anyhow::{Context, Result};
-use blake3::Hash as Blake3Hash;
+use arrow::array::RecordBatch;
 use otlp2parquet_core::otlp::LogMetadata;
-use otlp2parquet_core::{self, ProcessingOptions};
+use otlp2parquet_core::{parse_otlp_to_arrow, InputFormat};
 use otlp2parquet_proto::opentelemetry::proto::collector::logs::v1::ExportLogsServiceRequest;
 use otlp2parquet_proto::opentelemetry::proto::common::v1::any_value;
 use parking_lot::Mutex;
@@ -114,11 +120,12 @@ impl RequestPreview {
     }
 }
 
+/// Buffered batch accumulating Arrow RecordBatches
 #[derive(Debug)]
 struct BufferedBatch {
-    requests: Vec<ExportLogsServiceRequest>,
+    batches: Vec<RecordBatch>,
     total_rows: usize,
-    total_bytes: usize,
+    total_bytes: usize, // Approximate size for flushing decisions
     first_timestamp: i64,
     service_name: String,
     created_at: Instant,
@@ -127,7 +134,7 @@ struct BufferedBatch {
 impl BufferedBatch {
     fn new(preview: &RequestPreview) -> Self {
         Self {
-            requests: Vec::new(),
+            batches: Vec::new(),
             total_rows: 0,
             total_bytes: 0,
             first_timestamp: if preview.first_timestamp > 0 {
@@ -140,13 +147,13 @@ impl BufferedBatch {
         }
     }
 
-    fn add(&mut self, req: ExportLogsServiceRequest, preview: &RequestPreview) {
+    fn add(&mut self, batch: RecordBatch, preview: &RequestPreview) {
         if preview.first_timestamp > 0 {
             self.first_timestamp = self.first_timestamp.min(preview.first_timestamp);
         }
         self.total_rows += preview.record_count;
-        self.total_bytes += preview.encoded_len;
-        self.requests.push(req);
+        self.total_bytes += preview.encoded_len; // Approximate
+        self.batches.push(batch);
     }
 
     fn should_flush(&self, cfg: &BatchConfig) -> bool {
@@ -155,79 +162,57 @@ impl BufferedBatch {
             || self.created_at.elapsed() >= cfg.max_age
     }
 
-    fn finalize(self, options: &ProcessingOptions) -> Result<CompletedBatch> {
-        let schema = otlp2parquet_core::schema::otel_logs_schema_arc();
-        let properties = otlp2parquet_core::parquet::writer::writer_properties().clone();
-        let cursor = Cursor::new(Vec::with_capacity(self.total_bytes.max(4 * 1024 * 1024)));
-        let mut writer = ArrowWriter::try_new(cursor, schema, Some(properties))
-            .context("failed to initialise batch arrow writer")?;
+    fn finalize(self) -> Result<CompletedBatch> {
+        // Merge all accumulated batches using Arrow's efficient concatenation
+        let merged_batch = if self.batches.is_empty() {
+            anyhow::bail!("Cannot finalize empty batch");
+        } else if self.batches.len() == 1 {
+            self.batches.into_iter().next().unwrap()
+        } else {
+            let schema = self.batches[0].schema();
+            arrow::compute::concat_batches(&schema, &self.batches)
+                .context("Failed to concatenate Arrow batches")?
+        };
 
-        let mut aggregate = LogMetadata {
-            service_name: self.service_name.clone(),
+        let metadata = LogMetadata {
+            service_name: self.service_name,
             first_timestamp_nanos: if self.first_timestamp == i64::MAX {
                 0
             } else {
                 self.first_timestamp
             },
-            record_count: 0,
+            record_count: merged_batch.num_rows(),
         };
 
-        for request in &self.requests {
-            let meta =
-                otlp2parquet_core::write_request_into_arrow_writer(&mut writer, request, options)?;
-            aggregate.record_count += meta.record_count;
-            if meta.first_timestamp_nanos > 0 {
-                aggregate.first_timestamp_nanos = if aggregate.first_timestamp_nanos == 0 {
-                    meta.first_timestamp_nanos
-                } else {
-                    aggregate
-                        .first_timestamp_nanos
-                        .min(meta.first_timestamp_nanos)
-                };
-            }
-            if aggregate.service_name == "unknown" && meta.service_name != "unknown" {
-                aggregate.service_name = meta.service_name;
-            }
-        }
-
-        let cursor = writer.into_inner()?;
-        let mut bytes = cursor.into_inner();
-        bytes.shrink_to_fit();
-        let content_hash = blake3::hash(&bytes);
-
         Ok(CompletedBatch {
-            bytes,
-            metadata: aggregate,
-            content_hash,
+            batch: merged_batch,
+            metadata,
         })
     }
 }
 
+/// Completed batch ready for storage
+///
+/// Contains merged Arrow RecordBatch + metadata.
+/// Hashing and serialization happen in the storage layer.
 #[derive(Debug)]
 pub struct CompletedBatch {
-    pub bytes: Vec<u8>,
+    pub batch: RecordBatch,
     pub metadata: LogMetadata,
-    pub content_hash: Blake3Hash,
 }
 
 /// Thread-safe batch orchestrator shared across handlers.
 pub struct BatchManager {
     config: BatchConfig,
-    options: ProcessingOptions,
     inner: Arc<Mutex<HashMap<BatchKey, BufferedBatch>>>,
 }
 
 impl BatchManager {
-    pub fn new(config: BatchConfig, options: ProcessingOptions) -> Self {
+    pub fn new(config: BatchConfig) -> Self {
         Self {
             config,
-            options,
             inner: Arc::new(Mutex::new(HashMap::new())),
         }
-    }
-
-    pub fn options(&self) -> &ProcessingOptions {
-        &self.options
     }
 
     pub fn ingest(
@@ -246,17 +231,22 @@ impl BatchManager {
             ));
         }
 
+        // Convert OTLP request to Arrow batch
+        let encoded = request.encode_to_vec();
+        let (batch, _meta) = parse_otlp_to_arrow(&encoded, InputFormat::Protobuf)
+            .context("Failed to parse OTLP request to Arrow")?;
+
         let key = preview.batch_key();
         let mut guard = self.inner.lock();
-        let batch = guard
+        let buffered = guard
             .entry(key.clone())
             .or_insert_with(|| BufferedBatch::new(&preview));
-        batch.add(request, &preview);
+        buffered.add(batch, &preview);
 
         let mut completed = Vec::new();
-        if batch.should_flush(&self.config) {
+        if buffered.should_flush(&self.config) {
             let batch = guard.remove(&key).expect("batch removed during flush");
-            completed.push(batch.finalize(&self.options)?);
+            completed.push(batch.finalize()?);
         }
 
         Ok((
@@ -280,7 +270,7 @@ impl BatchManager {
 
         for key in keys {
             if let Some(batch) = guard.remove(&key) {
-                completed.push(batch.finalize(&self.options)?);
+                completed.push(batch.finalize()?);
             }
         }
 
@@ -289,29 +279,111 @@ impl BatchManager {
 }
 
 /// Lightweight helper when batching is disabled entirely.
+///
+/// Converts each OTLP request directly to an Arrow batch without accumulation.
 #[derive(Debug, Clone)]
 pub struct PassthroughBatcher;
 
 impl PassthroughBatcher {
-    pub fn ingest(
-        &self,
-        request: ExportLogsServiceRequest,
-        options: &ProcessingOptions,
-    ) -> Result<CompletedBatch> {
-        let schema = otlp2parquet_core::schema::otel_logs_schema_arc();
-        let properties = otlp2parquet_core::parquet::writer::writer_properties().clone();
-        let cursor = Cursor::new(Vec::new());
-        let mut writer = ArrowWriter::try_new(cursor, schema, Some(properties))?;
-        let metadata =
-            otlp2parquet_core::write_request_into_arrow_writer(&mut writer, &request, options)?;
-        let cursor = writer.into_inner()?;
-        let bytes = cursor.into_inner();
-        let content_hash = blake3::hash(&bytes);
+    pub fn ingest(&self, request: ExportLogsServiceRequest) -> Result<CompletedBatch> {
+        // Encode request to bytes for parsing
+        let encoded = request.encode_to_vec();
 
-        Ok(CompletedBatch {
-            bytes,
-            metadata,
-            content_hash,
-        })
+        // Parse to Arrow using new core API
+        let (batch, metadata) = parse_otlp_to_arrow(&encoded, InputFormat::Protobuf)
+            .context("Failed to parse OTLP request to Arrow")?;
+
+        Ok(CompletedBatch { batch, metadata })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use otlp2parquet_proto::opentelemetry::proto::common::v1::{AnyValue, KeyValue};
+    use otlp2parquet_proto::opentelemetry::proto::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
+    use otlp2parquet_proto::opentelemetry::proto::resource::v1::Resource;
+
+    fn create_test_request(service_name: &str, record_count: usize) -> ExportLogsServiceRequest {
+        let mut records = Vec::new();
+        for i in 0..record_count {
+            records.push(LogRecord {
+                time_unix_nano: 1_000_000_000 + i as u64,
+                body: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue(format!("log {}", i))),
+                }),
+                ..Default::default()
+            });
+        }
+
+        ExportLogsServiceRequest {
+            resource_logs: vec![ResourceLogs {
+                resource: Some(Resource {
+                    attributes: vec![KeyValue {
+                        key: "service.name".to_string(),
+                        value: Some(AnyValue {
+                            value: Some(any_value::Value::StringValue(service_name.to_string())),
+                        }),
+                    }],
+                    ..Default::default()
+                }),
+                scope_logs: vec![ScopeLogs {
+                    log_records: records,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+        }
+    }
+
+    #[test]
+    fn test_passthrough_batcher() {
+        let batcher = PassthroughBatcher;
+        let request = create_test_request("test-service", 10);
+
+        let result = batcher.ingest(request);
+        assert!(result.is_ok());
+
+        let completed = result.unwrap();
+        assert_eq!(completed.batch.num_rows(), 10);
+        assert_eq!(completed.metadata.service_name, "test-service");
+        assert_eq!(completed.metadata.record_count, 10);
+    }
+
+    #[test]
+    fn test_batch_manager_accumulation() {
+        let config = BatchConfig {
+            max_rows: 100,
+            max_bytes: 1024 * 1024,
+            max_age: Duration::from_secs(10),
+        };
+        let manager = BatchManager::new(config);
+
+        // First request - should not flush
+        let request1 = create_test_request("test-service", 10);
+        let (completed1, _meta1) = manager.ingest(request1).unwrap();
+        assert_eq!(completed1.len(), 0); // Not flushed yet
+
+        // Second request - should not flush (total 20 rows)
+        let request2 = create_test_request("test-service", 10);
+        let (completed2, _meta2) = manager.ingest(request2).unwrap();
+        assert_eq!(completed2.len(), 0); // Still not flushed
+
+        // Third test with smaller limit - should flush when hitting threshold
+        let config_small = BatchConfig {
+            max_rows: 20,
+            max_bytes: 1024 * 1024,
+            max_age: Duration::from_secs(10),
+        };
+        let manager_small = BatchManager::new(config_small);
+
+        let req1 = create_test_request("test-service", 10);
+        let (c1, _) = manager_small.ingest(req1).unwrap();
+        assert_eq!(c1.len(), 0); // 10 rows < 20, no flush
+
+        let req2 = create_test_request("test-service", 10);
+        let (c2, _) = manager_small.ingest(req2).unwrap();
+        assert_eq!(c2.len(), 1); // 10 + 10 = 20 rows, should flush!
+        assert_eq!(c2[0].batch.num_rows(), 20);
     }
 }

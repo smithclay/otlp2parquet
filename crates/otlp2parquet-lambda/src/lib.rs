@@ -16,7 +16,7 @@ use base64::Engine;
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use otlp2parquet_batch::{BatchConfig, BatchManager, CompletedBatch, PassthroughBatcher};
 use otlp2parquet_core::otlp;
-use otlp2parquet_core::ProcessingOptions;
+use otlp2parquet_storage::ParquetWriter;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::borrow::Cow;
@@ -183,13 +183,13 @@ async fn handle_post(
             }
         }
     } else {
-        match state.passthrough.ingest(request, &state.processing_options) {
+        match state.passthrough.ingest(request) {
             Ok(batch) => {
                 metadata = batch.metadata.clone();
                 uploads.push(batch);
             }
             Err(err) => {
-                eprintln!("Failed to encode Parquet: {}", err);
+                eprintln!("Failed to convert OTLP to Arrow: {}", err);
                 return HttpResponseData::json(
                     500,
                     json!({ "error": "internal encoding failure" }).to_string(),
@@ -200,22 +200,27 @@ async fn handle_post(
 
     let mut uploaded_paths = Vec::new();
     for batch in uploads {
-        let hash_hex = batch.content_hash.to_hex().to_string();
-        let partition_path = otlp2parquet_storage::partition::generate_partition_path(
-            &batch.metadata.service_name,
-            batch.metadata.first_timestamp_nanos,
-            &hash_hex,
-        );
-
-        if let Err(err) = state.storage.write(&partition_path, batch.bytes).await {
-            eprintln!("Failed to write to storage: {}", err);
-            return HttpResponseData::json(
-                500,
-                json!({ "error": "internal storage failure" }).to_string(),
-            );
+        // Write RecordBatch to Parquet and upload (hash computed in storage layer)
+        match state
+            .parquet_writer
+            .write_batch_with_hash(
+                &batch.batch,
+                &batch.metadata.service_name,
+                batch.metadata.first_timestamp_nanos,
+            )
+            .await
+        {
+            Ok((partition_path, _hash)) => {
+                uploaded_paths.push(partition_path);
+            }
+            Err(err) => {
+                eprintln!("Failed to write Parquet to storage: {}", err);
+                return HttpResponseData::json(
+                    500,
+                    json!({ "error": "internal storage failure" }).to_string(),
+                );
+            }
         }
-
-        uploaded_paths.push(partition_path);
     }
 
     HttpResponseData::json(
@@ -273,10 +278,9 @@ enum HttpLambdaResponse {
 
 #[derive(Clone)]
 struct LambdaState {
-    storage: Arc<otlp2parquet_storage::opendal_storage::OpenDalStorage>,
+    parquet_writer: Arc<ParquetWriter>,
     batcher: Option<Arc<BatchManager>>,
     passthrough: PassthroughBatcher,
-    processing_options: ProcessingOptions,
     max_payload_bytes: usize,
 }
 
@@ -349,8 +353,8 @@ pub async fn run() -> Result<(), Error> {
         )
         .map_err(|e| lambda_runtime::Error::from(format!("Failed to initialize storage: {}", e)))?,
     );
+    let parquet_writer = Arc::new(ParquetWriter::new(storage.operator().clone()));
 
-    let processing_options = processing_options_from_env();
     let batch_config = BatchConfig::from_env(200_000, 128 * 1024 * 1024, 10);
     let batcher = if batch_config.max_rows == 0 || batch_config.max_bytes == 0 {
         println!(
@@ -360,26 +364,21 @@ pub async fn run() -> Result<(), Error> {
         None
     } else {
         println!(
-            "Lambda batching enabled (max_rows={} max_bytes={} max_age={}s, row_group_rows={})",
+            "Lambda batching enabled (max_rows={} max_bytes={} max_age={}s)",
             batch_config.max_rows,
             batch_config.max_bytes,
-            batch_config.max_age.as_secs(),
-            processing_options.max_rows_per_batch
+            batch_config.max_age.as_secs()
         );
-        Some(Arc::new(BatchManager::new(
-            batch_config,
-            processing_options.clone(),
-        )))
+        Some(Arc::new(BatchManager::new(batch_config)))
     };
 
     let max_payload_bytes = max_payload_bytes_from_env(6 * 1024 * 1024);
     println!("Lambda payload cap set to {} bytes", max_payload_bytes);
 
     let state = Arc::new(LambdaState {
-        storage: storage.clone(),
+        parquet_writer,
         batcher,
         passthrough: PassthroughBatcher,
-        processing_options,
         max_payload_bytes,
     });
 
@@ -388,19 +387,6 @@ pub async fn run() -> Result<(), Error> {
         async move { handle_request(event, state).await }
     }))
     .await
-}
-
-/// Platform-specific helper: Read processing options from environment
-fn processing_options_from_env() -> ProcessingOptions {
-    let max_rows = std::env::var("ROW_GROUP_MAX_ROWS")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .map(|rows| rows.max(1024))
-        .unwrap_or(32 * 1024);
-
-    ProcessingOptions {
-        max_rows_per_batch: max_rows,
-    }
 }
 
 /// Platform-specific helper: Read max payload bytes from environment

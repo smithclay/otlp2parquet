@@ -6,9 +6,8 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
-# Arrow/Parquet - MINIMAL features
+# Arrow for data structures only (no Parquet serialization)
 arrow = { workspace = true }
-parquet = { workspace = true }
 
 # OTLP Protocol
 otlp2parquet-proto = { path = "../otlp2parquet-proto" }
@@ -24,8 +23,10 @@ hex = { workspace = true }
 
 # Platform-specific uuid features
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-parquet = { workspace = true, features = ["arrow", "snap"] }
 uuid = { workspace = true, features = ["js"] }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-parquet = { workspace = true, features = ["arrow", "snap", "zstd"] }
+[dev-dependencies]
+# For testing Parquet output
+parquet = { workspace = true, features = ["arrow"] }
+otlp2parquet-storage = { path = "../otlp2parquet-storage", features = ["services-fs"] }
+tokio = { workspace = true, features = ["rt", "macros"] }

@@ -23,8 +23,9 @@ use axum::{
 };
 use metrics::{counter, histogram};
 use otlp2parquet_batch::{BatchConfig, BatchManager, CompletedBatch, PassthroughBatcher};
-use otlp2parquet_core::{otlp, InputFormat, ProcessingOptions};
+use otlp2parquet_core::{otlp, InputFormat};
 use otlp2parquet_storage::opendal_storage::OpenDalStorage;
+use otlp2parquet_storage::ParquetWriter;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Instant;
@@ -35,9 +36,9 @@ use tracing::{debug, error, info, warn};
 #[derive(Clone)]
 struct AppState {
     storage: Arc<OpenDalStorage>,
+    parquet_writer: Arc<ParquetWriter>,
     batcher: Option<Arc<BatchManager>>,
     passthrough: PassthroughBatcher,
-    processing_options: ProcessingOptions,
     max_payload_bytes: usize,
 }
 
@@ -126,8 +127,8 @@ async fn handle_logs(
     } else {
         let batch = state
             .passthrough
-            .ingest(request, &state.processing_options)
-            .context("Failed to write Parquet batch")?;
+            .ingest(request)
+            .context("Failed to convert OTLP to Arrow")?;
         metadata = batch.metadata.clone();
         uploads.push(batch);
     }
@@ -136,23 +137,19 @@ async fn handle_logs(
 
     let mut uploaded_paths = Vec::new();
     for batch in uploads {
-        let hash_hex = batch.content_hash.to_hex().to_string();
-        let partition_path = otlp2parquet_storage::partition::generate_partition_path(
-            &batch.metadata.service_name,
-            batch.metadata.first_timestamp_nanos,
-            &hash_hex,
-        );
-
-        let size_bytes = batch.bytes.len();
-        state
-            .storage
-            .write(&partition_path, batch.bytes)
+        // Write RecordBatch to Parquet and upload (hash computed in storage layer)
+        let (partition_path, _hash) = state
+            .parquet_writer
+            .write_batch_with_hash(
+                &batch.batch,
+                &batch.metadata.service_name,
+                batch.metadata.first_timestamp_nanos,
+            )
             .await
-            .context("Failed to write to storage")?;
+            .context("Failed to write Parquet to storage")?;
 
         counter!("otlp.batch.flushes", 1);
         histogram!("otlp.batch.rows", batch.metadata.record_count as f64);
-        histogram!("otlp.batch.size_bytes", size_bytes as f64);
         info!(
             "Committed batch path={} service={} rows={}",
             partition_path, batch.metadata.service_name, batch.metadata.record_count
@@ -313,9 +310,9 @@ pub async fn run() -> Result<()> {
 
     // Initialize storage
     let storage = init_storage()?;
+    let parquet_writer = Arc::new(ParquetWriter::new(storage.operator().clone()));
 
-    // Configure batching + row group behaviour
-    let processing_options = processing_options_from_env();
+    // Configure batching
     let batch_config = BatchConfig::from_env(200_000, 128 * 1024 * 1024, 10);
     let batcher = if batch_config.max_rows == 0 || batch_config.max_bytes == 0 {
         info!(
@@ -326,13 +323,12 @@ pub async fn run() -> Result<()> {
     } else {
         let cfg = batch_config.clone();
         info!(
-            "Batching enabled (max_rows={} max_bytes={} max_age={}s, row_group_rows={})",
+            "Batching enabled (max_rows={} max_bytes={} max_age={}s)",
             cfg.max_rows,
             cfg.max_bytes,
-            cfg.max_age.as_secs(),
-            processing_options.max_rows_per_batch
+            cfg.max_age.as_secs()
         );
-        Some(Arc::new(BatchManager::new(cfg, processing_options.clone())))
+        Some(Arc::new(BatchManager::new(cfg)))
     };
 
     let max_payload_bytes = max_payload_bytes_from_env(8 * 1024 * 1024);
@@ -341,9 +337,9 @@ pub async fn run() -> Result<()> {
     // Create app state
     let state = AppState {
         storage,
+        parquet_writer,
         batcher,
         passthrough: PassthroughBatcher,
-        processing_options,
         max_payload_bytes,
     };
 
@@ -375,19 +371,6 @@ pub async fn run() -> Result<()> {
     info!("Server shutdown complete");
 
     Ok(())
-}
-
-/// Platform-specific helper: Read processing options from environment
-fn processing_options_from_env() -> ProcessingOptions {
-    let max_rows = std::env::var("ROW_GROUP_MAX_ROWS")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .map(|rows| rows.max(1024))
-        .unwrap_or(32 * 1024);
-
-    ProcessingOptions {
-        max_rows_per_batch: max_rows,
-    }
 }
 
 /// Platform-specific helper: Read max payload bytes from environment

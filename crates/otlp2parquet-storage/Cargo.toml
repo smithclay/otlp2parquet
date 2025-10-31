@@ -7,13 +7,27 @@ license.workspace = true
 
 [dependencies]
 # Storage abstraction
-opendal = { version = "0.54", default-features = false }
+opendal = { workspace = true }
+
+# Arrow for data structures
+arrow = { workspace = true }
 
 # Utilities
 anyhow = { workspace = true }
 chrono = { workspace = true }
+blake3 = { workspace = true }
+hex = { workspace = true }
+once_cell = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# WASM-specific: Snappy compression only
+parquet = { workspace = true, features = ["arrow", "async", "snap"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Native: ZSTD compression + Snappy
+parquet = { workspace = true, features = ["arrow", "async", "snap", "zstd"] }
+# Async Parquet writer for OpenDAL (native only - doesn't work in WASM)
+parquet_opendal = { workspace = true }
 # Async utilities for OpenDAL list operations (native only)
 futures-util = "0.3"
 # Tokio needed for filesystem backend
