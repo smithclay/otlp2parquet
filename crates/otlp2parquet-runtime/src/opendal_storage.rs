@@ -7,6 +7,7 @@
 //
 // Philosophy: Leverage mature, battle-tested external abstractions
 
+#[cfg(not(target_arch = "wasm32"))]
 use futures_util::TryStreamExt;
 use opendal::Operator;
 
@@ -97,6 +98,7 @@ impl OpenDalStorage {
     }
 
     /// List files in a directory (used for readiness checks)
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn list(&self, path: &str) -> anyhow::Result<Vec<String>> {
         let lister = self.operator.lister(path).await?;
         let entries: Vec<String> = lister
@@ -106,6 +108,11 @@ impl OpenDalStorage {
             .map(|entry| entry.path().to_string())
             .collect();
         Ok(entries)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub async fn list(&self, _path: &str) -> anyhow::Result<Vec<String>> {
+        anyhow::bail!("list operation is not supported on wasm targets");
     }
 }
 

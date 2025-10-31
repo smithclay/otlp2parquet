@@ -7,9 +7,33 @@
 // Entry point is #[event(fetch)] macro, not main()
 
 #[cfg(feature = "cloudflare")]
+use crate::batcher::{
+    max_payload_bytes_from_env, processing_options_from_env, BatchConfig, BatchManager,
+    CompletedBatch, PassthroughBatcher,
+};
+#[cfg(feature = "cloudflare")]
+use once_cell::sync::OnceCell;
+#[cfg(feature = "cloudflare")]
+use otlp2parquet_core::otlp;
+#[cfg(feature = "cloudflare")]
+use otlp2parquet_core::ProcessingOptions;
+#[cfg(feature = "cloudflare")]
+use serde_json::json;
+#[cfg(feature = "cloudflare")]
+use std::sync::Arc;
+#[cfg(feature = "cloudflare")]
 use worker::*;
 
 // Note: R2Storage removed - now using OpenDalStorage with S3-compatible R2 endpoint
+
+#[cfg(feature = "cloudflare")]
+static STORAGE: OnceCell<Arc<crate::opendal_storage::OpenDalStorage>> = OnceCell::new();
+#[cfg(feature = "cloudflare")]
+static PROCESSING_OPTIONS: OnceCell<ProcessingOptions> = OnceCell::new();
+#[cfg(feature = "cloudflare")]
+static BATCHER: OnceCell<Option<Arc<BatchManager>>> = OnceCell::new();
+#[cfg(feature = "cloudflare")]
+static MAX_PAYLOAD_BYTES: OnceCell<usize> = OnceCell::new();
 
 /// Handle OTLP HTTP POST request and write to R2
 #[cfg(feature = "cloudflare")]
@@ -24,75 +48,109 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
         return Response::error("Not found", 404);
     }
 
-    // Get R2 configuration from environment variables
-    // Note: R2 uses S3-compatible API, so we use OpenDAL's S3 service
-    let bucket = env
-        .var("R2_BUCKET")
-        .map_err(|e| {
-            console_error!("R2_BUCKET environment variable not set: {:?}", e);
-            e
-        })?
-        .to_string();
+    let storage = if let Some(existing) = STORAGE.get() {
+        existing.clone()
+    } else {
+        let bucket = env
+            .var("R2_BUCKET")
+            .map_err(|e| {
+                console_error!("R2_BUCKET environment variable not set: {:?}", e);
+                e
+            })?
+            .to_string();
 
-    let account_id = env
-        .var("R2_ACCOUNT_ID")
-        .map_err(|e| {
-            console_error!("R2_ACCOUNT_ID environment variable not set: {:?}", e);
-            e
-        })?
-        .to_string();
+        let account_id = env
+            .var("R2_ACCOUNT_ID")
+            .map_err(|e| {
+                console_error!("R2_ACCOUNT_ID environment variable not set: {:?}", e);
+                e
+            })?
+            .to_string();
 
-    let access_key_id = env
-        .var("R2_ACCESS_KEY_ID")
-        .map_err(|e| {
-            console_error!("R2_ACCESS_KEY_ID environment variable not set: {:?}", e);
-            e
-        })?
-        .to_string();
+        let access_key_id = env
+            .var("R2_ACCESS_KEY_ID")
+            .map_err(|e| {
+                console_error!("R2_ACCESS_KEY_ID environment variable not set: {:?}", e);
+                e
+            })?
+            .to_string();
 
-    let secret_access_key = env
-        .secret("R2_SECRET_ACCESS_KEY")
-        .map_err(|e| {
-            console_error!("R2_SECRET_ACCESS_KEY secret not set: {:?}", e);
-            e
-        })?
-        .to_string();
+        let secret_access_key = env
+            .secret("R2_SECRET_ACCESS_KEY")
+            .map_err(|e| {
+                console_error!("R2_SECRET_ACCESS_KEY secret not set: {:?}", e);
+                e
+            })?
+            .to_string();
 
-    // Initialize OpenDAL S3 storage with R2 endpoint
-    let storage = crate::opendal_storage::OpenDalStorage::new_r2(
-        &bucket,
-        &account_id,
-        &access_key_id,
-        &secret_access_key,
-    )
-    .map_err(|e| {
-        console_error!("Failed to initialize OpenDAL R2 storage: {:?}", e);
-        worker::Error::RustError(format!("Storage initialization error: {}", e))
-    })?;
+        let instance = Arc::new(
+            crate::opendal_storage::OpenDalStorage::new_r2(
+                &bucket,
+                &account_id,
+                &access_key_id,
+                &secret_access_key,
+            )
+            .map_err(|e| {
+                console_error!("Failed to initialize OpenDAL R2 storage: {:?}", e);
+                worker::Error::RustError(format!("Storage initialization error: {}", e))
+            })?,
+        );
 
-    // Extract Content-Type header for format detection
+        let _ = STORAGE.set(instance.clone());
+        instance
+    };
+
+    let processing_options = PROCESSING_OPTIONS
+        .get_or_init(processing_options_from_env)
+        .clone();
+
+    let batcher = BATCHER
+        .get_or_init(|| {
+            let cfg = BatchConfig::from_env(100_000, 64 * 1024 * 1024, 5);
+            if cfg.max_rows == 0 || cfg.max_bytes == 0 {
+                console_log!(
+                    "Cloudflare batching disabled (max_rows={} max_bytes={})",
+                    cfg.max_rows,
+                    cfg.max_bytes
+                );
+                None
+            } else {
+                console_log!(
+                    "Cloudflare batching enabled (max_rows={} max_bytes={} max_age={}s, row_group_rows={})",
+                    cfg.max_rows,
+                    cfg.max_bytes,
+                    cfg.max_age.as_secs(),
+                    PROCESSING_OPTIONS.get().map(|p| p.max_rows_per_batch).unwrap_or(processing_options.max_rows_per_batch)
+                );
+                let opts = PROCESSING_OPTIONS
+                    .get()
+                    .cloned()
+                    .unwrap_or_else(processing_options_from_env);
+                Some(Arc::new(BatchManager::new(cfg, opts)))
+            }
+        })
+        .clone();
+
+    let max_payload_bytes =
+        *MAX_PAYLOAD_BYTES.get_or_init(|| max_payload_bytes_from_env(1024 * 1024));
+    let passthrough = PassthroughBatcher;
+
     let content_type_header = req.headers().get("content-type").ok().flatten();
     let content_type = content_type_header.as_deref();
-
-    // Detect input format from Content-Type header
     let format = otlp2parquet_core::InputFormat::from_content_type(content_type);
 
-    // Read request body
     let body_bytes = req.bytes().await.map_err(|e| {
         console_error!("Failed to read request body: {:?}", e);
         e
     })?;
 
-    // Process OTLP logs with format awareness (PURE - no I/O, deterministic)
-    let mut parquet_bytes = Vec::new();
-    let metadata = otlp2parquet_core::process_otlp_logs_into_with_format(
-        &body_bytes,
-        format,
-        &mut parquet_bytes,
-    )
-    .map_err(|e| {
+    if body_bytes.len() > max_payload_bytes {
+        return Response::error("Payload too large", 413);
+    }
+
+    let request = otlp::parse_otlp_request(&body_bytes, format).map_err(|e| {
         console_error!(
-            "Failed to process OTLP logs (format: {:?}, content-type: {:?}): {:?}",
+            "Failed to parse OTLP logs (format: {:?}, content-type: {:?}): {:?}",
             format,
             content_type,
             e
@@ -100,21 +158,67 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
         worker::Error::RustError(format!("Processing error: {}", e))
     })?;
 
-    // Generate partition path (ACCIDENT - platform-specific storage decision)
-    let partition_path = crate::partition::generate_partition_path(
-        &metadata.service_name,
-        metadata.first_timestamp_nanos,
-    );
+    let mut uploads: Vec<CompletedBatch> = Vec::new();
+    let metadata;
 
-    // Write to R2 via OpenDAL
-    storage
-        .write(&partition_path, parquet_bytes)
-        .await
-        .map_err(|e| {
-            console_error!("Failed to write to R2: {:?}", e);
-            worker::Error::RustError(format!("Storage error: {}", e))
-        })?;
+    if let Some(manager) = batcher.as_ref() {
+        match manager.drain_expired() {
+            Ok(mut expired) => uploads.append(&mut expired),
+            Err(err) => {
+                console_error!("Failed to flush expired batches: {:?}", err);
+                return Response::error("Internal batching failure", 500);
+            }
+        }
 
-    // Return success response
-    Response::ok("OK")
+        match manager.ingest(request) {
+            Ok((mut ready, meta)) => {
+                uploads.append(&mut ready);
+                metadata = meta;
+            }
+            Err(err) => {
+                console_error!("Batch enqueue failed: {:?}", err);
+                return Response::error("Internal batching failure", 500);
+            }
+        }
+    } else {
+        match passthrough.ingest(request, &processing_options) {
+            Ok(batch) => {
+                metadata = batch.metadata.clone();
+                uploads.push(batch);
+            }
+            Err(err) => {
+                console_error!("Failed to encode Parquet: {:?}", err);
+                return Response::error("Internal encoding failure", 500);
+            }
+        }
+    }
+
+    let mut uploaded_paths = Vec::new();
+    for batch in uploads {
+        let hash_hex = batch.content_hash.to_hex().to_string();
+        let partition_path = crate::partition::generate_partition_path(
+            &batch.metadata.service_name,
+            batch.metadata.first_timestamp_nanos,
+            &hash_hex,
+        );
+
+        storage
+            .write(&partition_path, batch.bytes)
+            .await
+            .map_err(|e| {
+                console_error!("Failed to write to R2: {:?}", e);
+                worker::Error::RustError(format!("Storage error: {}", e))
+            })?;
+
+        uploaded_paths.push(partition_path);
+    }
+
+    let response_body = json!({
+        "status": "ok",
+        "records_processed": metadata.record_count,
+        "flush_count": uploaded_paths.len(),
+        "partitions": uploaded_paths,
+    });
+
+    Response::from_json(&response_body)
 }

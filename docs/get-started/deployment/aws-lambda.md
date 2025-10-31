@@ -338,7 +338,7 @@ aws lambda put-provisioned-concurrency-config \
 │  - Versioned bucket                         │
 │  - Encrypted at rest (AES-256)              │
 │  - Lifecycle policies (IA, Glacier)         │
-└─────────────────────────────────────────────┘
+└────────────┬────────────────────────────────┘
 ```
 
 ## Cost Estimation
@@ -453,7 +453,7 @@ npm install
 cdk deploy
 ```
 
-See [cdk/README.md](./cdk/README.md) for details.
+See [CDK Deployment Guide](../../cdk/README.md) for details.
 
 ## Clean Up
 
@@ -467,10 +467,3 @@ Are you sure you want to delete the stack otlp2parquet? [y/N]: y
 # Note: S3 bucket must be empty before deletion
 aws s3 rm s3://otlp-logs --recursive
 ```
-
-## Next Steps
-
-- [Configure VPC](https://docs.aws.amazon.com/lambda/latest/dg/configuration-vpc.html)
-- [Set up API Gateway](https://docs.aws.amazon.com/lambda/latest/dg/services-apigateway.html) for advanced routing
-- [Enable X-Ray tracing](https://docs.aws.amazon.com/lambda/latest/dg/services-xray.html)
-- [Main documentation](../../README.md)

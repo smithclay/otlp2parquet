@@ -4,7 +4,6 @@
 // logs/{service}/year={year}/month={month}/day={day}/hour={hour}/{uuid}-{timestamp}.parquet
 
 use chrono::{DateTime, Datelike, Timelike, Utc};
-use uuid::Uuid;
 
 /// Generate a partition path for a log entry
 ///
@@ -16,14 +15,18 @@ use uuid::Uuid;
 ///
 /// # Returns
 /// Partition path string
-pub fn generate_partition_path(service_name: &str, timestamp_nanos: i64) -> String {
+pub fn generate_partition_path(service_name: &str, timestamp_nanos: i64, hash_hex: &str) -> String {
     // Convert nanoseconds to DateTime
     let timestamp_secs = timestamp_nanos / 1_000_000_000;
     let dt = DateTime::from_timestamp(timestamp_secs, 0).unwrap_or_else(Utc::now);
 
-    // Generate unique filename
-    let uuid = Uuid::new_v4();
-    let filename = format!("{}-{}.parquet", uuid, timestamp_nanos);
+    // Use hash prefix for deterministic idempotent filenames
+    let hash_prefix = if hash_hex.len() >= 16 {
+        &hash_hex[..16]
+    } else {
+        hash_hex
+    };
+    let filename = format!("{}-{}.parquet", timestamp_nanos, hash_prefix);
 
     // Build partition path
     format!(
@@ -62,7 +65,11 @@ mod tests {
         let timestamp_nanos = 1_705_327_800_000_000_000;
         let service_name = "my-service";
 
-        let path = generate_partition_path(service_name, timestamp_nanos);
+        let path = generate_partition_path(
+            service_name,
+            timestamp_nanos,
+            "deadbeefdeadbeefdeadbeefdeadbeef",
+        );
 
         assert!(path.starts_with("logs/my-service/"));
         assert!(path.contains("year=2024"));
@@ -70,6 +77,7 @@ mod tests {
         assert!(path.contains("day=15"));
         assert!(path.contains("hour=14"));
         assert!(path.ends_with(".parquet"));
+        assert!(path.contains("deadbeefdeadbeef"));
     }
 
     #[test]

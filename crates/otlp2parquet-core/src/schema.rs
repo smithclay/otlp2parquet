@@ -3,7 +3,8 @@
 // This schema matches the ClickHouse OTel exporter format with PascalCase naming.
 // Common resource attributes are extracted to dedicated columns.
 
-use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use arrow::datatypes::{DataType, Field, Fields, Schema, TimeUnit};
+use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 /// Returns the Arrow schema for OpenTelemetry logs compatible with ClickHouse
@@ -18,7 +19,7 @@ pub fn otel_logs_schema_arc() -> Arc<Schema> {
 }
 
 fn build_schema() -> Schema {
-    Schema::new(vec![
+    let fields = vec![
         // Timestamps - nanosecond precision, UTC
         Field::new(
             "Timestamp",
@@ -37,8 +38,8 @@ fn build_schema() -> Schema {
         // Severity
         Field::new("SeverityText", DataType::Utf8, false),
         Field::new("SeverityNumber", DataType::Int32, false),
-        // Body
-        Field::new("Body", DataType::Utf8, false),
+        // Body as structured AnyValue
+        any_value_field("Body", true),
         // Resource attributes - extracted common fields
         Field::new("ServiceName", DataType::Utf8, false),
         Field::new("ServiceNamespace", DataType::Utf8, true),
@@ -46,7 +47,7 @@ fn build_schema() -> Schema {
         // Scope
         Field::new("ScopeName", DataType::Utf8, false),
         Field::new("ScopeVersion", DataType::Utf8, true),
-        // Remaining attributes as Map<String, String>
+        // Remaining attributes as Map<String, AnyValue>
         Field::new(
             "ResourceAttributes",
             DataType::Map(
@@ -55,7 +56,7 @@ fn build_schema() -> Schema {
                     DataType::Struct(
                         vec![
                             Field::new("key", DataType::Utf8, false),
-                            Field::new("value", DataType::Utf8, true),
+                            any_value_field("value", true),
                         ]
                         .into(),
                     ),
@@ -73,7 +74,7 @@ fn build_schema() -> Schema {
                     DataType::Struct(
                         vec![
                             Field::new("key", DataType::Utf8, false),
-                            Field::new("value", DataType::Utf8, true),
+                            any_value_field("value", true),
                         ]
                         .into(),
                     ),
@@ -83,12 +84,37 @@ fn build_schema() -> Schema {
             ),
             false,
         ),
-    ])
+    ];
+
+    let mut metadata = HashMap::new();
+    metadata.insert(
+        "otlp2parquet.schema_version".to_string(),
+        "1.1.0".to_string(),
+    );
+
+    Schema::new_with_metadata(fields, metadata)
 }
 
 /// Common resource attribute keys that are extracted to dedicated columns
 pub const EXTRACTED_RESOURCE_ATTRS: &[&str] =
     &["service.name", "service.namespace", "service.instance.id"];
+
+pub(crate) fn any_value_fields() -> Fields {
+    vec![
+        Field::new("Type", DataType::Utf8, false),
+        Field::new("StringValue", DataType::Utf8, true),
+        Field::new("BoolValue", DataType::Boolean, true),
+        Field::new("IntValue", DataType::Int64, true),
+        Field::new("DoubleValue", DataType::Float64, true),
+        Field::new("BytesValue", DataType::Binary, true),
+        Field::new("JsonValue", DataType::LargeUtf8, true),
+    ]
+    .into()
+}
+
+fn any_value_field(name: &str, nullable: bool) -> Field {
+    Field::new(name, DataType::Struct(any_value_fields()), nullable)
+}
 
 #[cfg(test)]
 mod tests {

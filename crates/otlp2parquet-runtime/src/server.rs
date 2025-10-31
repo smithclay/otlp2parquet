@@ -13,6 +13,10 @@
 // - Graceful shutdown
 // - Production-ready
 
+use crate::batcher::{
+    max_payload_bytes_from_env, processing_options_from_env, BatchConfig, BatchManager,
+    CompletedBatch, PassthroughBatcher,
+};
 use anyhow::{Context, Result};
 use axum::{
     extract::State,
@@ -21,9 +25,11 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use otlp2parquet_core::InputFormat;
+use metrics::{counter, histogram};
+use otlp2parquet_core::{otlp, InputFormat, ProcessingOptions};
 use serde_json::json;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::signal;
 use tracing::{debug, error, info, warn};
 
@@ -33,18 +39,25 @@ use crate::opendal_storage::OpenDalStorage;
 #[derive(Clone)]
 struct AppState {
     storage: Arc<OpenDalStorage>,
+    batcher: Option<Arc<BatchManager>>,
+    passthrough: PassthroughBatcher,
+    processing_options: ProcessingOptions,
+    max_payload_bytes: usize,
 }
 
 /// Error type that implements IntoResponse
-struct AppError(anyhow::Error);
+struct AppError {
+    status: StatusCode,
+    error: anyhow::Error,
+}
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        error!("Request error: {:?}", self.0);
+        error!("Request error: {:?}", self.error);
         (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            self.status,
             Json(json!({
-                "error": self.0.to_string(),
+                "error": self.error.to_string(),
             })),
         )
             .into_response()
@@ -56,7 +69,16 @@ where
     E: Into<anyhow::Error>,
 {
     fn from(err: E) -> Self {
-        Self(err.into())
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            error: err.into(),
+        }
+    }
+}
+
+impl AppError {
+    fn with_status(status: StatusCode, error: anyhow::Error) -> Self {
+        Self { status, error }
     }
 }
 
@@ -65,7 +87,7 @@ async fn handle_logs(
     State(state): State<AppState>,
     headers: HeaderMap,
     body: axum::body::Bytes,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Response, AppError> {
     // Detect input format from Content-Type header
     let content_type = headers.get("content-type").and_then(|v| v.to_str().ok());
     let format = InputFormat::from_content_type(content_type);
@@ -77,39 +99,84 @@ async fn handle_logs(
         content_type
     );
 
-    // Process OTLP logs with format awareness (PURE - no I/O, deterministic)
-    let mut parquet_bytes = Vec::new();
-    let metadata =
-        otlp2parquet_core::process_otlp_logs_into_with_format(&body, format, &mut parquet_bytes)
-            .context("Failed to process OTLP logs")?;
+    let max_payload = state.max_payload_bytes;
+    if body.len() > max_payload {
+        counter!("otlp.ingest.rejected", 1);
+        return Err(AppError::with_status(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            anyhow::anyhow!("payload {} exceeds limit {}", body.len(), max_payload),
+        ));
+    }
 
-    info!(
-        "Processed {} log records from service '{}' (format: {:?})",
-        metadata.record_count, metadata.service_name, format
+    let start = Instant::now();
+    counter!("otlp.ingest.requests", 1);
+    histogram!("otlp.ingest.bytes", body.len() as f64);
+
+    let request =
+        otlp::parse_otlp_request(&body, format).context("Failed to parse OTLP request payload")?;
+
+    let mut uploads: Vec<CompletedBatch> = Vec::new();
+    let metadata;
+
+    if let Some(batcher) = &state.batcher {
+        let mut expired = batcher
+            .drain_expired()
+            .context("Failed to flush expired batches")?;
+        uploads.append(&mut expired);
+
+        let (mut ready, meta) = batcher.ingest(request).context("Failed to enqueue batch")?;
+        uploads.append(&mut ready);
+        metadata = meta;
+    } else {
+        let batch = state
+            .passthrough
+            .ingest(request, &state.processing_options)
+            .context("Failed to write Parquet batch")?;
+        metadata = batch.metadata.clone();
+        uploads.push(batch);
+    }
+
+    counter!("otlp.ingest.records", metadata.record_count as u64);
+
+    let mut uploaded_paths = Vec::new();
+    for batch in uploads {
+        let hash_hex = batch.content_hash.to_hex().to_string();
+        let partition_path = crate::partition::generate_partition_path(
+            &batch.metadata.service_name,
+            batch.metadata.first_timestamp_nanos,
+            &hash_hex,
+        );
+
+        let size_bytes = batch.bytes.len();
+        state
+            .storage
+            .write(&partition_path, batch.bytes)
+            .await
+            .context("Failed to write to storage")?;
+
+        counter!("otlp.batch.flushes", 1);
+        histogram!("otlp.batch.rows", batch.metadata.record_count as f64);
+        histogram!("otlp.batch.size_bytes", size_bytes as f64);
+        info!(
+            "Committed batch path={} service={} rows={}",
+            partition_path, batch.metadata.service_name, batch.metadata.record_count
+        );
+        uploaded_paths.push(partition_path);
+    }
+
+    histogram!(
+        "otlp.ingest.latency_ms",
+        start.elapsed().as_secs_f64() * 1000.0
     );
 
-    // Generate partition path (platform-specific storage decision)
-    let partition_path = crate::partition::generate_partition_path(
-        &metadata.service_name,
-        metadata.first_timestamp_nanos,
-    );
-
-    info!("Writing to partition: {}", partition_path);
-
-    // Write to storage (async)
-    state
-        .storage
-        .write(&partition_path, parquet_bytes)
-        .await
-        .context("Failed to write to storage")?;
-
-    info!("Successfully wrote parquet file to storage");
-
-    Ok(Json(json!({
+    let response = Json(json!({
         "status": "ok",
         "records_processed": metadata.record_count,
-        "partition_path": partition_path,
-    })))
+        "flush_count": uploaded_paths.len(),
+        "partitions": uploaded_paths,
+    }));
+
+    Ok((StatusCode::OK, response).into_response())
 }
 
 /// GET /health - Basic health check
@@ -252,8 +319,38 @@ pub async fn run() -> Result<()> {
     // Initialize storage
     let storage = init_storage()?;
 
+    // Configure batching + row group behaviour
+    let processing_options = processing_options_from_env();
+    let batch_config = BatchConfig::from_env(200_000, 128 * 1024 * 1024, 10);
+    let batcher = if batch_config.max_rows == 0 || batch_config.max_bytes == 0 {
+        info!(
+            "Batching disabled (max_rows={} max_bytes={})",
+            batch_config.max_rows, batch_config.max_bytes
+        );
+        None
+    } else {
+        let cfg = batch_config.clone();
+        info!(
+            "Batching enabled (max_rows={} max_bytes={} max_age={}s, row_group_rows={})",
+            cfg.max_rows,
+            cfg.max_bytes,
+            cfg.max_age.as_secs(),
+            processing_options.max_rows_per_batch
+        );
+        Some(Arc::new(BatchManager::new(cfg, processing_options.clone())))
+    };
+
+    let max_payload_bytes = max_payload_bytes_from_env(8 * 1024 * 1024);
+    info!("Max payload size set to {} bytes", max_payload_bytes);
+
     // Create app state
-    let state = AppState { storage };
+    let state = AppState {
+        storage,
+        batcher,
+        passthrough: PassthroughBatcher,
+        processing_options,
+        max_payload_bytes,
+    };
 
     // Build router
     let app = Router::new()

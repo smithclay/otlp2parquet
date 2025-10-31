@@ -43,7 +43,7 @@ docker-compose up --build
 
 ## Kubernetes
 
-See [kubernetes/](./kubernetes/) for manifests.
+See [Kubernetes manifests](../../deploy/docker/kubernetes/) for details.
 
 ```bash
 kubectl apply -f deploy/docker/kubernetes/
@@ -78,5 +78,3 @@ docker-compose logs -f otlp2parquet
 ```bash
 docker-compose down -v
 ```
-
-[← Back to main docs](../../README.md)

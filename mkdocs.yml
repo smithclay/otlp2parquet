@@ -1,0 +1,50 @@
+site_name: otlp2parquet Documentation
+site_url: https://smithclay.github.io/otlp2parquet/
+repo_url: https://github.com/smithclay/otlp2parquet
+repo_name: smithclay/otlp2parquet
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - content.code.annotate
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/toggle-switch-off-outline
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/toggle-switch
+        name: Switch to light mode
+  font:
+    text: Roboto
+    code: Roboto Mono
+  icon:
+    repo: fontawesome/brands/github
+
+nav:
+  - Home: index.md
+  - Get Started:
+      - Quickstart: get-started/quickstart.md
+      - Deployment:
+          - Docker: get-started/deployment/docker.md
+          - Cloudflare Workers: get-started/deployment/cloudflare.md
+          - AWS Lambda: get-started/deployment/aws-lambda.md
+      - Usage: get-started/usage.md
+  - Developers:
+      - Overview: developers/index.md
+      - Architecture: developers/architecture.md
+      - Codebase: developers/codebase.md
+      - Schema: developers/schema.md
+      - Development Setup: developers/development-setup.md
+      - API Reference (Rustdoc): https://smithclay.github.io/otlp2parquet/api/otlp2parquet/index.html # Placeholder, will be generated

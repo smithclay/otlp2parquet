@@ -6,6 +6,11 @@
 // We don't add our own tokio - lambda_runtime provides it
 
 #[cfg(feature = "lambda")]
+use crate::batcher::{
+    max_payload_bytes_from_env, processing_options_from_env, BatchConfig, BatchManager,
+    CompletedBatch, PassthroughBatcher,
+};
+#[cfg(feature = "lambda")]
 use anyhow::Result;
 #[cfg(feature = "lambda")]
 use aws_lambda_events::{
@@ -18,6 +23,10 @@ use aws_lambda_events::{
 use base64::Engine;
 #[cfg(feature = "lambda")]
 use lambda_runtime::{service_fn, Error, LambdaEvent};
+#[cfg(feature = "lambda")]
+use otlp2parquet_core::otlp;
+#[cfg(feature = "lambda")]
+use otlp2parquet_core::ProcessingOptions;
 #[cfg(feature = "lambda")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "lambda")]
@@ -33,7 +42,7 @@ use std::sync::Arc;
 #[cfg(feature = "lambda")]
 async fn handle_request(
     event: LambdaEvent<HttpRequestEvent>,
-    storage: Arc<crate::opendal_storage::OpenDalStorage>,
+    state: Arc<LambdaState>,
 ) -> Result<HttpLambdaResponse, Error> {
     let (request, _context) = event.into_parts();
 
@@ -55,7 +64,7 @@ async fn handle_request(
                 request.body.as_deref(),
                 request.is_base64_encoded,
                 content_type,
-                &storage,
+                &state,
             )
             .await;
             Ok(build_api_gateway_response(response))
@@ -87,7 +96,7 @@ async fn handle_request(
                 request.body.as_deref(),
                 request.is_base64_encoded,
                 content_type,
-                &storage,
+                &state,
             )
             .await;
             Ok(build_function_url_response(response))
@@ -108,18 +117,16 @@ async fn handle_http_request(
     body: Option<&str>,
     is_base64_encoded: bool,
     content_type: Option<&str>,
-    storage: &crate::opendal_storage::OpenDalStorage,
+    state: &LambdaState,
 ) -> HttpResponseData {
     let method = method.trim().to_ascii_uppercase();
     match method.as_str() {
-        "POST" => handle_post(path, body, is_base64_encoded, content_type, storage).await,
+        "POST" => handle_post(path, body, is_base64_encoded, content_type, state).await,
         "GET" => handle_get(path),
         _ => HttpResponseData::json(405, json!({ "error": "method not allowed" }).to_string()),
     }
 }
 
-#[cfg(feature = "lambda")]
-const OK_JSON_BODY: &str = r#"{"status":"ok"}"#;
 #[cfg(feature = "lambda")]
 const HEALTHY_TEXT: &str = "Healthy";
 
@@ -129,7 +136,7 @@ async fn handle_post(
     body: Option<&str>,
     is_base64_encoded: bool,
     content_type: Option<&str>,
-    storage: &crate::opendal_storage::OpenDalStorage,
+    state: &LambdaState,
 ) -> HttpResponseData {
     if path != "/v1/logs" {
         return HttpResponseData::json(404, json!({ "error": "not found" }).to_string());
@@ -140,19 +147,25 @@ async fn handle_post(
         Err(response) => return response,
     };
 
+    if body.len() > state.max_payload_bytes {
+        return HttpResponseData::json(
+            413,
+            json!({
+                "error": "payload too large",
+                "limit_bytes": state.max_payload_bytes,
+            })
+            .to_string(),
+        );
+    }
+
     // Detect input format from Content-Type header
     let format = otlp2parquet_core::InputFormat::from_content_type(content_type);
 
-    let mut parquet_bytes = Vec::new();
-    let metadata = match otlp2parquet_core::process_otlp_logs_into_with_format(
-        body.as_ref(),
-        format,
-        &mut parquet_bytes,
-    ) {
-        Ok(metadata) => metadata,
+    let request = match otlp::parse_otlp_request(body.as_ref(), format) {
+        Ok(req) => req,
         Err(err) => {
             eprintln!(
-                "Failed to process OTLP logs (format: {:?}, content-type: {:?}): {}",
+                "Failed to parse OTLP logs (format: {:?}, content-type: {:?}): {}",
                 format, content_type, err
             );
             return HttpResponseData::json(
@@ -162,20 +175,80 @@ async fn handle_post(
         }
     };
 
-    let partition_path = crate::partition::generate_partition_path(
-        &metadata.service_name,
-        metadata.first_timestamp_nanos,
-    );
+    let mut uploads: Vec<CompletedBatch> = Vec::new();
+    let metadata;
 
-    if let Err(err) = storage.write(&partition_path, parquet_bytes).await {
-        eprintln!("Failed to write to S3: {}", err);
-        return HttpResponseData::json(
-            500,
-            json!({ "error": "internal storage failure" }).to_string(),
-        );
+    if let Some(batcher) = &state.batcher {
+        match batcher.drain_expired() {
+            Ok(mut expired) => uploads.append(&mut expired),
+            Err(err) => {
+                eprintln!("Failed to flush expired batches: {}", err);
+                return HttpResponseData::json(
+                    500,
+                    json!({ "error": "internal batching failure" }).to_string(),
+                );
+            }
+        }
+
+        match batcher.ingest(request) {
+            Ok((mut ready, meta)) => {
+                uploads.append(&mut ready);
+                metadata = meta;
+            }
+            Err(err) => {
+                eprintln!("Batch enqueue failed: {}", err);
+                return HttpResponseData::json(
+                    500,
+                    json!({ "error": "internal batching failure" }).to_string(),
+                );
+            }
+        }
+    } else {
+        match state.passthrough.ingest(request, &state.processing_options) {
+            Ok(batch) => {
+                metadata = batch.metadata.clone();
+                uploads.push(batch);
+            }
+            Err(err) => {
+                eprintln!("Failed to encode Parquet: {}", err);
+                return HttpResponseData::json(
+                    500,
+                    json!({ "error": "internal encoding failure" }).to_string(),
+                );
+            }
+        }
     }
 
-    HttpResponseData::json(200, OK_JSON_BODY.to_string())
+    let mut uploaded_paths = Vec::new();
+    for batch in uploads {
+        let hash_hex = batch.content_hash.to_hex().to_string();
+        let partition_path = crate::partition::generate_partition_path(
+            &batch.metadata.service_name,
+            batch.metadata.first_timestamp_nanos,
+            &hash_hex,
+        );
+
+        if let Err(err) = state.storage.write(&partition_path, batch.bytes).await {
+            eprintln!("Failed to write to storage: {}", err);
+            return HttpResponseData::json(
+                500,
+                json!({ "error": "internal storage failure" }).to_string(),
+            );
+        }
+
+        uploaded_paths.push(partition_path);
+    }
+
+    HttpResponseData::json(
+        200,
+        json!({
+            "status": "ok",
+            "records_processed": metadata.record_count,
+            "flush_count": uploaded_paths.len(),
+            "partitions": uploaded_paths,
+        })
+        .to_string(),
+    )
 }
 
 #[cfg(feature = "lambda")]
@@ -221,6 +294,16 @@ enum HttpRequestEvent {
 enum HttpLambdaResponse {
     ApiGateway(ApiGatewayProxyResponse),
     FunctionUrl(LambdaFunctionUrlResponse),
+}
+
+#[cfg(feature = "lambda")]
+#[derive(Clone)]
+struct LambdaState {
+    storage: Arc<crate::opendal_storage::OpenDalStorage>,
+    batcher: Option<Arc<BatchManager>>,
+    passthrough: PassthroughBatcher,
+    processing_options: ProcessingOptions,
+    max_payload_bytes: usize,
 }
 
 #[cfg(feature = "lambda")]
@@ -298,10 +381,42 @@ pub async fn run() -> Result<(), Error> {
             })?,
     );
 
-    // Run Lambda runtime
+    let processing_options = processing_options_from_env();
+    let batch_config = BatchConfig::from_env(200_000, 128 * 1024 * 1024, 10);
+    let batcher = if batch_config.max_rows == 0 || batch_config.max_bytes == 0 {
+        println!(
+            "Lambda batching disabled (max_rows={}, max_bytes={})",
+            batch_config.max_rows, batch_config.max_bytes
+        );
+        None
+    } else {
+        println!(
+            "Lambda batching enabled (max_rows={} max_bytes={} max_age={}s, row_group_rows={})",
+            batch_config.max_rows,
+            batch_config.max_bytes,
+            batch_config.max_age.as_secs(),
+            processing_options.max_rows_per_batch
+        );
+        Some(Arc::new(BatchManager::new(
+            batch_config,
+            processing_options.clone(),
+        )))
+    };
+
+    let max_payload_bytes = max_payload_bytes_from_env(6 * 1024 * 1024);
+    println!("Lambda payload cap set to {} bytes", max_payload_bytes);
+
+    let state = Arc::new(LambdaState {
+        storage: storage.clone(),
+        batcher,
+        passthrough: PassthroughBatcher,
+        processing_options,
+        max_payload_bytes,
+    });
+
     lambda_runtime::run(service_fn(move |event: LambdaEvent<HttpRequestEvent>| {
-        let storage = storage.clone();
-        async move { handle_request(event, storage).await }
+        let state = state.clone();
+        async move { handle_request(event, state).await }
     }))
     .await
 }

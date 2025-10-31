@@ -6,18 +6,37 @@
 use anyhow::Result;
 use arrow::array::RecordBatch;
 use parquet::arrow::ArrowWriter;
+#[cfg(target_arch = "wasm32")]
 use parquet::basic::Compression;
-use parquet::file::properties::WriterProperties;
+#[cfg(not(target_arch = "wasm32"))]
+use parquet::basic::{Compression, ZstdLevel};
+use parquet::file::properties::{EnabledStatistics, WriterProperties};
 use std::io::Write;
 use std::sync::OnceLock;
 
-fn writer_properties() -> &'static WriterProperties {
+#[cfg(target_arch = "wasm32")]
+fn compression_setting() -> Compression {
+    Compression::SNAPPY
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn compression_setting() -> Compression {
+    Compression::ZSTD(ZstdLevel::try_new(2).unwrap())
+}
+
+pub fn writer_properties() -> &'static WriterProperties {
     static PROPERTIES: OnceLock<WriterProperties> = OnceLock::new();
     PROPERTIES.get_or_init(|| {
-        WriterProperties::builder()
-            .set_compression(Compression::SNAPPY)
+        let builder = WriterProperties::builder()
             .set_dictionary_enabled(true)
-            .build()
+            .set_statistics_enabled(EnabledStatistics::Page)
+            .set_compression(compression_setting())
+            .set_data_page_size_limit(256 * 1024) // 256 KiB data pages balance CPU vs. IO
+            .set_write_batch_size(32 * 1024)
+            .set_max_row_group_size(32 * 1024) // 32k rows per group keeps query engines happy
+            .set_dictionary_page_size_limit(128 * 1024);
+
+        builder.build()
     })
 }
 

@@ -23,4 +23,8 @@ serde_json = { workspace = true }  # For JSON/JSONL format support
 
 # Platform-specific uuid features
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+parquet = { workspace = true, features = ["arrow", "snap"] }
 uuid = { workspace = true, features = ["js"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+parquet = { workspace = true, features = ["arrow", "snap", "zstd"] }

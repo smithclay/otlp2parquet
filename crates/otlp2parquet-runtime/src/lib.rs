@@ -5,6 +5,7 @@
 // - AWS Lambda (S3 storage, event-driven)
 // - Server (default mode, multi-backend storage, production features)
 
+pub mod batcher;
 pub mod partition;
 
 #[cfg(feature = "cloudflare")]

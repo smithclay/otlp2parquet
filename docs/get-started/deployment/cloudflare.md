@@ -321,4 +321,3 @@ wrangler tail
 - [Configure custom domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)
 - [Set up analytics](https://developers.cloudflare.com/workers/observability/analytics/)
 - [Enable rate limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)
-- [Main documentation](../../README.md)
