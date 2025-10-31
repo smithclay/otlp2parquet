@@ -2,62 +2,14 @@
 
 Deploy `otlp2parquet` to AWS Lambda with S3 storage. Serverless, event-driven, and fully managed.
 
-## Quick Start (Easiest) ⚡
+Uses AWS SAM (Serverless Application Model) - the official AWS tool for Lambda deployment.
 
-### Option 1: One-Click Deployment (CloudFormation Button)
-
-[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=https://raw.githubusercontent.com/smithclay/otlp2parquet/main/cloudformation.yaml&stackName=otlp2parquet)
-
-**What it does:**
-1. Creates Lambda function using pre-built container image
-2. Creates S3 bucket for Parquet files (auto-generated name or custom)
-3. Sets up Function URL for HTTP access
-4. Configures IAM roles and CloudWatch Logs
-
-**Time:** ~2 minutes
-**Requirements:** AWS account only (no local tools needed)
-
-**After deployment:**
-1. Go to CloudFormation → Stacks → otlp2parquet
-2. Click "Outputs" tab
-3. Copy the `FunctionUrl` value
-4. Send OTLP logs to that URL!
-
-**Note:** This requires a publicly available Lambda container image. See [Publishing Container Images](#publishing-container-images) below.
-
----
-
-## Advanced Deployment Options
-
-### Option 2: AWS CLI (CloudFormation)
-
-```bash
-# Deploy CloudFormation stack
-aws cloudformation create-stack \
-  --stack-name otlp2parquet \
-  --template-url https://raw.githubusercontent.com/smithclay/otlp2parquet/main/cloudformation.yaml \
-  --capabilities CAPABILITY_IAM
-
-# Wait for completion
-aws cloudformation wait stack-create-complete --stack-name otlp2parquet
-
-# Get Function URL
-aws cloudformation describe-stacks \
-  --stack-name otlp2parquet \
-  --query 'Stacks[0].Outputs[?OutputKey==`FunctionUrl`].OutputValue' \
-  --output text
-```
-
----
-
-### Option 3: SAM CLI (For Local Development)
-
-**Prerequisites:**
+## Prerequisites
 
 1. **AWS Account** with appropriate permissions
 2. **AWS CLI** configured (`aws configure`)
-3. **AWS SAM CLI** (recommended) or CloudFormation
-4. **cargo-lambda** for Rust builds
+3. **AWS SAM CLI** - Official Lambda deployment tool
+4. **cargo-lambda** - Builds Rust binaries for Lambda
 
 ## Installation
 
@@ -503,73 +455,7 @@ cdk deploy
 
 See [cdk/README.md](./cdk/README.md) for details.
 
-## Publishing Container Images
-
-For the CloudFormation button to work, you need to publish the Lambda container image to a public registry. Here are two options:
-
-### Option A: Amazon ECR Public (Recommended)
-
-```bash
-# 1. Build Lambda container image
-cargo build --release --features lambda
-docker build -f Dockerfile.lambda -t otlp2parquet:lambda .
-
-# 2. Login to ECR Public
-aws ecr-public get-login-password --region us-east-1 | \
-  docker login --username AWS --password-stdin public.ecr.aws
-
-# 3. Create ECR Public repository (one-time)
-aws ecr-public create-repository \
-  --repository-name otlp2parquet \
-  --region us-east-1
-
-# 4. Tag and push
-docker tag otlp2parquet:lambda public.ecr.aws/youraliashere/otlp2parquet:latest
-docker push public.ecr.aws/youraliashere/otlp2parquet:latest
-```
-
-### Option B: GitHub Container Registry
-
-```bash
-# 1. Build Lambda container image
-cargo build --release --features lambda
-docker build -f Dockerfile.lambda -t otlp2parquet:lambda .
-
-# 2. Login to GHCR
-echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
-
-# 3. Tag and push
-docker tag otlp2parquet:lambda ghcr.io/smithclay/otlp2parquet-lambda:latest
-docker push ghcr.io/smithclay/otlp2parquet-lambda:latest
-
-# 4. Make image public in GitHub Settings → Packages
-```
-
-**Note:** Once published, update the `ContainerImage` parameter in `cloudformation.yaml` to point to your image.
-
----
-
 ## Clean Up
-
-### CloudFormation Stack
-
-```bash
-# Delete via CloudFormation console or CLI
-aws cloudformation delete-stack --stack-name otlp2parquet
-
-# Wait for deletion
-aws cloudformation wait stack-delete-complete --stack-name otlp2parquet
-
-# Note: S3 bucket must be empty before deletion
-BUCKET=$(aws cloudformation describe-stacks \
-  --stack-name otlp2parquet \
-  --query 'Stacks[0].Outputs[?OutputKey==`BucketName`].OutputValue' \
-  --output text)
-
-aws s3 rm s3://$BUCKET --recursive
-```
-
-### SAM Stack
 
 ```bash
 # Delete the stack and all resources
