@@ -70,7 +70,27 @@ docker-compose up -d
 
 ### 🔺 AWS Lambda (Serverless)
 
-**Deploy with AWS SAM:**
+**One-click deployment:**
+
+[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=https://raw.githubusercontent.com/smithclay/otlp2parquet/main/cloudformation.yaml&stackName=otlp2parquet)
+
+**Or with AWS CLI:**
+
+```bash
+# Deploy CloudFormation stack
+aws cloudformation create-stack \
+  --stack-name otlp2parquet \
+  --template-url https://raw.githubusercontent.com/smithclay/otlp2parquet/main/cloudformation.yaml \
+  --capabilities CAPABILITY_IAM
+
+# Get Function URL
+aws cloudformation describe-stacks \
+  --stack-name otlp2parquet \
+  --query 'Stacks[0].Outputs[?OutputKey==`FunctionUrl`].OutputValue' \
+  --output text
+```
+
+**Or with SAM CLI (advanced - local development):**
 
 ```bash
 # Install SAM CLI
@@ -79,8 +99,6 @@ brew install aws-sam-cli
 # Deploy (guided)
 sam deploy --guided
 ```
-
-You'll get a Function URL for OTLP ingestion.
 
 **Cost:** ~$16/month (1M logs/day) including S3
 
@@ -92,11 +110,13 @@ You'll get a Function URL for OTLP ingestion.
 
 | Platform | Setup Time | Monthly Cost* | Best For |
 |----------|-----------|---------------|----------|
-| **Cloudflare** | 1 min | Free-$20 | Edge compute, global distribution |
-| **Docker** | 2 min | $5-50 | Kubernetes, self-hosted, multi-backend |
-| **Lambda** | 3 min | $16+ | AWS ecosystem, serverless |
+| **Cloudflare** | 1 min ⚡ | Free-$20 | Edge compute, global distribution |
+| **Docker** | 2 min 🐳 | $5-50 | Kubernetes, self-hosted, multi-backend |
+| **Lambda** | 2 min ⚡ | $16+ | AWS ecosystem, serverless |
 
 *Cost estimates for ~1M logs/day
+
+**Note:** AWS button requires publishing Lambda container image to public registry first (see [deploy/lambda/README.md](deploy/lambda/README.md))
 
 ## Usage
 

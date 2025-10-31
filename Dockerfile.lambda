@@ -1,0 +1,18 @@
+# Lambda container image for otlp2parquet
+# This can be pushed to Amazon ECR Public for one-click deployments
+# Based on AWS Lambda Rust runtime
+
+FROM public.ecr.aws/lambda/provided:al2023-arm64
+
+# Install runtime dependencies
+RUN dnf install -y ca-certificates && dnf clean all
+
+# Copy pre-built binary (build separately with cargo build --release --features lambda)
+# The binary must be named 'bootstrap' for Lambda custom runtime
+COPY target/release/otlp2parquet /var/runtime/bootstrap
+
+# Ensure binary is executable
+RUN chmod +x /var/runtime/bootstrap
+
+# Set the CMD to your handler (could also be done as a parameter override outside of the Dockerfile)
+CMD [ "bootstrap" ]
