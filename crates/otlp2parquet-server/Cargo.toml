@@ -1,0 +1,27 @@
+[package]
+name = "otlp2parquet-server"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+otlp2parquet-core = { path = "../otlp2parquet-core" }
+otlp2parquet-runtime = { path = "../otlp2parquet-runtime", features = ["services-fs", "services-s3"] }
+
+# HTTP server
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros", "signal"] }
+
+# Structured logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Utilities
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+metrics = { workspace = true }

@@ -13,10 +13,6 @@
 // - Graceful shutdown
 // - Production-ready
 
-use crate::batcher::{
-    max_payload_bytes_from_env, processing_options_from_env, BatchConfig, BatchManager,
-    CompletedBatch, PassthroughBatcher,
-};
 use anyhow::{Context, Result};
 use axum::{
     extract::State,
@@ -27,13 +23,18 @@ use axum::{
 };
 use metrics::{counter, histogram};
 use otlp2parquet_core::{otlp, InputFormat, ProcessingOptions};
+use otlp2parquet_runtime::{
+    batcher::{
+        max_payload_bytes_from_env, processing_options_from_env, BatchConfig, BatchManager,
+        CompletedBatch, PassthroughBatcher,
+    },
+    opendal_storage::OpenDalStorage,
+};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::signal;
 use tracing::{debug, error, info, warn};
-
-use crate::opendal_storage::OpenDalStorage;
 
 /// Application state shared across all requests
 #[derive(Clone)]
@@ -141,7 +142,7 @@ async fn handle_logs(
     let mut uploaded_paths = Vec::new();
     for batch in uploads {
         let hash_hex = batch.content_hash.to_hex().to_string();
-        let partition_path = crate::partition::generate_partition_path(
+        let partition_path = otlp2parquet_runtime::partition::generate_partition_path(
             &batch.metadata.service_name,
             batch.metadata.first_timestamp_nanos,
             &hash_hex,
@@ -306,7 +307,6 @@ async fn shutdown_signal() {
 }
 
 /// Entry point for server mode
-#[cfg(feature = "server")]
 pub async fn run() -> Result<()> {
     // Initialize tracing
     init_tracing();

@@ -6,37 +6,24 @@
 // Worker crate provides the runtime, OpenDAL provides storage abstraction
 // Entry point is #[event(fetch)] macro, not main()
 
-#[cfg(feature = "cloudflare")]
-use crate::batcher::{
+use once_cell::sync::OnceCell;
+use otlp2parquet_core::otlp;
+use otlp2parquet_core::ProcessingOptions;
+use otlp2parquet_runtime::batcher::{
     max_payload_bytes_from_env, processing_options_from_env, BatchConfig, BatchManager,
     CompletedBatch, PassthroughBatcher,
 };
-#[cfg(feature = "cloudflare")]
-use once_cell::sync::OnceCell;
-#[cfg(feature = "cloudflare")]
-use otlp2parquet_core::otlp;
-#[cfg(feature = "cloudflare")]
-use otlp2parquet_core::ProcessingOptions;
-#[cfg(feature = "cloudflare")]
 use serde_json::json;
-#[cfg(feature = "cloudflare")]
 use std::sync::Arc;
-#[cfg(feature = "cloudflare")]
 use worker::*;
 
-// Note: R2Storage removed - now using OpenDalStorage with S3-compatible R2 endpoint
-
-#[cfg(feature = "cloudflare")]
-static STORAGE: OnceCell<Arc<crate::opendal_storage::OpenDalStorage>> = OnceCell::new();
-#[cfg(feature = "cloudflare")]
+static STORAGE: OnceCell<Arc<otlp2parquet_runtime::opendal_storage::OpenDalStorage>> =
+    OnceCell::new();
 static PROCESSING_OPTIONS: OnceCell<ProcessingOptions> = OnceCell::new();
-#[cfg(feature = "cloudflare")]
 static BATCHER: OnceCell<Option<Arc<BatchManager>>> = OnceCell::new();
-#[cfg(feature = "cloudflare")]
 static MAX_PAYLOAD_BYTES: OnceCell<usize> = OnceCell::new();
 
 /// Handle OTLP HTTP POST request and write to R2
-#[cfg(feature = "cloudflare")]
 pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
     // Only accept POST requests to /v1/logs
     if req.method() != Method::Post {
@@ -84,7 +71,7 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
             .to_string();
 
         let instance = Arc::new(
-            crate::opendal_storage::OpenDalStorage::new_r2(
+            otlp2parquet_runtime::opendal_storage::OpenDalStorage::new_r2(
                 &bucket,
                 &account_id,
                 &access_key_id,
@@ -196,7 +183,7 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
     let mut uploaded_paths = Vec::new();
     for batch in uploads {
         let hash_hex = batch.content_hash.to_hex().to_string();
-        let partition_path = crate::partition::generate_partition_path(
+        let partition_path = otlp2parquet_runtime::partition::generate_partition_path(
             &batch.metadata.service_name,
             batch.metadata.first_timestamp_nanos,
             &hash_hex,

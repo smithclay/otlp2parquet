@@ -89,18 +89,29 @@ otlp2parquet/
 │   │   ├── otlp/             # ✅ OTLP→Arrow conversion
 │   │   ├── parquet/          # ✅ Parquet writing + partitioning
 │   │   └── schema.rs         # ✅ Arrow schema (15 fields)
-│   ├── otlp2parquet-runtime/ # Platform adapters
-│   │   ├── server.rs         # ✅ Default mode (Axum + multi-backend)
-│   │   ├── lambda.rs         # ✅ Event-driven (OpenDAL S3)
-│   │   ├── cloudflare.rs     # ✅ WASM mode (OpenDAL R2)
+│   ├── otlp2parquet-runtime/ # ✅ Shared utilities (all platforms)
+│   │   ├── batcher.rs        # ✅ Batching logic
+│   │   ├── partition.rs      # ✅ Partition path generation
 │   │   └── opendal_storage.rs # ✅ Unified storage abstraction
+│   ├── otlp2parquet-cloudflare/ # ✅ Cloudflare Workers platform
+│   │   └── lib.rs            # ✅ WASM mode (OpenDAL R2)
+│   ├── otlp2parquet-lambda/  # ✅ AWS Lambda platform
+│   │   └── lib.rs            # ✅ Event-driven (OpenDAL S3)
+│   ├── otlp2parquet-server/  # ✅ Server platform (default)
+│   │   └── lib.rs            # ✅ Full-featured (Axum + multi-backend)
 │   └── otlp2parquet-proto/   # ✅ Generated protobuf (v1.3.2)
 │       └── proto/            # ✅ OpenTelemetry proto files
 └── src/
     └── main.rs               # ✅ Platform-specific entry points
 ```
 
-**Key Change:** Adopted Apache OpenDAL for unified storage - leverages mature external abstractions vs NIH syndrome.
+**Architecture Decision:** Platform-specific runtimes are now **separate crates** for cleaner dependencies and simpler builds.
+
+**Key Benefits:**
+- ✅ **Explicit dependencies** - Each platform crate declares exactly what it needs
+- ✅ **No feature flag complexity** - Build simplicity: `cargo build -p otlp2parquet-cloudflare`
+- ✅ **Independent evolution** - Platforms can evolve/deprecate independently
+- ✅ **Conceptual integrity** - Each platform is a complete, coherent system (Fred Brooks approved)
 
 ---
 

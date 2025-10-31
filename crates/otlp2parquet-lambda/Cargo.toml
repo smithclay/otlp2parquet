@@ -1,0 +1,20 @@
+[package]
+name = "otlp2parquet-lambda"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+otlp2parquet-core = { path = "../otlp2parquet-core" }
+otlp2parquet-runtime = { path = "../otlp2parquet-runtime", features = ["services-s3"] }
+
+# AWS Lambda runtime
+lambda_runtime = { workspace = true }
+aws_lambda_events = { workspace = true }
+
+# Utilities
+base64 = "0.22"
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }

@@ -5,41 +5,27 @@
 // Philosophy: Use lambda_runtime's provided tokio
 // We don't add our own tokio - lambda_runtime provides it
 
-#[cfg(feature = "lambda")]
-use crate::batcher::{
-    max_payload_bytes_from_env, processing_options_from_env, BatchConfig, BatchManager,
-    CompletedBatch, PassthroughBatcher,
-};
-#[cfg(feature = "lambda")]
 use anyhow::Result;
-#[cfg(feature = "lambda")]
 use aws_lambda_events::{
     apigw::{ApiGatewayProxyRequest, ApiGatewayProxyResponse},
     encodings::Body,
     http::{header::CONTENT_TYPE, HeaderValue},
     lambda_function_urls::{LambdaFunctionUrlRequest, LambdaFunctionUrlResponse},
 };
-#[cfg(feature = "lambda")]
 use base64::Engine;
-#[cfg(feature = "lambda")]
 use lambda_runtime::{service_fn, Error, LambdaEvent};
-#[cfg(feature = "lambda")]
 use otlp2parquet_core::otlp;
-#[cfg(feature = "lambda")]
 use otlp2parquet_core::ProcessingOptions;
-#[cfg(feature = "lambda")]
+use otlp2parquet_runtime::batcher::{
+    max_payload_bytes_from_env, processing_options_from_env, BatchConfig, BatchManager,
+    CompletedBatch, PassthroughBatcher,
+};
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "lambda")]
 use serde_json::json;
-#[cfg(feature = "lambda")]
 use std::borrow::Cow;
-#[cfg(feature = "lambda")]
 use std::sync::Arc;
 
-// Note: S3Storage removed - now using OpenDalStorage from opendal_storage.rs
-
 /// Lambda handler for OTLP HTTP requests
-#[cfg(feature = "lambda")]
 async fn handle_request(
     event: LambdaEvent<HttpRequestEvent>,
     state: Arc<LambdaState>,
@@ -104,13 +90,11 @@ async fn handle_request(
     }
 }
 
-#[cfg(feature = "lambda")]
 fn canonical_path(path: Option<&str>) -> String {
     let raw = path.unwrap_or("/");
     raw.split('?').next().unwrap_or("/").to_string()
 }
 
-#[cfg(feature = "lambda")]
 async fn handle_http_request(
     method: &str,
     path: &str,
@@ -127,10 +111,8 @@ async fn handle_http_request(
     }
 }
 
-#[cfg(feature = "lambda")]
 const HEALTHY_TEXT: &str = "Healthy";
 
-#[cfg(feature = "lambda")]
 async fn handle_post(
     path: &str,
     body: Option<&str>,
@@ -222,7 +204,7 @@ async fn handle_post(
     let mut uploaded_paths = Vec::new();
     for batch in uploads {
         let hash_hex = batch.content_hash.to_hex().to_string();
-        let partition_path = crate::partition::generate_partition_path(
+        let partition_path = otlp2parquet_runtime::partition::generate_partition_path(
             &batch.metadata.service_name,
             batch.metadata.first_timestamp_nanos,
             &hash_hex,
@@ -251,7 +233,6 @@ async fn handle_post(
     )
 }
 
-#[cfg(feature = "lambda")]
 fn handle_get(path: &str) -> HttpResponseData {
     match path {
         "/health" => HttpResponseData::text(200, HEALTHY_TEXT.to_string()),
@@ -259,7 +240,6 @@ fn handle_get(path: &str) -> HttpResponseData {
     }
 }
 
-#[cfg(feature = "lambda")]
 fn decode_body<'a>(
     body: Option<&'a str>,
     is_base64_encoded: bool,
@@ -280,7 +260,6 @@ fn decode_body<'a>(
     }
 }
 
-#[cfg(feature = "lambda")]
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum HttpRequestEvent {
@@ -288,7 +267,6 @@ enum HttpRequestEvent {
     FunctionUrl(Box<LambdaFunctionUrlRequest>),
 }
 
-#[cfg(feature = "lambda")]
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 enum HttpLambdaResponse {
@@ -296,24 +274,21 @@ enum HttpLambdaResponse {
     FunctionUrl(LambdaFunctionUrlResponse),
 }
 
-#[cfg(feature = "lambda")]
 #[derive(Clone)]
 struct LambdaState {
-    storage: Arc<crate::opendal_storage::OpenDalStorage>,
+    storage: Arc<otlp2parquet_runtime::opendal_storage::OpenDalStorage>,
     batcher: Option<Arc<BatchManager>>,
     passthrough: PassthroughBatcher,
     processing_options: ProcessingOptions,
     max_payload_bytes: usize,
 }
 
-#[cfg(feature = "lambda")]
 struct HttpResponseData {
     status_code: u16,
     body: String,
     content_type: &'static str,
 }
 
-#[cfg(feature = "lambda")]
 impl HttpResponseData {
     fn json(status_code: u16, body: String) -> Self {
         Self {
@@ -332,7 +307,6 @@ impl HttpResponseData {
     }
 }
 
-#[cfg(feature = "lambda")]
 fn build_api_gateway_response(data: HttpResponseData) -> HttpLambdaResponse {
     let mut response = ApiGatewayProxyResponse {
         status_code: data.status_code as i64,
@@ -347,7 +321,6 @@ fn build_api_gateway_response(data: HttpResponseData) -> HttpLambdaResponse {
     HttpLambdaResponse::ApiGateway(response)
 }
 
-#[cfg(feature = "lambda")]
 fn build_function_url_response(data: HttpResponseData) -> HttpLambdaResponse {
     let mut headers = aws_lambda_events::http::HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static(data.content_type));
@@ -361,7 +334,6 @@ fn build_function_url_response(data: HttpResponseData) -> HttpLambdaResponse {
 }
 
 /// Lambda runtime entry point
-#[cfg(feature = "lambda")]
 pub async fn run() -> Result<(), Error> {
     println!("Lambda runtime - using lambda_runtime's tokio + OpenDAL S3");
 
@@ -375,10 +347,10 @@ pub async fn run() -> Result<(), Error> {
     // - Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
     // - AWS credentials file
     let storage = Arc::new(
-        crate::opendal_storage::OpenDalStorage::new_s3(&bucket, &region, None, None, None)
-            .map_err(|e| {
-                lambda_runtime::Error::from(format!("Failed to initialize storage: {}", e))
-            })?,
+        otlp2parquet_runtime::opendal_storage::OpenDalStorage::new_s3(
+            &bucket, &region, None, None, None,
+        )
+        .map_err(|e| lambda_runtime::Error::from(format!("Failed to initialize storage: {}", e)))?,
     );
 
     let processing_options = processing_options_from_env();

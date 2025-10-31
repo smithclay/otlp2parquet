@@ -1,0 +1,20 @@
+[package]
+name = "otlp2parquet-cloudflare"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+otlp2parquet-core = { path = "../otlp2parquet-core" }
+otlp2parquet-runtime = { path = "../otlp2parquet-runtime", features = ["services-s3"] }
+
+# Cloudflare Workers runtime
+worker = { workspace = true }
+
+# Utilities
+once_cell = { workspace = true }
+serde_json = { workspace = true }

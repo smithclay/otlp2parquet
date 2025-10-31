@@ -3,6 +3,9 @@ members = [
     "crates/otlp2parquet-core",
     "crates/otlp2parquet-runtime",
     "crates/otlp2parquet-proto",
+    "crates/otlp2parquet-cloudflare",
+    "crates/otlp2parquet-lambda",
+    "crates/otlp2parquet-server",
 ]
 resolver = "2"
 
@@ -27,6 +30,15 @@ opt-level = "z"
 opt-level = 3
 
 [profile.release.package.otlp2parquet-runtime]
+opt-level = 3
+
+[profile.release.package.otlp2parquet-cloudflare]
+opt-level = "z"
+
+[profile.release.package.otlp2parquet-lambda]
+opt-level = 3
+
+[profile.release.package.otlp2parquet-server]
 opt-level = 3
 
 [workspace.dependencies]
@@ -85,24 +97,25 @@ repository.workspace = true
 otlp2parquet-core = { path = "crates/otlp2parquet-core" }
 otlp2parquet-runtime = { path = "crates/otlp2parquet-runtime" }
 
-# Platform-specific dependencies (optional)
+# Platform-specific crates (optional)
+otlp2parquet-cloudflare = { path = "crates/otlp2parquet-cloudflare", optional = true }
+otlp2parquet-lambda = { path = "crates/otlp2parquet-lambda", optional = true }
+otlp2parquet-server = { path = "crates/otlp2parquet-server", optional = true }
+
+# Platform dependencies for main.rs entry points
 worker = { workspace = true, optional = true }
 lambda_runtime = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["rt-multi-thread", "macros"] }
+
+# Utilities
 anyhow = { workspace = true }
 
 [features]
 default = []
-server = ["tokio", "otlp2parquet-runtime/server"]
-lambda = ["lambda_runtime", "tokio", "otlp2parquet-runtime/lambda"]
-cloudflare = ["worker", "otlp2parquet-runtime/cloudflare"]
+cloudflare = ["otlp2parquet-cloudflare", "worker"]
+lambda = ["otlp2parquet-lambda", "lambda_runtime", "tokio"]
+server = ["otlp2parquet-server", "tokio"]
 full = ["server"]
-
-# OpenDAL testing features
-opendal-s3 = ["otlp2parquet-runtime/opendal-s3"]
-opendal-fs = ["otlp2parquet-runtime/opendal-fs"]
-opendal-lambda = ["lambda_runtime", "tokio", "otlp2parquet-runtime/opendal-lambda"]
-opendal-server = ["otlp2parquet-runtime/opendal-server"]
 
 [[bin]]
 name = "otlp2parquet"
