@@ -16,7 +16,7 @@ prost = { workspace = true }
 
 # Utilities - pure, no async, no I/O
 anyhow = { workspace = true }
-thiserror = { workspace = true }
+thiserror = "1"
 uuid = { workspace = true }
 chrono = { workspace = true }
 serde_json = { workspace = true }  # For JSON/JSONL format support

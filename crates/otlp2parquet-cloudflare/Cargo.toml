@@ -17,5 +17,5 @@ otlp2parquet-storage = { path = "../otlp2parquet-storage", features = ["services
 worker = { workspace = true }
 
 # Utilities
-once_cell = { workspace = true }
+once_cell = "1.19"
 serde_json = { workspace = true }

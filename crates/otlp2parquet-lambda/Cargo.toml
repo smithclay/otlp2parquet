@@ -12,7 +12,7 @@ otlp2parquet-storage = { path = "../otlp2parquet-storage", features = ["services
 
 # AWS Lambda runtime
 lambda_runtime = { workspace = true }
-aws_lambda_events = { workspace = true }
+aws_lambda_events = { version = "0.18" }
 
 # Utilities
 base64 = "0.22"

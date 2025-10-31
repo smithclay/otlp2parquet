@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 # Storage abstraction
-opendal = { workspace = true }
+opendal = { version = "0.54", default-features = false }
 
 # Utilities
 anyhow = { workspace = true }
