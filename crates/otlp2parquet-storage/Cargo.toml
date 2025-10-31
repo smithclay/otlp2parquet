@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 # Storage abstraction
-opendal = { workspace = true }
+opendal = { version = "0.54", default-features = false }
 
 # Arrow for data structures
 arrow = { workspace = true }
@@ -27,7 +27,7 @@ parquet = { workspace = true, features = ["arrow", "async", "snap"] }
 # Native: ZSTD compression + Snappy
 parquet = { workspace = true, features = ["arrow", "async", "snap", "zstd"] }
 # Async Parquet writer for OpenDAL (native only - doesn't work in WASM)
-parquet_opendal = { workspace = true }
+parquet_opendal = "0.6.1"
 # Async utilities for OpenDAL list operations (native only)
 futures-util = "0.3"
 # Tokio needed for filesystem backend

@@ -13,7 +13,7 @@ otlp2parquet-proto = { path = "../otlp2parquet-proto" }
 arrow = { workspace = true }
 
 # Batching dependencies
-parking_lot = { workspace = true }
+parking_lot = "0.12"
 
 # Protocol
 prost = { workspace = true }
