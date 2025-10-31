@@ -22,14 +22,9 @@ use axum::{
     Json, Router,
 };
 use metrics::{counter, histogram};
+use otlp2parquet_batch::{BatchConfig, BatchManager, CompletedBatch, PassthroughBatcher};
 use otlp2parquet_core::{otlp, InputFormat, ProcessingOptions};
-use otlp2parquet_runtime::{
-    batcher::{
-        max_payload_bytes_from_env, processing_options_from_env, BatchConfig, BatchManager,
-        CompletedBatch, PassthroughBatcher,
-    },
-    opendal_storage::OpenDalStorage,
-};
+use otlp2parquet_storage::opendal_storage::OpenDalStorage;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Instant;
@@ -142,7 +137,7 @@ async fn handle_logs(
     let mut uploaded_paths = Vec::new();
     for batch in uploads {
         let hash_hex = batch.content_hash.to_hex().to_string();
-        let partition_path = otlp2parquet_runtime::partition::generate_partition_path(
+        let partition_path = otlp2parquet_storage::partition::generate_partition_path(
             &batch.metadata.service_name,
             batch.metadata.first_timestamp_nanos,
             &hash_hex,
@@ -380,4 +375,25 @@ pub async fn run() -> Result<()> {
     info!("Server shutdown complete");
 
     Ok(())
+}
+
+/// Platform-specific helper: Read processing options from environment
+fn processing_options_from_env() -> ProcessingOptions {
+    let max_rows = std::env::var("ROW_GROUP_MAX_ROWS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .map(|rows| rows.max(1024))
+        .unwrap_or(32 * 1024);
+
+    ProcessingOptions {
+        max_rows_per_batch: max_rows,
+    }
+}
+
+/// Platform-specific helper: Read max payload bytes from environment
+fn max_payload_bytes_from_env(default: usize) -> usize {
+    std::env::var("MAX_PAYLOAD_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(default)
 }

@@ -1625,14 +1625,28 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "lambda_runtime",
+ "otlp2parquet-batch",
  "otlp2parquet-cloudflare",
  "otlp2parquet-core",
  "otlp2parquet-lambda",
- "otlp2parquet-runtime",
  "otlp2parquet-server",
+ "otlp2parquet-storage",
  "prost-build",
  "tokio",
  "worker",
+]
+
+[[package]]
+name = "otlp2parquet-batch"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "otlp2parquet-core",
+ "otlp2parquet-proto",
+ "parking_lot",
+ "parquet",
+ "prost",
 ]
 
 [[package]]
@@ -1640,8 +1654,9 @@ name = "otlp2parquet-cloudflare"
 version = "0.1.0"
 dependencies = [
  "once_cell",
+ "otlp2parquet-batch",
  "otlp2parquet-core",
- "otlp2parquet-runtime",
+ "otlp2parquet-storage",
  "serde_json",
  "worker",
 ]
@@ -1670,8 +1685,9 @@ dependencies = [
  "aws_lambda_events",
  "base64 0.22.1",
  "lambda_runtime",
+ "otlp2parquet-batch",
  "otlp2parquet-core",
- "otlp2parquet-runtime",
+ "otlp2parquet-storage",
  "serde",
  "serde_json",
 ]
@@ -1687,37 +1703,32 @@ dependencies = [
 ]
 
 [[package]]
-name = "otlp2parquet-runtime"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "blake3",
- "chrono",
- "futures-util",
- "opendal",
- "otlp2parquet-core",
- "otlp2parquet-proto",
- "parking_lot",
- "parquet",
- "prost",
- "tokio",
-]
-
-[[package]]
 name = "otlp2parquet-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
  "metrics",
+ "otlp2parquet-batch",
  "otlp2parquet-core",
- "otlp2parquet-runtime",
+ "otlp2parquet-storage",
  "serde_json",
  "tokio",
  "tower 0.4.13",
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "otlp2parquet-storage"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "futures-util",
+ "opendal",
+ "tokio",
 ]
 
 [[package]]

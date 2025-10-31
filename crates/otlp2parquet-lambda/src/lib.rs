@@ -14,12 +14,9 @@ use aws_lambda_events::{
 };
 use base64::Engine;
 use lambda_runtime::{service_fn, Error, LambdaEvent};
+use otlp2parquet_batch::{BatchConfig, BatchManager, CompletedBatch, PassthroughBatcher};
 use otlp2parquet_core::otlp;
 use otlp2parquet_core::ProcessingOptions;
-use otlp2parquet_runtime::batcher::{
-    max_payload_bytes_from_env, processing_options_from_env, BatchConfig, BatchManager,
-    CompletedBatch, PassthroughBatcher,
-};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::borrow::Cow;
@@ -204,7 +201,7 @@ async fn handle_post(
     let mut uploaded_paths = Vec::new();
     for batch in uploads {
         let hash_hex = batch.content_hash.to_hex().to_string();
-        let partition_path = otlp2parquet_runtime::partition::generate_partition_path(
+        let partition_path = otlp2parquet_storage::partition::generate_partition_path(
             &batch.metadata.service_name,
             batch.metadata.first_timestamp_nanos,
             &hash_hex,
@@ -276,7 +273,7 @@ enum HttpLambdaResponse {
 
 #[derive(Clone)]
 struct LambdaState {
-    storage: Arc<otlp2parquet_runtime::opendal_storage::OpenDalStorage>,
+    storage: Arc<otlp2parquet_storage::opendal_storage::OpenDalStorage>,
     batcher: Option<Arc<BatchManager>>,
     passthrough: PassthroughBatcher,
     processing_options: ProcessingOptions,
@@ -347,7 +344,7 @@ pub async fn run() -> Result<(), Error> {
     // - Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
     // - AWS credentials file
     let storage = Arc::new(
-        otlp2parquet_runtime::opendal_storage::OpenDalStorage::new_s3(
+        otlp2parquet_storage::opendal_storage::OpenDalStorage::new_s3(
             &bucket, &region, None, None, None,
         )
         .map_err(|e| lambda_runtime::Error::from(format!("Failed to initialize storage: {}", e)))?,
@@ -391,4 +388,25 @@ pub async fn run() -> Result<(), Error> {
         async move { handle_request(event, state).await }
     }))
     .await
+}
+
+/// Platform-specific helper: Read processing options from environment
+fn processing_options_from_env() -> ProcessingOptions {
+    let max_rows = std::env::var("ROW_GROUP_MAX_ROWS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .map(|rows| rows.max(1024))
+        .unwrap_or(32 * 1024);
+
+    ProcessingOptions {
+        max_rows_per_batch: max_rows,
+    }
+}
+
+/// Platform-specific helper: Read max payload bytes from environment
+fn max_payload_bytes_from_env(default: usize) -> usize {
+    std::env::var("MAX_PAYLOAD_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(default)
 }

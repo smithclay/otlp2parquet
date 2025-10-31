@@ -10,7 +10,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 otlp2parquet-core = { path = "../otlp2parquet-core" }
-otlp2parquet-runtime = { path = "../otlp2parquet-runtime", features = ["services-s3"] }
+otlp2parquet-batch = { path = "../otlp2parquet-batch" }
+otlp2parquet-storage = { path = "../otlp2parquet-storage", features = ["services-s3"] }
 
 # Cloudflare Workers runtime
 worker = { workspace = true }

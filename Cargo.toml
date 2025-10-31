@@ -1,7 +1,8 @@
 [workspace]
 members = [
     "crates/otlp2parquet-core",
-    "crates/otlp2parquet-runtime",
+    "crates/otlp2parquet-batch",
+    "crates/otlp2parquet-storage",
     "crates/otlp2parquet-proto",
     "crates/otlp2parquet-cloudflare",
     "crates/otlp2parquet-lambda",
@@ -29,7 +30,10 @@ opt-level = "z"
 [profile.release.package.otlp2parquet-core]
 opt-level = 3
 
-[profile.release.package.otlp2parquet-runtime]
+[profile.release.package.otlp2parquet-batch]
+opt-level = 3
+
+[profile.release.package.otlp2parquet-storage]
 opt-level = 3
 
 [profile.release.package.otlp2parquet-cloudflare]
@@ -95,7 +99,8 @@ repository.workspace = true
 
 [dependencies]
 otlp2parquet-core = { path = "crates/otlp2parquet-core" }
-otlp2parquet-runtime = { path = "crates/otlp2parquet-runtime" }
+otlp2parquet-batch = { path = "crates/otlp2parquet-batch" }
+otlp2parquet-storage = { path = "crates/otlp2parquet-storage" }
 
 # Platform-specific crates (optional)
 otlp2parquet-cloudflare = { path = "crates/otlp2parquet-cloudflare", optional = true }

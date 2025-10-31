@@ -315,22 +315,3 @@ impl PassthroughBatcher {
         })
     }
 }
-
-pub fn processing_options_from_env() -> ProcessingOptions {
-    let max_rows = std::env::var("ROW_GROUP_MAX_ROWS")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .map(|rows| rows.max(1024))
-        .unwrap_or(32 * 1024);
-
-    ProcessingOptions {
-        max_rows_per_batch: max_rows,
-    }
-}
-
-pub fn max_payload_bytes_from_env(default: usize) -> usize {
-    std::env::var("MAX_PAYLOAD_BYTES")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(default)
-}

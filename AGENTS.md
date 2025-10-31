@@ -85,12 +85,13 @@ The architecture separates **essence** (pure OTLP→Parquet conversion) from **a
 otlp2parquet/
 ├── Cargo.toml                # Workspace root
 ├── crates/
-│   ├── otlp2parquet-core/    # ✅ PURE platform-agnostic logic
+│   ├── otlp2parquet-core/    # ✅ ESSENCE: Pure OTLP→Parquet transformation
 │   │   ├── otlp/             # ✅ OTLP→Arrow conversion
-│   │   ├── parquet/          # ✅ Parquet writing + partitioning
+│   │   ├── parquet/          # ✅ Parquet writing
 │   │   └── schema.rs         # ✅ Arrow schema (15 fields)
-│   ├── otlp2parquet-runtime/ # ✅ Shared utilities (all platforms)
-│   │   ├── batcher.rs        # ✅ Batching logic
+│   ├── otlp2parquet-batch/   # ✅ OPTIMIZATION: In-memory request batching
+│   │   └── lib.rs            # ✅ BatchManager, PassthroughBatcher
+│   ├── otlp2parquet-storage/ # ✅ ACCIDENT: I/O and persistence
 │   │   ├── partition.rs      # ✅ Partition path generation
 │   │   └── opendal_storage.rs # ✅ Unified storage abstraction
 │   ├── otlp2parquet-cloudflare/ # ✅ Cloudflare Workers platform
@@ -105,13 +106,34 @@ otlp2parquet/
     └── main.rs               # ✅ Platform-specific entry points
 ```
 
-**Architecture Decision:** Platform-specific runtimes are now **separate crates** for cleaner dependencies and simpler builds.
+**Architecture Decision:** Three-layer architecture following Fred Brooks' principles
+
+**Three Layers (Essence → Optimization → Accident):**
+1. **`otlp2parquet-core`** - Pure transformation (OTLP → Parquet)
+   - No I/O, no state, deterministic
+   - The essential complexity of the problem
+
+2. **`otlp2parquet-batch`** - Optional optimization layer
+   - In-memory request buffering
+   - Time/size/age-based batching
+   - Platform-agnostic (any platform can opt-in)
+
+3. **`otlp2parquet-storage`** - I/O and persistence
+   - OpenDAL abstraction (S3/R2/Filesystem)
+   - Partition path generation
+   - The accidental complexity of distribution
+
+**Dependency Flow:**
+```
+Platform crates → batch + storage → core
+```
 
 **Key Benefits:**
-- ✅ **Explicit dependencies** - Each platform crate declares exactly what it needs
-- ✅ **No feature flag complexity** - Build simplicity: `cargo build -p otlp2parquet-cloudflare`
-- ✅ **Independent evolution** - Platforms can evolve/deprecate independently
-- ✅ **Conceptual integrity** - Each platform is a complete, coherent system (Fred Brooks approved)
+- ✅ **Conceptual Integrity** - Each layer has single, clear responsibility (Brooks approved)
+- ✅ **Explicit Dependencies** - `batch → core`, `storage → core`, platform uses both
+- ✅ **Testability** - Easy to test batching without I/O, storage without batching
+- ✅ **Optionality** - Platforms can skip batching if not needed
+- ✅ **Build Simplicity** - `cargo build -p otlp2parquet-cloudflare` (no feature flags needed)
 
 ---
 

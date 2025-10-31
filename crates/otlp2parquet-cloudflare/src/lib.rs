@@ -7,17 +7,14 @@
 // Entry point is #[event(fetch)] macro, not main()
 
 use once_cell::sync::OnceCell;
+use otlp2parquet_batch::{BatchConfig, BatchManager, CompletedBatch, PassthroughBatcher};
 use otlp2parquet_core::otlp;
 use otlp2parquet_core::ProcessingOptions;
-use otlp2parquet_runtime::batcher::{
-    max_payload_bytes_from_env, processing_options_from_env, BatchConfig, BatchManager,
-    CompletedBatch, PassthroughBatcher,
-};
 use serde_json::json;
 use std::sync::Arc;
 use worker::*;
 
-static STORAGE: OnceCell<Arc<otlp2parquet_runtime::opendal_storage::OpenDalStorage>> =
+static STORAGE: OnceCell<Arc<otlp2parquet_storage::opendal_storage::OpenDalStorage>> =
     OnceCell::new();
 static PROCESSING_OPTIONS: OnceCell<ProcessingOptions> = OnceCell::new();
 static BATCHER: OnceCell<Option<Arc<BatchManager>>> = OnceCell::new();
@@ -71,7 +68,7 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
             .to_string();
 
         let instance = Arc::new(
-            otlp2parquet_runtime::opendal_storage::OpenDalStorage::new_r2(
+            otlp2parquet_storage::opendal_storage::OpenDalStorage::new_r2(
                 &bucket,
                 &account_id,
                 &access_key_id,
@@ -183,7 +180,7 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
     let mut uploaded_paths = Vec::new();
     for batch in uploads {
         let hash_hex = batch.content_hash.to_hex().to_string();
-        let partition_path = otlp2parquet_runtime::partition::generate_partition_path(
+        let partition_path = otlp2parquet_storage::partition::generate_partition_path(
             &batch.metadata.service_name,
             batch.metadata.first_timestamp_nanos,
             &hash_hex,
@@ -208,4 +205,25 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
     });
 
     Response::from_json(&response_body)
+}
+
+/// Platform-specific helper: Read processing options from environment
+fn processing_options_from_env() -> ProcessingOptions {
+    let max_rows = std::env::var("ROW_GROUP_MAX_ROWS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .map(|rows| rows.max(1024))
+        .unwrap_or(32 * 1024);
+
+    ProcessingOptions {
+        max_rows_per_batch: max_rows,
+    }
+}
+
+/// Platform-specific helper: Read max payload bytes from environment
+fn max_payload_bytes_from_env(default: usize) -> usize {
+    std::env::var("MAX_PAYLOAD_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(default)
 }
