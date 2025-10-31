@@ -90,7 +90,7 @@ async fn handle_post(
             }
         }
 
-        match batcher.ingest(request) {
+        match batcher.ingest(request, body.len()) {
             Ok((mut ready, meta)) => {
                 uploads.append(&mut ready);
                 metadata = meta;
@@ -124,8 +124,8 @@ async fn handle_post(
         // Write RecordBatch to Parquet and upload (hash computed in storage layer)
         match state
             .parquet_writer
-            .write_batch_with_hash(
-                &batch.batch,
+            .write_batches_with_hash(
+                &batch.batches,
                 &batch.metadata.service_name,
                 batch.metadata.first_timestamp_nanos,
             )

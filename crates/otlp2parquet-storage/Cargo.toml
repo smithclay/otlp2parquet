@@ -26,8 +26,6 @@ parquet = { workspace = true, features = ["arrow", "async", "snap"] }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Native: ZSTD compression + Snappy
 parquet = { workspace = true, features = ["arrow", "async", "snap", "zstd"] }
-# Async Parquet writer for OpenDAL (native only - doesn't work in WASM)
-parquet_opendal = "0.6.1"
 # Async utilities for OpenDAL list operations (native only)
 futures-util = "0.3"
 # Tokio needed for filesystem backend
@@ -35,6 +33,7 @@ tokio = { workspace = true, optional = true, features = ["rt", "macros"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
+opendal = { version = "0.54", default-features = false, features = ["services-memory"] }
 
 [features]
 default = []

@@ -3,26 +3,42 @@
 // Accumulates OTLP requests in memory and merges them into larger Arrow batches.
 // This reduces the number of storage writes and improves compression efficiency.
 //
-// Philosophy (Fred Brooks): This is the "optimization" layer between essence (core)
-// and accident (storage). It's optional - systems can bypass batching entirely.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use arrow::array::RecordBatch;
+use otlp2parquet_core::convert_request_to_arrow;
 use otlp2parquet_core::otlp::LogMetadata;
-use otlp2parquet_core::{parse_otlp_to_arrow, InputFormat};
 use otlp2parquet_proto::opentelemetry::proto::collector::logs::v1::ExportLogsServiceRequest;
 use parking_lot::Mutex;
-use prost::Message;
 
 mod buffered_batch;
-mod preview;
 
 use buffered_batch::BufferedBatch;
-use preview::{BatchKey, RequestPreview};
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct BatchKey {
+    service: String,
+    minute_bucket: i64,
+}
+
+impl BatchKey {
+    fn from_metadata(metadata: &LogMetadata) -> Self {
+        let bucket = if metadata.first_timestamp_nanos > 0 {
+            metadata.first_timestamp_nanos / 60_000_000_000
+        } else {
+            0
+        };
+
+        Self {
+            service: metadata.service_name.clone(),
+            minute_bucket: bucket,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct BatchConfig {
@@ -57,7 +73,7 @@ impl BatchConfig {
 /// Hashing and serialization happen in the storage layer.
 #[derive(Debug)]
 pub struct CompletedBatch {
-    pub batch: RecordBatch,
+    pub batches: Vec<RecordBatch>,
     pub metadata: LogMetadata,
 }
 
@@ -78,45 +94,31 @@ impl BatchManager {
     pub fn ingest(
         &self,
         request: ExportLogsServiceRequest,
+        approx_bytes: usize,
     ) -> Result<(Vec<CompletedBatch>, LogMetadata)> {
-        let preview = RequestPreview::from_request(&request);
-        if preview.record_count == 0 {
-            return Ok((
-                Vec::new(),
-                LogMetadata {
-                    service_name: preview.service_name,
-                    first_timestamp_nanos: preview.first_timestamp,
-                    record_count: 0,
-                },
-            ));
+        let (batch, metadata) = convert_request_to_arrow(&request)
+            .context("Failed to convert OTLP request to Arrow")?;
+
+        if metadata.record_count == 0 {
+            return Ok((Vec::new(), metadata));
         }
 
-        // Convert OTLP request to Arrow batch
-        let encoded = request.encode_to_vec();
-        let (batch, _meta) = parse_otlp_to_arrow(&encoded, InputFormat::Protobuf)
-            .context("Failed to parse OTLP request to Arrow")?;
-
-        let key = preview.batch_key();
+        let key = BatchKey::from_metadata(&metadata);
         let mut guard = self.inner.lock();
         let buffered = guard
             .entry(key.clone())
-            .or_insert_with(|| BufferedBatch::new(&preview));
-        buffered.add(batch, &preview);
+            .or_insert_with(|| BufferedBatch::new(&metadata));
+        buffered.add(batch, &metadata, approx_bytes);
 
         let mut completed = Vec::new();
         if buffered.should_flush(&self.config) {
-            let batch = guard.remove(&key).expect("batch removed during flush");
+            let batch = guard
+                .remove(&key)
+                .ok_or_else(|| anyhow!("batch evicted before flush: {:?}", key))?;
             completed.push(batch.finalize()?);
         }
 
-        Ok((
-            completed,
-            LogMetadata {
-                service_name: preview.service_name,
-                first_timestamp_nanos: preview.first_timestamp,
-                record_count: preview.record_count,
-            },
-        ))
+        Ok((completed, metadata))
     }
 
     pub fn drain_expired(&self) -> Result<Vec<CompletedBatch>> {
@@ -146,14 +148,14 @@ pub struct PassthroughBatcher;
 
 impl PassthroughBatcher {
     pub fn ingest(&self, request: ExportLogsServiceRequest) -> Result<CompletedBatch> {
-        // Encode request to bytes for parsing
-        let encoded = request.encode_to_vec();
-
         // Parse to Arrow using new core API
-        let (batch, metadata) = parse_otlp_to_arrow(&encoded, InputFormat::Protobuf)
-            .context("Failed to parse OTLP request to Arrow")?;
+        let (batch, metadata) = convert_request_to_arrow(&request)
+            .context("Failed to convert OTLP request to Arrow")?;
 
-        Ok(CompletedBatch { batch, metadata })
+        Ok(CompletedBatch {
+            batches: vec![batch],
+            metadata,
+        })
     }
 }
 
@@ -163,6 +165,7 @@ mod tests {
     use otlp2parquet_proto::opentelemetry::proto::common::v1::{any_value, AnyValue, KeyValue};
     use otlp2parquet_proto::opentelemetry::proto::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
     use otlp2parquet_proto::opentelemetry::proto::resource::v1::Resource;
+    use prost::Message;
 
     fn create_test_request(service_name: &str, record_count: usize) -> ExportLogsServiceRequest {
         let mut records = Vec::new();
@@ -205,7 +208,7 @@ mod tests {
         assert!(result.is_ok());
 
         let completed = result.unwrap();
-        assert_eq!(completed.batch.num_rows(), 10);
+        assert_eq!(completed.batches[0].num_rows(), 10);
         assert_eq!(completed.metadata.service_name, "test-service");
         assert_eq!(completed.metadata.record_count, 10);
     }
@@ -221,12 +224,14 @@ mod tests {
 
         // First request - should not flush
         let request1 = create_test_request("test-service", 10);
-        let (completed1, _meta1) = manager.ingest(request1).unwrap();
+        let approx1 = request1.encoded_len();
+        let (completed1, _meta1) = manager.ingest(request1, approx1).unwrap();
         assert_eq!(completed1.len(), 0); // Not flushed yet
 
         // Second request - should not flush (total 20 rows)
         let request2 = create_test_request("test-service", 10);
-        let (completed2, _meta2) = manager.ingest(request2).unwrap();
+        let approx2 = request2.encoded_len();
+        let (completed2, _meta2) = manager.ingest(request2, approx2).unwrap();
         assert_eq!(completed2.len(), 0); // Still not flushed
 
         // Third test with smaller limit - should flush when hitting threshold
@@ -238,12 +243,17 @@ mod tests {
         let manager_small = BatchManager::new(config_small);
 
         let req1 = create_test_request("test-service", 10);
-        let (c1, _) = manager_small.ingest(req1).unwrap();
+        let approx_small_1 = req1.encoded_len();
+        let (c1, _) = manager_small.ingest(req1, approx_small_1).unwrap();
         assert_eq!(c1.len(), 0); // 10 rows < 20, no flush
 
         let req2 = create_test_request("test-service", 10);
-        let (c2, _) = manager_small.ingest(req2).unwrap();
+        let approx_small_2 = req2.encoded_len();
+        let (c2, _) = manager_small.ingest(req2, approx_small_2).unwrap();
         assert_eq!(c2.len(), 1); // 10 + 10 = 20 rows, should flush!
-        assert_eq!(c2[0].batch.num_rows(), 20);
+        assert_eq!(
+            c2[0].batches.iter().map(|b| b.num_rows()).sum::<usize>(),
+            20
+        );
     }
 }

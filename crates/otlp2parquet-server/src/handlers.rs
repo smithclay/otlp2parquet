@@ -60,7 +60,7 @@ pub(crate) async fn handle_logs(
         uploads.append(&mut expired);
 
         let (mut ready, meta) = batcher
-            .ingest(request)
+            .ingest(request, body.len())
             .map_err(|e| e.context("Failed to enqueue batch"))?;
         uploads.append(&mut ready);
         metadata = meta;
@@ -76,23 +76,23 @@ pub(crate) async fn handle_logs(
     counter!("otlp.ingest.records", metadata.record_count as u64);
 
     let mut uploaded_paths = Vec::new();
-    for batch in uploads {
+    for completed in uploads {
         // Write RecordBatch to Parquet and upload (hash computed in storage layer)
         let (partition_path, _hash) = state
             .parquet_writer
-            .write_batch_with_hash(
-                &batch.batch,
-                &batch.metadata.service_name,
-                batch.metadata.first_timestamp_nanos,
+            .write_batches_with_hash(
+                &completed.batches,
+                &completed.metadata.service_name,
+                completed.metadata.first_timestamp_nanos,
             )
             .await
             .map_err(|e| e.context("Failed to write Parquet to storage"))?;
 
         counter!("otlp.batch.flushes", 1);
-        histogram!("otlp.batch.rows", batch.metadata.record_count as f64);
+        histogram!("otlp.batch.rows", completed.metadata.record_count as f64);
         info!(
             "Committed batch path={} service={} rows={}",
-            partition_path, batch.metadata.service_name, batch.metadata.record_count
+            partition_path, completed.metadata.service_name, completed.metadata.record_count
         );
         uploaded_paths.push(partition_path);
     }

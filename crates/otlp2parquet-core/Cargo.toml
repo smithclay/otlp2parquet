@@ -16,14 +16,9 @@ prost = { workspace = true }
 # Utilities - pure, no async, no I/O
 anyhow = { workspace = true }
 thiserror = "1"
-uuid = { version = "1", default-features = false, features = ["v4", "v5", "fast-rng"] }
 chrono = { workspace = true }
 serde_json = { workspace = true }  # For JSON/JSONL format support
 hex = { workspace = true }
-
-# Platform-specific uuid features
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-uuid = { version = "1", default-features = false, features = ["v4", "v5", "fast-rng", "js"] }
 
 [dev-dependencies]
 # For testing Parquet output

@@ -29,16 +29,23 @@ static MAX_PAYLOAD_BYTES: OnceCell<usize> = OnceCell::new();
 /// This is platform-specific "accidental complexity" (storage format + I/O)
 /// and belongs in the platform layer, not core.
 mod wasm_parquet {
+    use anyhow::{bail, Result};
     use arrow::array::RecordBatch;
     use parquet::arrow::ArrowWriter;
     use parquet::file::properties::WriterProperties;
 
-    /// Write RecordBatch to Parquet bytes synchronously (WASM-compatible)
-    pub fn write_batch_to_parquet(batch: &RecordBatch) -> anyhow::Result<Vec<u8>> {
+    /// Write one or more RecordBatches to Parquet bytes synchronously (WASM-compatible)
+    pub fn write_batches_to_parquet(batches: &[RecordBatch]) -> Result<Vec<u8>> {
+        if batches.is_empty() {
+            bail!("cannot write empty batch list");
+        }
+
         let mut buffer = Vec::new();
         let props = writer_properties();
-        let mut writer = ArrowWriter::try_new(&mut buffer, batch.schema(), Some(props))?;
-        writer.write(batch)?;
+        let mut writer = ArrowWriter::try_new(&mut buffer, batches[0].schema(), Some(props))?;
+        for batch in batches {
+            writer.write(batch)?;
+        }
         writer.close()?;
         Ok(buffer)
     }
@@ -185,7 +192,7 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
             }
         }
 
-        match manager.ingest(request) {
+        match manager.ingest(request, body_bytes.len()) {
             Ok((mut ready, meta)) => {
                 uploads.append(&mut ready);
                 metadata = meta;
@@ -212,10 +219,11 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
     for batch in uploads {
         // WASM-specific: Write Parquet synchronously, then upload via OpenDAL
         // (parquet_opendal doesn't work in WASM due to tokio::spawn requiring Send)
-        let parquet_bytes = wasm_parquet::write_batch_to_parquet(&batch.batch).map_err(|e| {
-            console_error!("Failed to serialize Parquet: {:?}", e);
-            worker::Error::RustError(format!("Parquet serialization error: {}", e))
-        })?;
+        let parquet_bytes =
+            wasm_parquet::write_batches_to_parquet(&batch.batches).map_err(|e| {
+                console_error!("Failed to serialize Parquet: {:?}", e);
+                worker::Error::RustError(format!("Parquet serialization error: {}", e))
+            })?;
 
         // Compute Blake3 hash for content-addressable storage
         let hash_bytes = blake3::hash(&parquet_bytes);

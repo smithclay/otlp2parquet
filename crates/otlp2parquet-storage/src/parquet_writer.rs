@@ -1,18 +1,50 @@
-// Parquet writer with direct streaming to storage
+// Parquet writer with direct serialization to storage
 //
-// Handles serialization, hashing, and storage upload in one pass.
-// Uses parquet_opendal for async streaming to OpenDAL backends.
+// Serializes Arrow RecordBatches, computes a Blake3 content hash while
+// encoding, and uploads the resulting Parquet bytes to OpenDAL storage.
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use arrow::array::RecordBatch;
 use opendal::Operator;
 use parquet::file::properties::{EnabledStatistics, WriterProperties};
+use std::io::{self, Write};
 use std::sync::OnceLock;
 
 #[cfg(target_arch = "wasm32")]
 use parquet::basic::Compression;
 #[cfg(not(target_arch = "wasm32"))]
 use parquet::basic::{Compression, ZstdLevel};
+
+struct HashingBuffer {
+    buffer: Vec<u8>,
+    hasher: blake3::Hasher,
+}
+
+impl HashingBuffer {
+    fn new() -> Self {
+        Self {
+            buffer: Vec::new(),
+            hasher: blake3::Hasher::new(),
+        }
+    }
+
+    fn finish(self) -> (Vec<u8>, Blake3Hash) {
+        let hash = self.hasher.finalize();
+        (self.buffer, Blake3Hash::new(*hash.as_bytes()))
+    }
+}
+
+impl Write for HashingBuffer {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.hasher.update(buf);
+        self.buffer.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
 
 /// Platform-specific compression setting
 #[cfg(target_arch = "wasm32")]
@@ -22,7 +54,8 @@ fn compression_setting() -> Compression {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn compression_setting() -> Compression {
-    Compression::ZSTD(ZstdLevel::try_new(2).unwrap())
+    let level = ZstdLevel::try_new(2).unwrap_or_default();
+    Compression::ZSTD(level)
 }
 
 /// Get shared writer properties (cached)
@@ -80,10 +113,10 @@ impl ParquetWriter {
     /// Write a RecordBatch to storage, computing hash and generating partition path
     ///
     /// This method:
-    /// 1. Serializes RecordBatch to Parquet bytes (in memory, for hashing)
-    /// 2. Computes Blake3 hash of the Parquet bytes
-    /// 3. Generates partition path using hash
-    /// 4. Writes to storage using parquet_opendal (streams directly)
+    /// 1. Serializes the batches to Parquet bytes (in memory, for hashing)
+    /// 2. Computes the Blake3 hash while encoding (no second pass)
+    /// 3. Generates partition path using the hash
+    /// 4. Writes the bytes to storage
     ///
     /// Returns the partition path and content hash.
     pub async fn write_batch_with_hash(
@@ -92,63 +125,34 @@ impl ParquetWriter {
         service_name: &str,
         timestamp_nanos: i64,
     ) -> Result<(String, Blake3Hash)> {
-        // First, serialize to bytes for hashing
-        // (We need the hash to generate the filename, so we can't stream yet)
-        let mut buffer = Vec::new();
-        let props = writer_properties().clone();
-        let mut temp_writer =
-            parquet::arrow::ArrowWriter::try_new(&mut buffer, batch.schema(), Some(props))?;
-        temp_writer.write(batch)?;
-        temp_writer.close()?;
-
-        // Compute hash
-        let hash_bytes = blake3::hash(&buffer);
-        let hash = Blake3Hash::new(*hash_bytes.as_bytes());
-
-        // Generate partition path with hash
-        let path = crate::partition::generate_partition_path(
-            service_name,
-            timestamp_nanos,
-            &hash.to_hex(),
-        );
-
-        // Write to storage
-        self.operator.write(&path, buffer).await?;
-
-        Ok((path, hash))
+        self.write_batches_with_hash(std::slice::from_ref(batch), service_name, timestamp_nanos)
+            .await
     }
 
-    /// Write multiple batches to a single file
-    ///
-    /// Useful when batching has already accumulated multiple RecordBatches.
-    /// Uses parquet_opendal for direct streaming (no intermediate buffer).
-    pub async fn write_batches_streaming(
+    /// Write multiple batches to a single file and compute hash during encoding.
+    pub async fn write_batches_with_hash(
         &self,
         batches: &[RecordBatch],
         service_name: &str,
         timestamp_nanos: i64,
     ) -> Result<(String, Blake3Hash)> {
         if batches.is_empty() {
-            anyhow::bail!("Cannot write empty batch list");
+            bail!("Cannot write empty batch list");
         }
 
-        // For hashing, we need to serialize first
-        let mut buffer = Vec::new();
+        let mut sink = HashingBuffer::new();
         let props = writer_properties().clone();
-        let mut temp_writer = parquet::arrow::ArrowWriter::try_new(
-            &mut buffer,
-            batches[0].schema(),
-            Some(props.clone()),
-        )?;
+        {
+            let mut writer =
+                parquet::arrow::ArrowWriter::try_new(&mut sink, batches[0].schema(), Some(props))?;
 
-        for batch in batches {
-            temp_writer.write(batch)?;
+            for batch in batches {
+                writer.write(batch)?;
+            }
+            writer.close()?;
         }
-        temp_writer.close()?;
 
-        // Compute hash
-        let hash_bytes = blake3::hash(&buffer);
-        let hash = Blake3Hash::new(*hash_bytes.as_bytes());
+        let (buffer, hash) = sink.finish();
 
         // Generate partition path
         let path = crate::partition::generate_partition_path(
@@ -212,7 +216,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_write_batches_streaming() {
+    async fn test_write_batches_with_hash() {
         let op = Operator::new(services::Memory::default()).unwrap().finish();
         let writer = ParquetWriter::new(op.clone());
 
@@ -220,7 +224,7 @@ mod tests {
         let batch2 = create_test_batch();
 
         let (path, _hash) = writer
-            .write_batches_streaming(&[batch1, batch2], "test-service", 1_705_327_800_000_000_000)
+            .write_batches_with_hash(&[batch1, batch2], "test-service", 1_705_327_800_000_000_000)
             .await
             .unwrap();
 

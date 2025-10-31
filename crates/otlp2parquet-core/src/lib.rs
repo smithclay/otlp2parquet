@@ -58,10 +58,19 @@ pub fn parse_otlp_to_arrow(
 ) -> Result<(RecordBatch, LogMetadata)> {
     // Parse the input format into an ExportLogsServiceRequest
     let request = otlp::parse_otlp_request(otlp_bytes, format)?;
+    convert_request_to_arrow(&request)
+}
 
-    // Convert to Arrow using the existing converter
+/// Convert a parsed OTLP request directly into Arrow structures.
+///
+/// Consumers that already decoded the OTLP payload (e.g. batching code) can call
+/// this helper to avoid the encode/decode round-trip required by
+/// `parse_otlp_to_arrow`.
+pub fn convert_request_to_arrow(
+    request: &otlp2parquet_proto::opentelemetry::proto::collector::logs::v1::ExportLogsServiceRequest,
+) -> Result<(RecordBatch, LogMetadata)> {
     let mut converter = otlp::ArrowConverter::new();
-    converter.add_from_request(&request)?;
+    converter.add_from_request(request)?;
     converter.finish()
 }
 
