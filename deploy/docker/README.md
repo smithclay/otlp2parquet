@@ -47,61 +47,82 @@ docker-compose logs -f
 docker-compose down
 ```
 
-### S3 Storage
+### MinIO Storage (Local Development)
 
-Create `docker-compose.s3.yml`:
+MinIO provides S3-compatible storage that runs locally. Perfect for development and testing without AWS credentials.
 
-```yaml
-version: '3.9'
+```bash
+# Start otlp2parquet + MinIO
+docker-compose -f deploy/docker/compose.minio.yml up -d
 
-services:
-  otlp2parquet:
-    image: ghcr.io/smithclay/otlp2parquet:latest
-    ports:
-      - "8080:8080"
-    environment:
-      STORAGE_BACKEND: s3
-      S3_BUCKET: my-otlp-logs
-      S3_REGION: us-east-1
-      # Use IAM role or provide credentials
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      RUST_LOG: info
-    restart: unless-stopped
+# Access MinIO console at http://localhost:9001
+# Username: minioadmin
+# Password: minioadmin
+
+# Send test logs
+curl -X POST http://localhost:8080/v1/logs \
+  -H "Content-Type: application/x-protobuf" \
+  --data-binary @test-payload.pb
+
+# Browse Parquet files in MinIO console
+open http://localhost:9001
 ```
 
-Deploy:
+**Query with DuckDB:**
+
+```sql
+-- Connect to MinIO
+INSTALL httpfs; LOAD httpfs;
+SET s3_endpoint='localhost:9000';
+SET s3_url_style='path';
+SET s3_use_ssl=false;
+SET s3_access_key_id='minioadmin';
+SET s3_secret_access_key='minioadmin';
+
+-- Query logs
+SELECT
+  Timestamp,
+  ServiceName,
+  SeverityText,
+  Body
+FROM read_parquet('s3://otlp-logs/logs/**/*.parquet')
+ORDER BY Timestamp DESC
+LIMIT 10;
+```
+
+---
+
+### S3 Storage (AWS)
+
+Use the pre-configured S3 compose file:
 
 ```bash
 # Set AWS credentials
 export AWS_ACCESS_KEY_ID=your_key
 export AWS_SECRET_ACCESS_KEY=your_secret
 
-# Start
-docker-compose -f docker-compose.s3.yml up -d
+# Start with S3 storage
+docker-compose -f deploy/docker/compose.s3.yml up -d
 ```
+
+See [compose.s3.yml](./compose.s3.yml) for full configuration.
+
+---
 
 ### R2 Storage (Cloudflare)
 
-Create `docker-compose.r2.yml`:
+Use the pre-configured R2 compose file:
 
-```yaml
-version: '3.9'
+```bash
+# Set R2 credentials
+export R2_ACCESS_KEY_ID=your_key
+export R2_SECRET_ACCESS_KEY=your_secret
 
-services:
-  otlp2parquet:
-    image: ghcr.io/smithclay/otlp2parquet:latest
-    ports:
-      - "8080:8080"
-    environment:
-      STORAGE_BACKEND: r2
-      R2_BUCKET: my-otlp-logs
-      R2_ACCOUNT_ID: your-account-id
-      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
-      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
-      RUST_LOG: info
-    restart: unless-stopped
+# Start with R2 storage
+docker-compose -f deploy/docker/compose.r2.yml up -d
 ```
+
+See [compose.r2.yml](./compose.r2.yml) for full configuration.
 
 ## Build from Source
 

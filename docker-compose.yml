@@ -43,33 +43,11 @@ volumes:
 
 # Example configurations for different storage backends:
 #
+# MinIO (local S3-compatible - best for development):
+#   docker-compose -f deploy/docker/compose.minio.yml up -d
+#
 # S3 Storage (AWS):
-# ---
-# services:
-#   otlp2parquet:
-#     image: ghcr.io/smithclay/otlp2parquet:latest
-#     ports:
-#       - "8080:8080"
-#     environment:
-#       STORAGE_BACKEND: s3
-#       S3_BUCKET: my-otlp-logs
-#       S3_REGION: us-east-1
-#       # AWS credentials via IAM role (ECS/EKS) or environment:
-#       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-#       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-#       RUST_LOG: info
+#   docker-compose -f deploy/docker/compose.s3.yml up -d
 #
 # R2 Storage (Cloudflare):
-# ---
-# services:
-#   otlp2parquet:
-#     image: ghcr.io/smithclay/otlp2parquet:latest
-#     ports:
-#       - "8080:8080"
-#     environment:
-#       STORAGE_BACKEND: r2
-#       R2_BUCKET: my-otlp-logs
-#       R2_ACCOUNT_ID: your-account-id
-#       R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
-#       R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
-#       RUST_LOG: info
+#   docker-compose -f deploy/docker/compose.r2.yml up -d
