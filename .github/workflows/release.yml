@@ -130,10 +130,24 @@ jobs:
             optimized.wasm
             optimized.wasm.gz
 
-  # Build Docker images for all platforms
+  # Docker sanity check for PRs and main branch
+  docker-sanity-check:
+    name: Docker Build Sanity Check
+    runs-on: ubuntu-latest
+    if: "!startsWith(github.ref, 'refs/tags/')"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Build Docker image (single platform)
+        run: docker build --platform linux/amd64 -t otlp2parquet:test .
+
+  # Build Docker images for all platforms (releases only)
   build-docker:
     name: Build & Push Docker Image
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: read
       packages: write
@@ -205,7 +219,7 @@ jobs:
   # Create GitHub release
   release:
     name: Create Release
-    needs: [build-native, build-wasm, build-docker]
+    needs: [build-native, build-wasm]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:

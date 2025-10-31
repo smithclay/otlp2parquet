@@ -24,8 +24,6 @@ RUN rm -rf src target/release/otlp2parquet* target/release/deps/otlp2parquet*
 
 # Copy source and build
 COPY src ./src
-COPY build.rs ./
-COPY proto ./proto
 
 RUN cargo build --release --features server
 
