@@ -161,7 +161,7 @@ fn test_protobuf_and_json_produce_same_output() {
     assert_eq!(&json_result.parquet_bytes[0..4], b"PAR1");
 
     // Parquet files should have same structure (read back and compare)
-    use arrow::array::{Array, StringArray};
+    use arrow::array::{Array, StringArray, StructArray};
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
     let protobuf_batch = {
@@ -190,16 +190,27 @@ fn test_protobuf_and_json_produce_same_output() {
     let protobuf_body = protobuf_batch
         .column(7)
         .as_any()
-        .downcast_ref::<StringArray>()
+        .downcast_ref::<StructArray>()
         .unwrap();
     let json_body = json_batch
         .column(7)
         .as_any()
+        .downcast_ref::<StructArray>()
+        .unwrap();
+
+    let protobuf_body_strings = protobuf_body
+        .column(1)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+    let json_body_strings = json_body
+        .column(1)
+        .as_any()
         .downcast_ref::<StringArray>()
         .unwrap();
 
-    assert_eq!(protobuf_body.value(0), json_body.value(0));
-    assert_eq!(protobuf_body.value(1), json_body.value(1));
+    assert_eq!(protobuf_body_strings.value(0), json_body_strings.value(0));
+    assert_eq!(protobuf_body_strings.value(1), json_body_strings.value(1));
 }
 
 #[test]
@@ -294,7 +305,7 @@ fn test_jsonl_format_processing() {
     assert_eq!(&processing_result.parquet_bytes[0..4], b"PAR1");
 
     // Verify that both services' logs were merged
-    use arrow::array::StringArray;
+    use arrow::array::{StringArray, StructArray};
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
     let bytes = prost::bytes::Bytes::from(processing_result.parquet_bytes);
@@ -320,10 +331,15 @@ fn test_jsonl_format_processing() {
     let body_col = batch
         .column(7)
         .as_any()
+        .downcast_ref::<StructArray>()
+        .unwrap();
+    let body_strings = body_col
+        .column(1)
+        .as_any()
         .downcast_ref::<StringArray>()
         .unwrap();
-    assert_eq!(body_col.value(0), "Log from service-1");
-    assert_eq!(body_col.value(1), "Log from service-2");
+    assert_eq!(body_strings.value(0), "Log from service-1");
+    assert_eq!(body_strings.value(1), "Log from service-2");
 }
 
 #[test]

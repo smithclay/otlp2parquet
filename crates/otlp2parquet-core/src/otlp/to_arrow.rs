@@ -3,7 +3,7 @@
 // This is the core processing logic that extracts data from OTLP protobuf
 // messages and builds Arrow columns according to the ClickHouse schema.
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use arrow::array::{
     builder::MapFieldNames, ArrayBuilder, BinaryBuilder, BooleanBuilder, FixedSizeBinaryBuilder,
     Float64Builder, Int32Builder, Int64Builder, LargeStringBuilder, MapBuilder, RecordBatch,
@@ -147,28 +147,28 @@ impl ArrowConverter {
     {
         for resource_logs in &request.resource_logs {
             // Extract resource attributes
-            let mut resource_attrs: Vec<(String, Option<AnyValue>)> =
+            let mut resource_attrs: Vec<(&str, Option<&AnyValue>)> =
                 if let Some(resource) = &resource_logs.resource {
                     Vec::with_capacity(resource.attributes.len())
                 } else {
                     Vec::new()
                 };
-            let mut extracted_service_name = String::new();
-            let mut extracted_service_namespace = None;
-            let mut extracted_service_instance_id = None;
+            let mut extracted_service_name: Option<&str> = None;
+            let mut extracted_service_namespace: Option<&str> = None;
+            let mut extracted_service_instance_id: Option<&str> = None;
 
             if let Some(resource) = &resource_logs.resource {
                 for attr in &resource.attributes {
-                    let key = &attr.key;
+                    let key = attr.key.as_str();
 
                     if let Some(value) = attr.value.as_ref() {
-                        match key.as_str() {
+                        match key {
                             "service.name" => {
                                 if let Some(val) = any_value_string(value) {
-                                    extracted_service_name = val.clone();
                                     if self.service_name.is_empty() {
-                                        self.service_name = val;
+                                        self.service_name = val.to_owned();
                                     }
+                                    extracted_service_name = Some(val);
                                 }
                                 continue;
                             }
@@ -188,8 +188,8 @@ impl ArrowConverter {
                         }
                     }
 
-                    if !EXTRACTED_RESOURCE_ATTRS.contains(&key.as_str()) {
-                        resource_attrs.push((key.clone(), attr.value.clone()));
+                    if !EXTRACTED_RESOURCE_ATTRS.contains(&key) {
+                        resource_attrs.push((key, attr.value.as_ref()));
                     }
                 }
             }
@@ -239,14 +239,20 @@ impl ArrowConverter {
 
                     append_any_value(&mut self.body_builder, log_record.body.as_ref())?;
 
-                    self.service_name_builder
-                        .append_value(&extracted_service_name);
-                    if let Some(ns) = &extracted_service_namespace {
+                    let service_name_value = extracted_service_name.unwrap_or({
+                        if self.service_name.is_empty() {
+                            ""
+                        } else {
+                            self.service_name.as_str()
+                        }
+                    });
+                    self.service_name_builder.append_value(service_name_value);
+                    if let Some(ns) = extracted_service_namespace {
                         self.service_namespace_builder.append_value(ns);
                     } else {
                         self.service_namespace_builder.append_null();
                     }
-                    if let Some(id) = &extracted_service_instance_id {
+                    if let Some(id) = extracted_service_instance_id {
                         self.service_instance_id_builder.append_value(id);
                     } else {
                         self.service_instance_id_builder.append_null();
@@ -259,12 +265,9 @@ impl ArrowConverter {
                         self.scope_version_builder.append_null();
                     }
 
-                    for (key, value) in &resource_attrs {
+                    for &(key, value) in &resource_attrs {
                         self.resource_attributes_builder.keys().append_value(key);
-                        append_any_value(
-                            self.resource_attributes_builder.values(),
-                            value.as_ref(),
-                        )?;
+                        append_any_value(self.resource_attributes_builder.values(), value)?;
                     }
                     self.resource_attributes_builder.append(true)?;
 
@@ -414,14 +417,16 @@ fn append_any_value(builder: &mut StructBuilder, any_val: Option<&AnyValue>) -> 
             {
                 let type_builder = builder
                     .field_builder::<StringBuilder>(TYPE_INDEX)
-                    .expect("type builder");
+                    .ok_or_else(|| anyhow!("schema: Type field missing in AnyValue builder"))?;
                 type_builder.append_value(type_name);
             }
 
             {
                 let string_builder = builder
                     .field_builder::<StringBuilder>(STRING_INDEX)
-                    .expect("string builder");
+                    .ok_or_else(|| {
+                        anyhow!("schema: StringValue field missing in AnyValue builder")
+                    })?;
                 if let Some(val) = string_value {
                     string_builder.append_value(val);
                 } else {
@@ -432,7 +437,9 @@ fn append_any_value(builder: &mut StructBuilder, any_val: Option<&AnyValue>) -> 
             {
                 let bool_builder = builder
                     .field_builder::<BooleanBuilder>(BOOL_INDEX)
-                    .expect("bool builder");
+                    .ok_or_else(|| {
+                        anyhow!("schema: BoolValue field missing in AnyValue builder")
+                    })?;
                 if let Some(val) = bool_value {
                     bool_builder.append_value(val);
                 } else {
@@ -443,7 +450,7 @@ fn append_any_value(builder: &mut StructBuilder, any_val: Option<&AnyValue>) -> 
             {
                 let int_builder = builder
                     .field_builder::<Int64Builder>(INT_INDEX)
-                    .expect("int builder");
+                    .ok_or_else(|| anyhow!("schema: IntValue field missing in AnyValue builder"))?;
                 if let Some(val) = int_value {
                     int_builder.append_value(val);
                 } else {
@@ -454,7 +461,9 @@ fn append_any_value(builder: &mut StructBuilder, any_val: Option<&AnyValue>) -> 
             {
                 let double_builder = builder
                     .field_builder::<Float64Builder>(DOUBLE_INDEX)
-                    .expect("double builder");
+                    .ok_or_else(|| {
+                        anyhow!("schema: DoubleValue field missing in AnyValue builder")
+                    })?;
                 if let Some(val) = double_value {
                     double_builder.append_value(val);
                 } else {
@@ -465,7 +474,9 @@ fn append_any_value(builder: &mut StructBuilder, any_val: Option<&AnyValue>) -> 
             {
                 let bytes_builder = builder
                     .field_builder::<BinaryBuilder>(BYTES_INDEX)
-                    .expect("bytes builder");
+                    .ok_or_else(|| {
+                        anyhow!("schema: BytesValue field missing in AnyValue builder")
+                    })?;
                 if let Some(val) = bytes_value {
                     bytes_builder.append_value(val);
                 } else {
@@ -476,7 +487,9 @@ fn append_any_value(builder: &mut StructBuilder, any_val: Option<&AnyValue>) -> 
             {
                 let json_builder = builder
                     .field_builder::<LargeStringBuilder>(JSON_INDEX)
-                    .expect("json builder");
+                    .ok_or_else(|| {
+                        anyhow!("schema: JsonValue field missing in AnyValue builder")
+                    })?;
                 if let Some(val) = json_value {
                     json_builder.append_value(&val);
                 } else {
@@ -491,39 +504,39 @@ fn append_any_value(builder: &mut StructBuilder, any_val: Option<&AnyValue>) -> 
 
     builder
         .field_builder::<StringBuilder>(TYPE_INDEX)
-        .expect("type builder")
+        .ok_or_else(|| anyhow!("schema: Type field missing in AnyValue builder"))?
         .append_null();
     builder
         .field_builder::<StringBuilder>(STRING_INDEX)
-        .expect("string builder")
+        .ok_or_else(|| anyhow!("schema: StringValue field missing in AnyValue builder"))?
         .append_null();
     builder
         .field_builder::<BooleanBuilder>(BOOL_INDEX)
-        .expect("bool builder")
+        .ok_or_else(|| anyhow!("schema: BoolValue field missing in AnyValue builder"))?
         .append_null();
     builder
         .field_builder::<Int64Builder>(INT_INDEX)
-        .expect("int builder")
+        .ok_or_else(|| anyhow!("schema: IntValue field missing in AnyValue builder"))?
         .append_null();
     builder
         .field_builder::<Float64Builder>(DOUBLE_INDEX)
-        .expect("double builder")
+        .ok_or_else(|| anyhow!("schema: DoubleValue field missing in AnyValue builder"))?
         .append_null();
     builder
         .field_builder::<BinaryBuilder>(BYTES_INDEX)
-        .expect("bytes builder")
+        .ok_or_else(|| anyhow!("schema: BytesValue field missing in AnyValue builder"))?
         .append_null();
     builder
         .field_builder::<LargeStringBuilder>(JSON_INDEX)
-        .expect("json builder")
+        .ok_or_else(|| anyhow!("schema: JsonValue field missing in AnyValue builder"))?
         .append_null();
     builder.append(false);
     Ok(())
 }
 
-fn any_value_string(any_val: &AnyValue) -> Option<String> {
+fn any_value_string(any_val: &AnyValue) -> Option<&str> {
     match any_val.value.as_ref()? {
-        any_value::Value::StringValue(s) => Some(s.clone()),
+        any_value::Value::StringValue(s) => Some(s.as_str()),
         _ => None,
     }
 }

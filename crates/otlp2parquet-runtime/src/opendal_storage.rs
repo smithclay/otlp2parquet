@@ -9,7 +9,7 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 use futures_util::TryStreamExt;
-use opendal::Operator;
+use opendal::{Buffer, Operator};
 
 #[derive(Clone)]
 pub struct OpenDalStorage {
@@ -82,9 +82,9 @@ impl OpenDalStorage {
     }
 
     /// Read data from storage (async)
-    pub async fn read(&self, path: &str) -> anyhow::Result<Vec<u8>> {
+    pub async fn read(&self, path: &str) -> anyhow::Result<Buffer> {
         let data = self.operator.read(path).await?;
-        Ok(data.to_vec())
+        Ok(data)
     }
 
     /// Check if path exists
@@ -132,7 +132,7 @@ mod tests {
         storage.write("test.txt", test_data.clone()).await?;
 
         let read_data = storage.read("test.txt").await?;
-        assert_eq!(test_data, read_data);
+        assert_eq!(test_data, read_data.to_vec());
 
         assert!(storage.exists("test.txt").await?);
         assert!(!storage.exists("nonexistent.txt").await?);

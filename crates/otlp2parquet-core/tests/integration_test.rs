@@ -156,7 +156,7 @@ fn test_parquet_structure() {
     let processing_result = process_otlp_logs(&otlp_bytes).unwrap();
 
     // Verify Parquet structure by reading it back
-    use arrow::array::{Array, StringArray, TimestampNanosecondArray};
+    use arrow::array::{Array, StringArray, StructArray, TimestampNanosecondArray};
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
     // Use Bytes to satisfy ChunkReader trait bound (Bytes implements ChunkReader)
@@ -197,10 +197,24 @@ fn test_parquet_structure() {
     let body_col = batch
         .column(7)
         .as_any()
+        .downcast_ref::<StructArray>()
+        .expect("Column 7 should be StructArray");
+
+    let body_type = body_col
+        .column(0)
+        .as_any()
         .downcast_ref::<StringArray>()
-        .expect("Column 7 should be StringArray");
-    assert_eq!(body_col.value(0), "Test log message");
-    assert_eq!(body_col.value(1), "Error log message");
+        .expect("Body.Type should be StringArray");
+    assert_eq!(body_type.value(0), "string");
+    assert_eq!(body_type.value(1), "string");
+
+    let body_string = body_col
+        .column(1)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .expect("Body.StringValue should be StringArray");
+    assert_eq!(body_string.value(0), "Test log message");
+    assert_eq!(body_string.value(1), "Error log message");
 }
 
 #[test]

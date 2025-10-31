@@ -39,9 +39,9 @@ services:
 
   # otlp2parquet
   otlp2parquet:
-    image: ghcr.io/smithclay/otlp2parquet:latest
+    # image: ghcr.io/smithclay/otlp2parquet:latest
     # For local development:
-    # build: .
+    build: .
     depends_on:
       minio:
         condition: service_healthy

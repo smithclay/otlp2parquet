@@ -91,10 +91,11 @@ tokio = { workspace = true, optional = true }
 anyhow = { workspace = true }
 
 [features]
-default = ["server"]
-cloudflare = ["worker", "otlp2parquet-runtime/cloudflare"]
-lambda = ["lambda_runtime", "tokio", "otlp2parquet-runtime/lambda"]
+default = []
 server = ["tokio", "otlp2parquet-runtime/server"]
+lambda = ["lambda_runtime", "tokio", "otlp2parquet-runtime/lambda"]
+cloudflare = ["worker", "otlp2parquet-runtime/cloudflare"]
+full = ["server"]
 
 # OpenDAL testing features
 opendal-s3 = ["otlp2parquet-runtime/opendal-s3"]
