@@ -9,7 +9,9 @@ use anyhow::{anyhow, Context, Result};
 use hex::FromHex;
 use otlp2parquet_proto::opentelemetry::proto::collector::logs::v1::ExportLogsServiceRequest;
 use prost::Message;
-use serde_json::{Map as JsonMap, Value as JsonValue};
+use serde_json::Value as JsonValue;
+use std::borrow::Cow;
+use std::mem;
 
 // Canonical OTLP JSON uses camelCase field names and represents large integers as strings.
 // We normalise incoming payloads so serde can deserialize into the prost-generated structs.
@@ -135,117 +137,114 @@ fn parse_jsonl(bytes: &[u8]) -> Result<ExportLogsServiceRequest> {
     Ok(merged)
 }
 
-fn canonical_json_to_request(value: JsonValue) -> Result<ExportLogsServiceRequest> {
-    let normalised = normalise_json_value(value, None)?;
-    serde_json::from_value(normalised)
+fn canonical_json_to_request(mut value: JsonValue) -> Result<ExportLogsServiceRequest> {
+    normalise_json_value(&mut value, None)?;
+    serde_json::from_value(value)
         .context("Failed to convert canonical OTLP JSON to protobuf struct")
 }
 
-fn normalise_json_value(value: JsonValue, key_hint: Option<&str>) -> Result<JsonValue> {
+fn normalise_json_value(value: &mut JsonValue, key_hint: Option<&str>) -> Result<()> {
     match value {
         JsonValue::Object(map) => {
-            let mut updated = JsonMap::new();
-            for (key, val) in map {
-                let snake_key = camel_to_snake_case(&key);
-                let is_anyvalue_variant = ANYVALUE_VARIANTS.contains(&snake_key.as_str());
+            let original = mem::take(map);
+
+            for (key, mut val) in original {
+                let snake_key: Cow<'_, str> = if key.chars().any(|c| c.is_ascii_uppercase()) {
+                    Cow::Owned(camel_to_snake_case(&key))
+                } else {
+                    Cow::Borrowed(key.as_str())
+                };
+
+                let is_anyvalue_variant = ANYVALUE_VARIANTS.contains(&snake_key.as_ref());
+
+                let hint_storage;
+                let hint_key = if is_anyvalue_variant {
+                    hint_storage = snake_key.to_string();
+                    hint_storage.as_str()
+                } else {
+                    snake_key.as_ref()
+                };
+
+                normalise_json_value(&mut val, Some(hint_key))?;
+
                 let final_key = if is_anyvalue_variant {
-                    snake_to_pascal_case(&snake_key)
+                    snake_to_pascal_case(snake_key.as_ref())
                 } else {
-                    snake_key.clone()
+                    match snake_key {
+                        Cow::Owned(s) => s,
+                        Cow::Borrowed(_) => key,
+                    }
                 };
-                let hint_owner = if is_anyvalue_variant {
-                    snake_key.clone()
-                } else {
-                    final_key.clone()
-                };
-                let normalised = normalise_json_value(val, Some(&hint_owner))?;
-                updated.insert(final_key, normalised);
+
+                map.insert(final_key, val);
             }
 
             if let Some("log_records") = key_hint {
-                updated
-                    .entry("dropped_attributes_count".to_string())
+                map.entry("dropped_attributes_count".to_string())
                     .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u32)));
-                updated
-                    .entry("flags".to_string())
+                map.entry("flags".to_string())
                     .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u32)));
-                updated
-                    .entry("observed_time_unix_nano".to_string())
+                map.entry("observed_time_unix_nano".to_string())
                     .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u64)));
-                updated
-                    .entry("time_unix_nano".to_string())
+                map.entry("time_unix_nano".to_string())
                     .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u64)));
-                updated
-                    .entry("severity_number".to_string())
+                map.entry("severity_number".to_string())
                     .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0i32)));
-                updated
-                    .entry("severity_text".to_string())
+                map.entry("severity_text".to_string())
                     .or_insert_with(|| JsonValue::String(String::new()));
-                updated
-                    .entry("attributes".to_string())
+                map.entry("attributes".to_string())
                     .or_insert_with(|| JsonValue::Array(Vec::new()));
-                updated
-                    .entry("trace_id".to_string())
+                map.entry("trace_id".to_string())
                     .or_insert_with(|| JsonValue::Array(Vec::new()));
-                updated
-                    .entry("span_id".to_string())
+                map.entry("span_id".to_string())
                     .or_insert_with(|| JsonValue::Array(Vec::new()));
             }
 
             if let Some("scope_logs") = key_hint {
-                updated
-                    .entry("schema_url".to_string())
+                map.entry("schema_url".to_string())
                     .or_insert_with(|| JsonValue::String(String::new()));
             }
 
             if let Some("resource_logs") = key_hint {
-                updated
-                    .entry("schema_url".to_string())
+                map.entry("schema_url".to_string())
                     .or_insert_with(|| JsonValue::String(String::new()));
             }
 
             if let Some("resource") = key_hint {
-                updated
-                    .entry("dropped_attributes_count".to_string())
+                map.entry("dropped_attributes_count".to_string())
                     .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u32)));
-                updated
-                    .entry("attributes".to_string())
+                map.entry("attributes".to_string())
                     .or_insert_with(|| JsonValue::Array(Vec::new()));
             }
 
             if let Some("scope") = key_hint {
-                updated
-                    .entry("dropped_attributes_count".to_string())
+                map.entry("dropped_attributes_count".to_string())
                     .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u32)));
-                updated
-                    .entry("name".to_string())
+                map.entry("name".to_string())
                     .or_insert_with(|| JsonValue::String(String::new()));
-                updated
-                    .entry("version".to_string())
+                map.entry("version".to_string())
                     .or_insert_with(|| JsonValue::String(String::new()));
-                updated
-                    .entry("attributes".to_string())
+                map.entry("attributes".to_string())
                     .or_insert_with(|| JsonValue::Array(Vec::new()));
             }
 
-            Ok(JsonValue::Object(updated))
+            Ok(())
         }
         JsonValue::Array(values) => {
-            let mut converted = Vec::with_capacity(values.len());
-            for item in values {
-                converted.push(normalise_json_value(item, key_hint)?);
+            for item in values.iter_mut() {
+                normalise_json_value(item, key_hint)?;
             }
-            Ok(JsonValue::Array(converted))
+            Ok(())
         }
-        JsonValue::String(s) => {
+        JsonValue::String(current) => {
             if let Some(key) = key_hint {
-                if let Some(converted) = convert_string_field(key, &s)? {
-                    return Ok(converted);
+                if let Some(converted) = convert_string_field(key, current)? {
+                    *value = converted;
                 }
             }
-            Ok(JsonValue::String(s))
+            Ok(())
         }
-        other => Ok(other),
+        _ => Ok(()),
     }
 }
 
@@ -258,21 +257,21 @@ fn convert_string_field(key: &str, value: &str) -> Result<Option<JsonValue>> {
         let parsed = value
             .parse::<u64>()
             .with_context(|| format!("Failed to parse '{}' as u64 for field '{}'", value, key))?;
-        return Ok(Some(JsonValue::Number(parsed.into())));
+        return Ok(Some(JsonValue::Number(serde_json::Number::from(parsed))));
     }
 
     if U32_FIELDS.contains(&key) {
         let parsed = value
             .parse::<u32>()
             .with_context(|| format!("Failed to parse '{}' as u32 for field '{}'", value, key))?;
-        return Ok(Some(JsonValue::Number(parsed.into())));
+        return Ok(Some(JsonValue::Number(serde_json::Number::from(parsed))));
     }
 
     if I64_FIELDS.contains(&key) {
         let parsed = value
             .parse::<i64>()
             .with_context(|| format!("Failed to parse '{}' as i64 for field '{}'", value, key))?;
-        return Ok(Some(JsonValue::Number(parsed.into())));
+        return Ok(Some(JsonValue::Number(serde_json::Number::from(parsed))));
     }
 
     if F64_FIELDS.contains(&key) {
@@ -299,11 +298,9 @@ fn convert_string_field(key: &str, value: &str) -> Result<Option<JsonValue>> {
                 value, key
             )
         })?;
-        let json_bytes = bytes
-            .into_iter()
-            .map(|b| JsonValue::Number(serde_json::Number::from(b as u64)))
-            .collect();
-        return Ok(Some(JsonValue::Array(json_bytes)));
+        let json_value =
+            serde_json::to_value(bytes).context("Failed to encode OTLP id bytes as JSON array")?;
+        return Ok(Some(json_value));
     }
 
     if key == "array_value" && value.is_empty() {
