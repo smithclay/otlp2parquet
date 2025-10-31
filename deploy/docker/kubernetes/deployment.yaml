@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otlp2parquet
+  labels:
+    app: otlp2parquet
+    version: v1
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: otlp2parquet
+  template:
+    metadata:
+      labels:
+        app: otlp2parquet
+        version: v1
+    spec:
+      containers:
+      - name: otlp2parquet
+        image: ghcr.io/smithclay/otlp2parquet:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: STORAGE_BACKEND
+          valueFrom:
+            configMapKeyRef:
+              name: otlp2parquet-config
+              key: storage_backend
+        - name: S3_BUCKET
+          valueFrom:
+            configMapKeyRef:
+              name: otlp2parquet-config
+              key: s3_bucket
+              optional: true
+        - name: S3_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: otlp2parquet-config
+              key: s3_region
+              optional: true
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: otlp2parquet-secrets
+              key: aws_access_key_id
+              optional: true
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: otlp2parquet-secrets
+              key: aws_secret_access_key
+              optional: true
+        - name: R2_BUCKET
+          valueFrom:
+            configMapKeyRef:
+              name: otlp2parquet-config
+              key: r2_bucket
+              optional: true
+        - name: R2_ACCOUNT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: otlp2parquet-config
+              key: r2_account_id
+              optional: true
+        - name: R2_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: otlp2parquet-secrets
+              key: r2_access_key_id
+              optional: true
+        - name: R2_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: otlp2parquet-secrets
+              key: r2_secret_access_key
+              optional: true
+        - name: RUST_LOG
+          value: "info"
+        - name: HTTP_PORT
+          value: "8080"
+        - name: HTTP_HOST
+          value: "0.0.0.0"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - /usr/local/bin/otlp2parquet
+            - --health-check
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 3
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - /usr/local/bin/otlp2parquet
+            - --health-check
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+      # Use IAM roles for service accounts (IRSA) in production
+      # serviceAccountName: otlp2parquet

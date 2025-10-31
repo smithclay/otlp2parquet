@@ -1,0 +1,50 @@
+version: '3.9'
+
+# Example: otlp2parquet with Cloudflare R2 storage backend
+# Usage: docker-compose -f compose.r2.yml up -d
+
+services:
+  otlp2parquet:
+    image: ghcr.io/smithclay/otlp2parquet:latest
+    container_name: otlp2parquet-r2
+    ports:
+      - "8080:8080"
+    environment:
+      # Storage configuration
+      STORAGE_BACKEND: r2
+      R2_BUCKET: ${R2_BUCKET:-otlp-logs}
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID}
+
+      # R2 API credentials
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
+
+      # HTTP server config
+      HTTP_PORT: 8080
+      HTTP_HOST: 0.0.0.0
+
+      # Logging
+      RUST_LOG: ${RUST_LOG:-info}
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/otlp2parquet", "--health-check"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+# Example .env file:
+# ---
+# R2_BUCKET=my-otlp-logs
+# R2_ACCOUNT_ID=abc123def456
+# R2_ACCESS_KEY_ID=your_r2_access_key_id
+# R2_SECRET_ACCESS_KEY=your_r2_secret_access_key
+# RUST_LOG=info
+
+# To get R2 credentials:
+# 1. Go to Cloudflare dashboard
+# 2. Navigate to R2 → Overview
+# 3. Click "Manage R2 API Tokens"
+# 4. Create API token with "Object Read & Write" permissions

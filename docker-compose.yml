@@ -1,0 +1,75 @@
+version: '3.9'
+
+# Default configuration: filesystem storage
+# For other storage backends, see deploy/docker/ directory
+
+services:
+  otlp2parquet:
+    image: ghcr.io/smithclay/otlp2parquet:latest
+    # For local development, uncomment to build from source:
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      # Storage backend: filesystem, s3, or r2
+      STORAGE_BACKEND: filesystem
+      FILESYSTEM_ROOT: /data
+
+      # HTTP server config
+      HTTP_PORT: 8080
+      HTTP_HOST: 0.0.0.0
+
+      # Logging
+      RUST_LOG: info
+
+    volumes:
+      # Persist parquet files locally
+      - otlp-data:/data
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/otlp2parquet", "--health-check"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  otlp-data:
+    driver: local
+
+# Example configurations for different storage backends:
+#
+# S3 Storage (AWS):
+# ---
+# services:
+#   otlp2parquet:
+#     image: ghcr.io/smithclay/otlp2parquet:latest
+#     ports:
+#       - "8080:8080"
+#     environment:
+#       STORAGE_BACKEND: s3
+#       S3_BUCKET: my-otlp-logs
+#       S3_REGION: us-east-1
+#       # AWS credentials via IAM role (ECS/EKS) or environment:
+#       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+#       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+#       RUST_LOG: info
+#
+# R2 Storage (Cloudflare):
+# ---
+# services:
+#   otlp2parquet:
+#     image: ghcr.io/smithclay/otlp2parquet:latest
+#     ports:
+#       - "8080:8080"
+#     environment:
+#       STORAGE_BACKEND: r2
+#       R2_BUCKET: my-otlp-logs
+#       R2_ACCOUNT_ID: your-account-id
+#       R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
+#       R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
+#       RUST_LOG: info

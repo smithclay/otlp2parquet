@@ -1,0 +1,47 @@
+version: '3.9'
+
+# Example: otlp2parquet with S3 storage backend
+# Usage: docker-compose -f compose.s3.yml up -d
+
+services:
+  otlp2parquet:
+    image: ghcr.io/smithclay/otlp2parquet:latest
+    container_name: otlp2parquet-s3
+    ports:
+      - "8080:8080"
+    environment:
+      # Storage configuration
+      STORAGE_BACKEND: s3
+      S3_BUCKET: ${S3_BUCKET:-otlp-logs}
+      S3_REGION: ${S3_REGION:-us-east-1}
+
+      # AWS credentials (use IAM role in production)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+
+      # Optional: Custom S3 endpoint (for MinIO, etc.)
+      # S3_ENDPOINT: http://minio:9000
+
+      # HTTP server config
+      HTTP_PORT: 8080
+      HTTP_HOST: 0.0.0.0
+
+      # Logging
+      RUST_LOG: ${RUST_LOG:-info}
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/otlp2parquet", "--health-check"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+# Example .env file:
+# ---
+# S3_BUCKET=my-otlp-logs
+# S3_REGION=us-east-1
+# AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+# AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+# RUST_LOG=info

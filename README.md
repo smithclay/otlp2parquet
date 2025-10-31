@@ -15,9 +15,88 @@ OpenTelemetry ingestion pipeline that writes ClickHouse-compatible Parquet files
 
 ## Quick Start
 
-> **One-click deployment coming soon:** Cloudflare Workers button + AWS CloudFormation template
+Choose your deployment method:
 
-For now, see [Development Setup](#development-setup) for manual installation.
+### ⚡ Cloudflare Workers (Edge Compute - Free Tier)
+
+**One-click deployment:**
+
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/smithclay/otlp2parquet)
+
+**Or with Wrangler CLI:**
+
+```bash
+# Install Wrangler
+npm install -g wrangler
+
+# Login and create R2 bucket
+wrangler login
+wrangler r2 bucket create otlp-logs
+
+# Deploy
+make build-cloudflare
+wrangler deploy
+```
+
+**Cost:** Free tier (100k requests/day) or ~$20/month (1M logs/day)
+
+[→ Full Cloudflare deployment guide](deploy/cloudflare/README.md)
+
+---
+
+### 🐳 Docker / Server Mode (Self-Hosted)
+
+**Pull from GitHub Container Registry:**
+
+```bash
+# Filesystem storage (quick start)
+docker run -d -p 8080:8080 \
+  -e STORAGE_BACKEND=filesystem \
+  -v otlp-data:/data \
+  ghcr.io/smithclay/otlp2parquet:latest
+
+# With docker-compose (recommended)
+curl -O https://raw.githubusercontent.com/smithclay/otlp2parquet/main/docker-compose.yml
+docker-compose up -d
+```
+
+**Multi-arch support:** Automatic (amd64, arm64)
+
+**Cost:** Free (self-hosted) + storage costs
+
+[→ Full Docker deployment guide](deploy/docker/README.md)
+
+---
+
+### 🔺 AWS Lambda (Serverless)
+
+**Deploy with AWS SAM:**
+
+```bash
+# Install SAM CLI
+brew install aws-sam-cli
+
+# Deploy (guided)
+sam deploy --guided
+```
+
+You'll get a Function URL for OTLP ingestion.
+
+**Cost:** ~$16/month (1M logs/day) including S3
+
+[→ Full Lambda deployment guide](deploy/lambda/README.md)
+
+---
+
+### Deployment Comparison
+
+| Platform | Setup Time | Monthly Cost* | Best For |
+|----------|-----------|---------------|----------|
+| **Cloudflare** | 1 min | Free-$20 | Edge compute, global distribution |
+| **Docker** | 2 min | $5-50 | Kubernetes, self-hosted, multi-backend |
+| **Lambda** | 3 min | $16+ | AWS ecosystem, serverless |
+
+*Cost estimates for ~1M logs/day
 
 ## Usage
 
@@ -390,14 +469,23 @@ make wasm-profile
 - **Code Reduction:** -913 lines of code, cleaner architecture
 - **Binary Size:** Maintained excellent WASM size (<3MB compressed)
 
-### 📋 Planned (Phase 6+)
+### 🚀 Latest (Phase 6 - Easy Button Deployments)
+
+- [x] **Docker multi-arch images** (amd64, arm64) on GitHub Container Registry
+- [x] **Cloudflare Workers deployment** with wrangler.toml and deploy button
+- [x] **AWS Lambda SAM template** with guided deployment
+- [x] Comprehensive deployment guides for all platforms
+- [x] docker-compose examples (filesystem, S3, R2)
+- [x] CI/CD workflow for Docker image builds
+
+### 📋 Planned (Phase 7+)
 
 - [ ] JSON input format support (OTLP spec compliance)
 - [ ] JSONL support (bonus feature)
-- [ ] Docker image for server (arm/amd)
-- [ ] One-click Cloudflare deployment
-- [ ] CloudFormation template for Lambda
-- [ ] Load testing
+- [ ] Kubernetes manifests and Helm chart
+- [ ] Load testing and performance benchmarks
+- [ ] Grafana dashboards for monitoring
+- [ ] Integration tests with real OTLP clients
 
 See [CLAUDE.md](./CLAUDE.md) for detailed implementation instructions and architecture decisions.
 
