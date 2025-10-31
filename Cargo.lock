@@ -1639,6 +1639,7 @@ dependencies = [
  "anyhow",
  "arrow",
  "chrono",
+ "hex",
  "otlp2parquet-proto",
  "parquet",
  "prost",

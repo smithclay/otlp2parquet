@@ -3,7 +3,7 @@ use std::path::Path;
 
 use arrow::array::{Array, StringArray, StructArray, TimestampNanosecondArray};
 use arrow::record_batch::RecordBatch;
-use otlp2parquet_core::process_otlp_logs;
+use otlp2parquet_core::{process_otlp_logs, process_otlp_logs_with_format, InputFormat};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use prost::bytes::Bytes;
 
@@ -88,5 +88,45 @@ fn protobuf_testdata_round_trip() {
     assert!(
         !body_strings.is_empty() && !body_strings.value(0).is_empty(),
         "log body should contain string data"
+    );
+}
+
+#[test]
+fn json_testdata_round_trip() {
+    let json_path = load_testdata_path("log.json");
+    let json_bytes = fs::read(json_path).expect("failed to read log.json");
+
+    let result = process_otlp_logs_with_format(&json_bytes, InputFormat::Json)
+        .expect("json processing of testdata");
+
+    assert_eq!(&result.parquet_bytes[0..4], b"PAR1");
+    assert!(
+        result.timestamp_nanos > 0,
+        "timestamp should be extracted from JSON payload"
+    );
+    assert!(
+        !result.service_name.is_empty(),
+        "service name should be present in JSON metadata"
+    );
+
+    let batch = read_first_batch(&result.parquet_bytes);
+    assert!(batch.num_rows() > 0, "JSON payload should yield rows");
+}
+
+#[test]
+fn jsonl_testdata_round_trip() {
+    let jsonl_path = load_testdata_path("logs.jsonl");
+    let jsonl_bytes = fs::read(jsonl_path).expect("failed to read logs.jsonl");
+
+    let result = process_otlp_logs_with_format(&jsonl_bytes, InputFormat::Jsonl)
+        .expect("jsonl processing of testdata");
+
+    assert_eq!(&result.parquet_bytes[0..4], b"PAR1");
+    assert!(result.timestamp_nanos > 0);
+
+    let batch = read_first_batch(&result.parquet_bytes);
+    assert!(
+        batch.num_rows() > 0,
+        "JSONL payload should contribute at least one row"
     );
 }
