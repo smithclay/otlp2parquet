@@ -1,218 +1,60 @@
 # otlp2parquet
 
-OpenTelemetry ingestion pipeline that writes ClickHouse-compatible Parquet files to object storage.
+OpenTelemetry logs → Parquet files on object storage. ClickHouse-compatible schema.
 
-**Built for multi-platform deployment:** Runs as a full-featured HTTP server (Docker/K8s), compiles to <3MB WASM for Cloudflare Workers (free tier), or native binary for AWS Lambda.
-
-## Why otlp2parquet?
-
-- **Minimal footprint:** <3MB compressed WASM binary fits Cloudflare Workers free tier
-- **ClickHouse-compatible:** Direct Parquet schema compatibility for seamless querying
-- **Multi-platform:** Single codebase deploys to Server (Docker/K8s), Cloudflare Workers, or AWS Lambda
-- **Multi-backend storage:** Server mode supports S3, R2, Filesystem, GCS, Azure (configurable via env vars)
-- **Production-ready:** Structured logging, graceful shutdown, health checks (server mode)
-- **Time-partitioned:** Automatic Hive-style partitioning for efficient querying
+**Multi-platform:** Docker (local/K8s), Cloudflare Workers (WASM), AWS Lambda (serverless).
 
 ## Quick Start
 
-Choose your deployment method:
+**Choose your platform:**
 
-### ⚡ Cloudflare Workers (Edge Compute - Free Tier)
+### Docker (Local Development)
 
-**One-click deployment:**
+```bash
+docker-compose up
+```
+
+MinIO console: http://localhost:9001 (minioadmin/minioadmin)
+
+### Cloudflare Workers (Free Tier)
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/smithclay/otlp2parquet)
 
-**Or with Wrangler CLI:**
+Or: `wrangler deploy` ([guide](deploy/cloudflare/README.md))
+
+### AWS Lambda (Serverless)
 
 ```bash
-# Install Wrangler
-npm install -g wrangler
-
-# Login and create R2 bucket
-wrangler login
-wrangler r2 bucket create otlp-logs
-
-# Deploy
-make build-cloudflare
-wrangler deploy
-```
-
-**Cost:** Free tier (100k requests/day) or ~$20/month (1M logs/day)
-
-[→ Full Cloudflare deployment guide](deploy/cloudflare/README.md)
-
----
-
-### 🐳 Docker / Server Mode (Self-Hosted)
-
-**Pull from GitHub Container Registry:**
-
-```bash
-# Filesystem storage (quick start)
-docker run -d -p 8080:8080 \
-  -e STORAGE_BACKEND=filesystem \
-  -v otlp-data:/data \
-  ghcr.io/smithclay/otlp2parquet:latest
-
-# With docker-compose (recommended)
-curl -O https://raw.githubusercontent.com/smithclay/otlp2parquet/main/docker-compose.yml
-docker-compose up -d
-```
-
-**Multi-arch support:** Automatic (amd64, arm64)
-
-**Cost:** Free (self-hosted) + storage costs
-
-[→ Full Docker deployment guide](deploy/docker/README.md)
-
----
-
-### 🔺 AWS Lambda (Serverless)
-
-**Deploy with AWS SAM (guided, 3 commands):**
-
-```bash
-# 1. Install SAM CLI (one-time)
-brew install aws-sam-cli  # or: pip install aws-sam-cli
-
-# 2. Clone repo
-git clone https://github.com/smithclay/otlp2parquet.git
-cd otlp2parquet
-
-# 3. Deploy with prompts (bucket name, region, etc.)
 sam deploy --guided
 ```
 
-After deployment, you'll get a Function URL for OTLP ingestion.
-
-**Cost:** ~$16/month (1M logs/day) including S3
-
-[→ Full Lambda deployment guide](deploy/lambda/README.md)
+([guide](deploy/lambda/README.md))
 
 ---
 
-### Deployment Comparison
-
-| Platform | Setup Time | Monthly Cost* | Best For |
-|----------|-----------|---------------|----------|
-| **Cloudflare** | 1 min ⚡ | Free-$20 | Edge compute, global distribution |
-| **Docker** | 1 min 🐳 | $5-50 | Kubernetes, self-hosted, multi-backend |
-| **Lambda** | 3 min 🔺 | $16+ | AWS ecosystem, serverless |
-
-*Cost estimates for ~1M logs/day
-
 ## Usage
 
-Once deployed, send OpenTelemetry logs to the `/v1/logs` endpoint:
-
-### Send Logs (OTLP Protobuf)
+Send logs:
 
 ```bash
-# Using otel-cli (recommended)
-otel-cli logs \
-  --endpoint https://your-deployment.workers.dev/v1/logs \
-  --protocol http/protobuf \
-  --body "Application started successfully"
-
-# Or with curl (raw protobuf)
-curl -X POST https://your-deployment.workers.dev/v1/logs \
+curl -X POST http://localhost:8080/v1/logs \
   -H "Content-Type: application/x-protobuf" \
   --data-binary @logs.pb
-```
-
-### Send Logs (JSON)
-
-> JSON support planned - protobuf only for now
-
-```bash
-# Coming soon
-curl -X POST https://your-deployment.workers.dev/v1/logs \
-  -H "Content-Type: application/json" \
-  -d '{
-    "resourceLogs": [{
-      "resource": {
-        "attributes": [{"key": "service.name", "value": {"stringValue": "my-service"}}]
-      },
-      "scopeLogs": [{
-        "logRecords": [{
-          "timeUnixNano": "1234567890000000000",
-          "severityText": "INFO",
-          "body": {"stringValue": "Hello from my app"}
-        }]
-      }]
-    }]
-  }'
-```
-
-### Query Results
-
-Parquet files are written to object storage with Hive-style partitioning:
-
-```
-logs/{service_name}/year={yyyy}/month={mm}/day={dd}/hour={hh}/{uuid}-{timestamp}.parquet
 ```
 
 Query with DuckDB:
 
 ```sql
--- Install DuckDB httpfs extension (one-time)
-INSTALL httpfs;
-LOAD httpfs;
+INSTALL httpfs; LOAD httpfs;
+SET s3_endpoint='localhost:9000'; SET s3_url_style='path'; SET s3_use_ssl=false;
+SET s3_access_key_id='minioadmin'; SET s3_secret_access_key='minioadmin';
 
--- Configure S3/R2 credentials
-SET s3_endpoint='<your-endpoint>';
-SET s3_access_key_id='<key>';
-SET s3_secret_access_key='<secret>';
-
--- Query logs
-SELECT
-  Timestamp,
-  ServiceName,
-  SeverityText,
-  Body
-FROM read_parquet('s3://your-bucket/logs/my-service/year=2025/month=01/**/*.parquet')
-WHERE Timestamp > NOW() - INTERVAL 1 HOUR
-ORDER BY Timestamp DESC
-LIMIT 100;
+SELECT Timestamp, ServiceName, SeverityText, Body
+FROM read_parquet('s3://otlp-logs/logs/**/*.parquet')
+ORDER BY Timestamp DESC LIMIT 10;
 ```
 
-## API Reference
-
-### POST /v1/logs
-
-Ingest OpenTelemetry logs via OTLP protocol.
-
-**Request:**
-- **Content-Type:** `application/x-protobuf` (JSON coming soon)
-- **Body:** OTLP `ExportLogsServiceRequest` protobuf message
-
-**Response:**
-- **200 OK:** Logs successfully ingested and written to storage
-- **400 Bad Request:** Invalid protobuf or malformed request
-- **500 Internal Server Error:** Storage or processing error
-
-**Environment Variables:**
-
-| Variable | Platform | Description |
-|----------|----------|-------------|
-| `LISTEN_ADDR` | Server | HTTP server address (default: `0.0.0.0:8080`) |
-| `STORAGE_BACKEND` | Server | Storage backend: `fs`, `s3`, `r2` (default: `fs`) |
-| `STORAGE_PATH` | Server (fs) | Local filesystem path (default: `./data`) |
-| `S3_BUCKET` | Server (s3), Lambda | S3 bucket name |
-| `S3_REGION` | Server (s3), Lambda | AWS region |
-| `S3_ENDPOINT` | Server (s3) | Custom S3 endpoint (optional, for MinIO/etc) |
-| `R2_BUCKET` | Server (r2), Cloudflare | R2 bucket name |
-| `R2_ACCOUNT_ID` | Server (r2), Cloudflare | Cloudflare account ID |
-| `R2_ACCESS_KEY_ID` | Server (r2), Cloudflare | R2 API access key |
-| `R2_SECRET_ACCESS_KEY` | Server (r2), Cloudflare | R2 API secret key |
-| `LOG_LEVEL` | Server | Log level: `trace`, `debug`, `info`, `warn`, `error` (default: `info`) |
-| `LOG_FORMAT` | Server | Log format: `text`, `json` (default: `text`) |
-
-**Notes:**
-- **Server (default):** Full-featured Axum HTTP server with multi-backend storage
-- **Cloudflare Workers:** Uses OpenDAL S3 service with R2-compatible endpoint (WASM-constrained)
-- **Lambda:** OpenDAL automatically discovers AWS credentials from IAM role or environment (event-driven)
+Files stored as: `logs/{service}/year={yyyy}/month={mm}/day={dd}/hour={hh}/{uuid}.parquet`
 
 ## How It Works
 
