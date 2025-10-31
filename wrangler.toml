@@ -1,0 +1,72 @@
+# Cloudflare Workers configuration for otlp2parquet
+# Deploy with: wrangler deploy
+
+name = "otlp2parquet"
+main = "build/worker/otlp2parquet.wasm"
+compatibility_date = "2025-01-15"
+
+# Worker compute settings
+workers_dev = true
+route = ""  # Set to your custom domain if needed
+
+# Account information (set via wrangler login or environment)
+# account_id = ""  # Optional: set via CLOUDFLARE_ACCOUNT_ID env var
+
+# R2 bucket binding for log storage
+[[r2_buckets]]
+binding = "LOGS_BUCKET"
+bucket_name = "otlp-logs"  # Change this to your bucket name
+preview_bucket_name = "otlp-logs-preview"  # Optional: separate bucket for dev
+
+# Build configuration
+[build]
+command = "make build-cloudflare"
+watch_dirs = ["src", "crates"]
+
+# Build output
+[build.upload]
+format = "modules"
+main = "./build/worker/otlp2parquet.wasm"
+
+# Limits (Cloudflare Workers Free tier)
+# - 100,000 requests/day
+# - 10ms CPU time per request
+# - 1MB WASM after compression (we're at ~1MB compressed)
+
+# Environment variables (optional - for advanced config)
+[vars]
+# LOG_LEVEL = "info"
+# MAX_BATCH_SIZE = "1000"
+
+# Secrets (set with: wrangler secret put SECRET_NAME)
+# These should NOT be in this file, use wrangler CLI:
+# wrangler secret put R2_ACCESS_KEY_ID
+# wrangler secret put R2_SECRET_ACCESS_KEY
+
+# Development settings
+[env.dev]
+name = "otlp2parquet-dev"
+workers_dev = true
+
+[[env.dev.r2_buckets]]
+binding = "LOGS_BUCKET"
+bucket_name = "otlp-logs-dev"
+
+# Production settings
+[env.production]
+name = "otlp2parquet"
+workers_dev = false
+# route = "logs.example.com/*"  # Set your custom domain
+
+[[env.production.r2_buckets]]
+binding = "LOGS_BUCKET"
+bucket_name = "otlp-logs-production"
+
+# Staging settings
+[env.staging]
+name = "otlp2parquet-staging"
+workers_dev = false
+
+[[env.staging.r2_buckets]]
+binding = "LOGS_BUCKET"
+bucket_name = "otlp-logs-staging"

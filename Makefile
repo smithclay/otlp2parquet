@@ -80,8 +80,24 @@ build-lambda: ## Build Lambda binary only
 	@cargo build --release --no-default-features --features lambda
 
 .PHONY: build-cloudflare
-build-cloudflare: ## Build Cloudflare Workers WASM binary
+build-cloudflare: ## Build Cloudflare Workers WASM binary (optimized for wrangler)
+	@echo "==> Building WASM for Cloudflare Workers..."
 	@cargo build --release --no-default-features --features cloudflare --target wasm32-unknown-unknown
+	@echo "==> Optimizing WASM..."
+	@if ! command -v wasm-opt >/dev/null 2>&1; then \
+		echo "ERROR: wasm-opt not found. Install binaryen:"; \
+		echo "  macOS: brew install binaryen"; \
+		echo "  Linux: apt install binaryen"; \
+		exit 1; \
+	fi
+	@mkdir -p build/worker
+	@wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
+		-o build/worker/otlp2parquet.wasm $(WASM_BINARY)
+	@echo "==> WASM ready for wrangler at: build/worker/otlp2parquet.wasm"
+	@SIZE=$$(stat -f%z build/worker/otlp2parquet.wasm 2>/dev/null || stat -c%s build/worker/otlp2parquet.wasm 2>/dev/null); \
+	SIZE_KB=$$(echo "scale=1; $$SIZE / 1024" | bc); \
+	SIZE_MB=$$(echo "scale=3; $$SIZE / 1024 / 1024" | bc); \
+	echo "==> Optimized size: $$SIZE_KB KB ($$SIZE_MB MB)"
 
 #
 # WASM-Specific Commands

@@ -29,7 +29,7 @@ optimized.wasm
 # Cloudflare Workers
 .wrangler/
 worker-build/
-wrangler.toml
+build/
 
 # AWS
 .aws-sam/
@@ -42,3 +42,7 @@ wrangler.toml
 coverage/
 *.profraw
 *.profdata
+
+# Kubernetes secrets (use secret.yaml.example as template)
+**/secret.yaml
+!**/secret.yaml.example
