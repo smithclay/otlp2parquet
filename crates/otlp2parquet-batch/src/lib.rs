@@ -8,16 +8,21 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use arrow::array::RecordBatch;
 use otlp2parquet_core::otlp::LogMetadata;
 use otlp2parquet_core::{parse_otlp_to_arrow, InputFormat};
 use otlp2parquet_proto::opentelemetry::proto::collector::logs::v1::ExportLogsServiceRequest;
-use otlp2parquet_proto::opentelemetry::proto::common::v1::any_value;
 use parking_lot::Mutex;
 use prost::Message;
+
+mod buffered_batch;
+mod preview;
+
+use buffered_batch::BufferedBatch;
+use preview::{BatchKey, RequestPreview};
 
 #[derive(Debug, Clone)]
 pub struct BatchConfig {
@@ -43,151 +48,6 @@ impl BatchConfig {
             max_bytes,
             max_age,
         }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct BatchKey {
-    service: String,
-    hour_bucket: i64,
-}
-
-#[derive(Debug, Clone)]
-struct RequestPreview {
-    service_name: String,
-    first_timestamp: i64,
-    record_count: usize,
-    encoded_len: usize,
-}
-
-impl RequestPreview {
-    fn from_request(req: &ExportLogsServiceRequest) -> Self {
-        let mut service_name = String::new();
-        let mut first_ts = 0_i64;
-        let mut record_count = 0_usize;
-
-        for resource_logs in &req.resource_logs {
-            if let Some(resource) = &resource_logs.resource {
-                for attr in &resource.attributes {
-                    if attr.key == "service.name" {
-                        if let Some(any_value::Value::StringValue(value)) =
-                            attr.value.as_ref().and_then(|v| v.value.as_ref())
-                        {
-                            service_name = value.clone();
-                        }
-                    }
-                }
-            }
-
-            for scope_logs in &resource_logs.scope_logs {
-                for record in &scope_logs.log_records {
-                    record_count += 1;
-                    let ts = record.time_unix_nano as i64;
-                    if ts > 0 {
-                        if first_ts == 0 {
-                            first_ts = ts;
-                        } else {
-                            first_ts = first_ts.min(ts);
-                        }
-                    }
-                }
-            }
-        }
-
-        if service_name.is_empty() {
-            service_name = "unknown".to_string();
-        }
-
-        Self {
-            service_name,
-            first_timestamp: first_ts,
-            record_count,
-            encoded_len: req.encoded_len(),
-        }
-    }
-
-    fn batch_key(&self) -> BatchKey {
-        let hour_bucket = if self.first_timestamp > 0 {
-            self.first_timestamp / 3_600_000_000_000
-        } else {
-            0
-        };
-
-        BatchKey {
-            service: self.service_name.clone(),
-            hour_bucket,
-        }
-    }
-}
-
-/// Buffered batch accumulating Arrow RecordBatches
-#[derive(Debug)]
-struct BufferedBatch {
-    batches: Vec<RecordBatch>,
-    total_rows: usize,
-    total_bytes: usize, // Approximate size for flushing decisions
-    first_timestamp: i64,
-    service_name: String,
-    created_at: Instant,
-}
-
-impl BufferedBatch {
-    fn new(preview: &RequestPreview) -> Self {
-        Self {
-            batches: Vec::new(),
-            total_rows: 0,
-            total_bytes: 0,
-            first_timestamp: if preview.first_timestamp > 0 {
-                preview.first_timestamp
-            } else {
-                i64::MAX
-            },
-            service_name: preview.service_name.clone(),
-            created_at: Instant::now(),
-        }
-    }
-
-    fn add(&mut self, batch: RecordBatch, preview: &RequestPreview) {
-        if preview.first_timestamp > 0 {
-            self.first_timestamp = self.first_timestamp.min(preview.first_timestamp);
-        }
-        self.total_rows += preview.record_count;
-        self.total_bytes += preview.encoded_len; // Approximate
-        self.batches.push(batch);
-    }
-
-    fn should_flush(&self, cfg: &BatchConfig) -> bool {
-        self.total_rows >= cfg.max_rows
-            || self.total_bytes >= cfg.max_bytes
-            || self.created_at.elapsed() >= cfg.max_age
-    }
-
-    fn finalize(self) -> Result<CompletedBatch> {
-        // Merge all accumulated batches using Arrow's efficient concatenation
-        let merged_batch = if self.batches.is_empty() {
-            anyhow::bail!("Cannot finalize empty batch");
-        } else if self.batches.len() == 1 {
-            self.batches.into_iter().next().unwrap()
-        } else {
-            let schema = self.batches[0].schema();
-            arrow::compute::concat_batches(&schema, &self.batches)
-                .context("Failed to concatenate Arrow batches")?
-        };
-
-        let metadata = LogMetadata {
-            service_name: self.service_name,
-            first_timestamp_nanos: if self.first_timestamp == i64::MAX {
-                0
-            } else {
-                self.first_timestamp
-            },
-            record_count: merged_batch.num_rows(),
-        };
-
-        Ok(CompletedBatch {
-            batch: merged_batch,
-            metadata,
-        })
     }
 }
 
@@ -300,7 +160,7 @@ impl PassthroughBatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use otlp2parquet_proto::opentelemetry::proto::common::v1::{AnyValue, KeyValue};
+    use otlp2parquet_proto::opentelemetry::proto::common::v1::{any_value, AnyValue, KeyValue};
     use otlp2parquet_proto::opentelemetry::proto::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
     use otlp2parquet_proto::opentelemetry::proto::resource::v1::Resource;
 

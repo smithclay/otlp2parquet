@@ -3,52 +3,23 @@
 // This is the core processing logic that extracts data from OTLP protobuf
 // messages and builds Arrow columns according to the ClickHouse schema.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use arrow::array::{
-    builder::MapFieldNames, ArrayBuilder, BinaryBuilder, BooleanBuilder, FixedSizeBinaryBuilder,
-    Float64Builder, Int32Builder, Int64Builder, LargeStringBuilder, MapBuilder, RecordBatch,
-    StringBuilder, StructBuilder, TimestampNanosecondBuilder, UInt32Builder,
+    FixedSizeBinaryBuilder, Int32Builder, MapBuilder, RecordBatch, StringBuilder, StructBuilder,
+    TimestampNanosecondBuilder, UInt32Builder,
 };
 use otlp2parquet_proto::opentelemetry::proto::{
-    collector::logs::v1::ExportLogsServiceRequest,
-    common::v1::{any_value, AnyValue},
+    collector::logs::v1::ExportLogsServiceRequest, common::v1::AnyValue,
 };
 use prost::Message;
-use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue};
 use std::sync::Arc;
 
 use crate::schema::{otel_logs_schema_arc, EXTRACTED_RESOURCE_ATTRS};
 
-/// Size of OpenTelemetry TraceId in bytes (128 bits)
-const TRACE_ID_SIZE: i32 = 16;
-
-/// Size of OpenTelemetry SpanId in bytes (64 bits)
-const SPAN_ID_SIZE: i32 = 8;
-
-/// Field names for Map types in Arrow schema
-fn map_field_names() -> MapFieldNames {
-    MapFieldNames {
-        entry: "entries".to_string(),
-        key: "key".to_string(),
-        value: "value".to_string(),
-    }
-}
-
-fn new_any_value_struct_builder() -> StructBuilder {
-    let fields = crate::schema::any_value_fields();
-    StructBuilder::new(
-        fields.clone(),
-        vec![
-            Box::new(StringBuilder::new()) as Box<dyn ArrayBuilder>,
-            Box::new(StringBuilder::new()),
-            Box::new(BooleanBuilder::new()),
-            Box::new(Int64Builder::new()),
-            Box::new(Float64Builder::new()),
-            Box::new(BinaryBuilder::new()),
-            Box::new(LargeStringBuilder::new()),
-        ],
-    )
-}
+use super::any_value_builder::{any_value_string, append_any_value};
+use super::builder_helpers::{
+    map_field_names, new_any_value_struct_builder, SPAN_ID_SIZE, TRACE_ID_SIZE,
+};
 
 /// Metadata extracted during OTLP parsing
 #[derive(Debug, Clone)]
@@ -350,221 +321,5 @@ impl ArrowConverter {
 impl Default for ArrowConverter {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn append_any_value(builder: &mut StructBuilder, any_val: Option<&AnyValue>) -> Result<()> {
-    const TYPE_INDEX: usize = 0;
-    const STRING_INDEX: usize = 1;
-    const BOOL_INDEX: usize = 2;
-    const INT_INDEX: usize = 3;
-    const DOUBLE_INDEX: usize = 4;
-    const BYTES_INDEX: usize = 5;
-    const JSON_INDEX: usize = 6;
-
-    if let Some(any_val) = any_val {
-        if let Some(inner) = any_val.value.as_ref() {
-            let mut string_value: Option<&str> = None;
-            let mut bool_value: Option<bool> = None;
-            let mut int_value: Option<i64> = None;
-            let mut double_value: Option<f64> = None;
-            let mut bytes_value: Option<&[u8]> = None;
-            let mut json_value: Option<String> = None;
-            let type_name;
-
-            match inner {
-                any_value::Value::StringValue(s) => {
-                    type_name = "string";
-                    string_value = Some(s);
-                }
-                any_value::Value::BoolValue(b) => {
-                    type_name = "bool";
-                    bool_value = Some(*b);
-                }
-                any_value::Value::IntValue(i) => {
-                    type_name = "int";
-                    int_value = Some(*i);
-                }
-                any_value::Value::DoubleValue(d) => {
-                    type_name = "double";
-                    double_value = Some(*d);
-                }
-                any_value::Value::BytesValue(b) => {
-                    type_name = "bytes";
-                    bytes_value = Some(b);
-                }
-                any_value::Value::ArrayValue(arr) => {
-                    type_name = "array";
-                    let json =
-                        JsonValue::Array(arr.values.iter().map(any_value_to_json_value).collect());
-                    json_value = Some(serde_json::to_string(&json)?);
-                }
-                any_value::Value::KvlistValue(kv) => {
-                    type_name = "kvlist";
-                    let mut map = JsonMap::new();
-                    for kv in &kv.values {
-                        let value_json = kv
-                            .value
-                            .as_ref()
-                            .map(any_value_to_json_value)
-                            .unwrap_or(JsonValue::Null);
-                        map.insert(kv.key.clone(), value_json);
-                    }
-                    json_value = Some(serde_json::to_string(&JsonValue::Object(map))?);
-                }
-            }
-
-            {
-                let type_builder = builder
-                    .field_builder::<StringBuilder>(TYPE_INDEX)
-                    .ok_or_else(|| anyhow!("schema: Type field missing in AnyValue builder"))?;
-                type_builder.append_value(type_name);
-            }
-
-            {
-                let string_builder = builder
-                    .field_builder::<StringBuilder>(STRING_INDEX)
-                    .ok_or_else(|| {
-                        anyhow!("schema: StringValue field missing in AnyValue builder")
-                    })?;
-                if let Some(val) = string_value {
-                    string_builder.append_value(val);
-                } else {
-                    string_builder.append_null();
-                }
-            }
-
-            {
-                let bool_builder = builder
-                    .field_builder::<BooleanBuilder>(BOOL_INDEX)
-                    .ok_or_else(|| {
-                        anyhow!("schema: BoolValue field missing in AnyValue builder")
-                    })?;
-                if let Some(val) = bool_value {
-                    bool_builder.append_value(val);
-                } else {
-                    bool_builder.append_null();
-                }
-            }
-
-            {
-                let int_builder = builder
-                    .field_builder::<Int64Builder>(INT_INDEX)
-                    .ok_or_else(|| anyhow!("schema: IntValue field missing in AnyValue builder"))?;
-                if let Some(val) = int_value {
-                    int_builder.append_value(val);
-                } else {
-                    int_builder.append_null();
-                }
-            }
-
-            {
-                let double_builder = builder
-                    .field_builder::<Float64Builder>(DOUBLE_INDEX)
-                    .ok_or_else(|| {
-                        anyhow!("schema: DoubleValue field missing in AnyValue builder")
-                    })?;
-                if let Some(val) = double_value {
-                    double_builder.append_value(val);
-                } else {
-                    double_builder.append_null();
-                }
-            }
-
-            {
-                let bytes_builder = builder
-                    .field_builder::<BinaryBuilder>(BYTES_INDEX)
-                    .ok_or_else(|| {
-                        anyhow!("schema: BytesValue field missing in AnyValue builder")
-                    })?;
-                if let Some(val) = bytes_value {
-                    bytes_builder.append_value(val);
-                } else {
-                    bytes_builder.append_null();
-                }
-            }
-
-            {
-                let json_builder = builder
-                    .field_builder::<LargeStringBuilder>(JSON_INDEX)
-                    .ok_or_else(|| {
-                        anyhow!("schema: JsonValue field missing in AnyValue builder")
-                    })?;
-                if let Some(val) = json_value {
-                    json_builder.append_value(&val);
-                } else {
-                    json_builder.append_null();
-                }
-            }
-
-            builder.append(true);
-            return Ok(());
-        }
-    }
-
-    builder
-        .field_builder::<StringBuilder>(TYPE_INDEX)
-        .ok_or_else(|| anyhow!("schema: Type field missing in AnyValue builder"))?
-        .append_null();
-    builder
-        .field_builder::<StringBuilder>(STRING_INDEX)
-        .ok_or_else(|| anyhow!("schema: StringValue field missing in AnyValue builder"))?
-        .append_null();
-    builder
-        .field_builder::<BooleanBuilder>(BOOL_INDEX)
-        .ok_or_else(|| anyhow!("schema: BoolValue field missing in AnyValue builder"))?
-        .append_null();
-    builder
-        .field_builder::<Int64Builder>(INT_INDEX)
-        .ok_or_else(|| anyhow!("schema: IntValue field missing in AnyValue builder"))?
-        .append_null();
-    builder
-        .field_builder::<Float64Builder>(DOUBLE_INDEX)
-        .ok_or_else(|| anyhow!("schema: DoubleValue field missing in AnyValue builder"))?
-        .append_null();
-    builder
-        .field_builder::<BinaryBuilder>(BYTES_INDEX)
-        .ok_or_else(|| anyhow!("schema: BytesValue field missing in AnyValue builder"))?
-        .append_null();
-    builder
-        .field_builder::<LargeStringBuilder>(JSON_INDEX)
-        .ok_or_else(|| anyhow!("schema: JsonValue field missing in AnyValue builder"))?
-        .append_null();
-    builder.append(false);
-    Ok(())
-}
-
-fn any_value_string(any_val: &AnyValue) -> Option<&str> {
-    match any_val.value.as_ref()? {
-        any_value::Value::StringValue(s) => Some(s.as_str()),
-        _ => None,
-    }
-}
-
-fn any_value_to_json_value(any_val: &AnyValue) -> JsonValue {
-    match any_val.value.as_ref() {
-        Some(any_value::Value::StringValue(s)) => JsonValue::String(s.clone()),
-        Some(any_value::Value::BoolValue(b)) => JsonValue::Bool(*b),
-        Some(any_value::Value::IntValue(i)) => JsonValue::Number(JsonNumber::from(*i)),
-        Some(any_value::Value::DoubleValue(d)) => JsonNumber::from_f64(*d)
-            .map(JsonValue::Number)
-            .unwrap_or_else(|| JsonValue::String(d.to_string())),
-        Some(any_value::Value::BytesValue(b)) => JsonValue::String(format!("bytes:{}", b.len())),
-        Some(any_value::Value::ArrayValue(arr)) => {
-            JsonValue::Array(arr.values.iter().map(any_value_to_json_value).collect())
-        }
-        Some(any_value::Value::KvlistValue(kv)) => {
-            let mut map = JsonMap::new();
-            for entry in &kv.values {
-                let value = entry
-                    .value
-                    .as_ref()
-                    .map(any_value_to_json_value)
-                    .unwrap_or(JsonValue::Null);
-                map.insert(entry.key.clone(), value);
-            }
-            JsonValue::Object(map)
-        }
-        None => JsonValue::Null,
     }
 }

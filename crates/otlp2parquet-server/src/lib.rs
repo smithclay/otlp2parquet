@@ -15,35 +15,37 @@
 
 use anyhow::{Context, Result};
 use axum::{
-    extract::State,
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
-use metrics::{counter, histogram};
-use otlp2parquet_batch::{BatchConfig, BatchManager, CompletedBatch, PassthroughBatcher};
-use otlp2parquet_core::{otlp, InputFormat};
+use otlp2parquet_batch::{BatchConfig, BatchManager, PassthroughBatcher};
 use otlp2parquet_storage::opendal_storage::OpenDalStorage;
 use otlp2parquet_storage::ParquetWriter;
 use serde_json::json;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::signal;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info};
+
+mod handlers;
+mod init;
+
+use handlers::{handle_logs, health_check, ready_check};
+use init::{init_storage, init_tracing, max_payload_bytes_from_env};
 
 /// Application state shared across all requests
 #[derive(Clone)]
-struct AppState {
-    storage: Arc<OpenDalStorage>,
-    parquet_writer: Arc<ParquetWriter>,
-    batcher: Option<Arc<BatchManager>>,
-    passthrough: PassthroughBatcher,
-    max_payload_bytes: usize,
+pub(crate) struct AppState {
+    pub storage: Arc<OpenDalStorage>,
+    pub parquet_writer: Arc<ParquetWriter>,
+    pub batcher: Option<Arc<BatchManager>>,
+    pub passthrough: PassthroughBatcher,
+    pub max_payload_bytes: usize,
 }
 
 /// Error type that implements IntoResponse
-struct AppError {
+pub(crate) struct AppError {
     status: StatusCode,
     error: anyhow::Error,
 }
@@ -74,198 +76,8 @@ where
 }
 
 impl AppError {
-    fn with_status(status: StatusCode, error: anyhow::Error) -> Self {
+    pub fn with_status(status: StatusCode, error: anyhow::Error) -> Self {
         Self { status, error }
-    }
-}
-
-/// POST /v1/logs - OTLP log ingestion endpoint
-async fn handle_logs(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    body: axum::body::Bytes,
-) -> Result<Response, AppError> {
-    // Detect input format from Content-Type header
-    let content_type = headers.get("content-type").and_then(|v| v.to_str().ok());
-    let format = InputFormat::from_content_type(content_type);
-
-    debug!(
-        "Received OTLP logs request ({} bytes, format: {:?}, content-type: {:?})",
-        body.len(),
-        format,
-        content_type
-    );
-
-    let max_payload = state.max_payload_bytes;
-    if body.len() > max_payload {
-        counter!("otlp.ingest.rejected", 1);
-        return Err(AppError::with_status(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            anyhow::anyhow!("payload {} exceeds limit {}", body.len(), max_payload),
-        ));
-    }
-
-    let start = Instant::now();
-    counter!("otlp.ingest.requests", 1);
-    histogram!("otlp.ingest.bytes", body.len() as f64);
-
-    let request =
-        otlp::parse_otlp_request(&body, format).context("Failed to parse OTLP request payload")?;
-
-    let mut uploads: Vec<CompletedBatch> = Vec::new();
-    let metadata;
-
-    if let Some(batcher) = &state.batcher {
-        let mut expired = batcher
-            .drain_expired()
-            .context("Failed to flush expired batches")?;
-        uploads.append(&mut expired);
-
-        let (mut ready, meta) = batcher.ingest(request).context("Failed to enqueue batch")?;
-        uploads.append(&mut ready);
-        metadata = meta;
-    } else {
-        let batch = state
-            .passthrough
-            .ingest(request)
-            .context("Failed to convert OTLP to Arrow")?;
-        metadata = batch.metadata.clone();
-        uploads.push(batch);
-    }
-
-    counter!("otlp.ingest.records", metadata.record_count as u64);
-
-    let mut uploaded_paths = Vec::new();
-    for batch in uploads {
-        // Write RecordBatch to Parquet and upload (hash computed in storage layer)
-        let (partition_path, _hash) = state
-            .parquet_writer
-            .write_batch_with_hash(
-                &batch.batch,
-                &batch.metadata.service_name,
-                batch.metadata.first_timestamp_nanos,
-            )
-            .await
-            .context("Failed to write Parquet to storage")?;
-
-        counter!("otlp.batch.flushes", 1);
-        histogram!("otlp.batch.rows", batch.metadata.record_count as f64);
-        info!(
-            "Committed batch path={} service={} rows={}",
-            partition_path, batch.metadata.service_name, batch.metadata.record_count
-        );
-        uploaded_paths.push(partition_path);
-    }
-
-    histogram!(
-        "otlp.ingest.latency_ms",
-        start.elapsed().as_secs_f64() * 1000.0
-    );
-
-    let response = Json(json!({
-        "status": "ok",
-        "records_processed": metadata.record_count,
-        "flush_count": uploaded_paths.len(),
-        "partitions": uploaded_paths,
-    }));
-
-    Ok((StatusCode::OK, response).into_response())
-}
-
-/// GET /health - Basic health check
-async fn health_check() -> impl IntoResponse {
-    (StatusCode::OK, Json(json!({"status": "healthy"})))
-}
-
-/// GET /ready - Readiness check (includes storage connectivity)
-async fn ready_check(State(state): State<AppState>) -> impl IntoResponse {
-    // Test storage connectivity by listing (basic check)
-    match state.storage.list("").await {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(json!({"status": "ready", "storage": "connected"})),
-        ),
-        Err(e) => {
-            warn!("Storage readiness check failed: {}", e);
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(
-                    json!({"status": "not ready", "storage": "disconnected", "error": e.to_string()}),
-                ),
-            )
-        }
-    }
-}
-
-/// Initialize storage backend based on STORAGE_BACKEND env var
-fn init_storage() -> Result<Arc<OpenDalStorage>> {
-    let backend = std::env::var("STORAGE_BACKEND").unwrap_or_else(|_| "fs".to_string());
-
-    info!("Initializing storage backend: {}", backend);
-
-    let storage = match backend.as_str() {
-        "fs" => {
-            let path = std::env::var("STORAGE_PATH").unwrap_or_else(|_| "./data".to_string());
-            info!("Using filesystem storage at: {}", path);
-            OpenDalStorage::new_fs(&path)?
-        }
-        "s3" => {
-            let bucket =
-                std::env::var("S3_BUCKET").context("S3_BUCKET env var required for s3 backend")?;
-            let region =
-                std::env::var("S3_REGION").context("S3_REGION env var required for s3 backend")?;
-            let endpoint = std::env::var("S3_ENDPOINT").ok();
-
-            // Credentials auto-discovered from environment (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
-            // or IAM role (recommended for production)
-            info!("Using S3 storage: bucket={}, region={}", bucket, region);
-            OpenDalStorage::new_s3(&bucket, &region, endpoint.as_deref(), None, None)?
-        }
-        "r2" => {
-            let bucket =
-                std::env::var("R2_BUCKET").context("R2_BUCKET env var required for r2 backend")?;
-            let account_id = std::env::var("R2_ACCOUNT_ID")
-                .context("R2_ACCOUNT_ID env var required for r2 backend")?;
-            let access_key_id = std::env::var("R2_ACCESS_KEY_ID")
-                .context("R2_ACCESS_KEY_ID env var required for r2 backend")?;
-            let secret_access_key = std::env::var("R2_SECRET_ACCESS_KEY")
-                .context("R2_SECRET_ACCESS_KEY env var required for r2 backend")?;
-
-            info!(
-                "Using R2 storage: account={}, bucket={}",
-                account_id, bucket
-            );
-            OpenDalStorage::new_r2(&bucket, &account_id, &access_key_id, &secret_access_key)?
-        }
-        _ => {
-            anyhow::bail!(
-                "Unsupported storage backend: {}. Supported: fs, s3, r2",
-                backend
-            );
-        }
-    };
-
-    Ok(Arc::new(storage))
-}
-
-/// Initialize tracing/logging
-fn init_tracing() {
-    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-
-    // Default to INFO level, override with LOG_LEVEL env var
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-
-    // Check if we should use JSON output (for structured logging in production)
-    let json_logs = std::env::var("LOG_FORMAT")
-        .map(|f| f == "json")
-        .unwrap_or(false);
-
-    let registry = tracing_subscriber::registry().with(env_filter);
-
-    if json_logs {
-        registry.with(fmt::layer().json()).init();
-    } else {
-        registry.with(fmt::layer()).init();
     }
 }
 
@@ -371,12 +183,4 @@ pub async fn run() -> Result<()> {
     info!("Server shutdown complete");
 
     Ok(())
-}
-
-/// Platform-specific helper: Read max payload bytes from environment
-fn max_payload_bytes_from_env(default: usize) -> usize {
-    std::env::var("MAX_PAYLOAD_BYTES")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(default)
 }
