@@ -1,448 +1,72 @@
 # otlp2parquet
 
-OpenTelemetry ingestion pipeline that writes ClickHouse-compatible Parquet files to object storage.
-
-**Built for multi-platform deployment:** Runs as a full-featured HTTP server (Docker/K8s), compiles to <3MB WASM for Cloudflare Workers (free tier), or native binary for AWS Lambda.
-
-## Why otlp2parquet?
-
-- **Minimal footprint:** <3MB compressed WASM binary fits Cloudflare Workers free tier
-- **ClickHouse-compatible:** Direct Parquet schema compatibility for seamless querying
-- **Multi-platform:** Single codebase deploys to Server (Docker/K8s), Cloudflare Workers, or AWS Lambda
-- **Multi-backend storage:** Server mode supports S3, R2, Filesystem, GCS, Azure (configurable via env vars)
-- **Production-ready:** Structured logging, graceful shutdown, health checks (server mode)
-- **Time-partitioned:** Automatic Hive-style partitioning for efficient querying
-
-## Quick Start
-
-> **One-click deployment coming soon:** Cloudflare Workers button + AWS CloudFormation template
-
-For now, see [Development Setup](#development-setup) for manual installation.
-
-## Usage
-
-Once deployed, send OpenTelemetry logs to the `/v1/logs` endpoint:
-
-### Send Logs (OTLP Protobuf)
-
-```bash
-# Using otel-cli (recommended)
-otel-cli logs \
-  --endpoint https://your-deployment.workers.dev/v1/logs \
-  --protocol http/protobuf \
-  --body "Application started successfully"
-
-# Or with curl (raw protobuf)
-curl -X POST https://your-deployment.workers.dev/v1/logs \
-  -H "Content-Type: application/x-protobuf" \
-  --data-binary @logs.pb
-```
-
-### Send Logs (JSON)
-
-> JSON support planned - protobuf only for now
-
-```bash
-# Coming soon
-curl -X POST https://your-deployment.workers.dev/v1/logs \
-  -H "Content-Type: application/json" \
-  -d '{
-    "resourceLogs": [{
-      "resource": {
-        "attributes": [{"key": "service.name", "value": {"stringValue": "my-service"}}]
-      },
-      "scopeLogs": [{
-        "logRecords": [{
-          "timeUnixNano": "1234567890000000000",
-          "severityText": "INFO",
-          "body": {"stringValue": "Hello from my app"}
-        }]
-      }]
-    }]
-  }'
-```
-
-### Query Results
-
-Parquet files are written to object storage with Hive-style partitioning:
-
-```
-logs/{service_name}/year={yyyy}/month={mm}/day={dd}/hour={hh}/{uuid}-{timestamp}.parquet
-```
-
-Query with DuckDB:
-
-```sql
--- Install DuckDB httpfs extension (one-time)
-INSTALL httpfs;
-LOAD httpfs;
-
--- Configure S3/R2 credentials
-SET s3_endpoint='<your-endpoint>';
-SET s3_access_key_id='<key>';
-SET s3_secret_access_key='<secret>';
-
--- Query logs
-SELECT
-  Timestamp,
-  ServiceName,
-  SeverityText,
-  Body
-FROM read_parquet('s3://your-bucket/logs/my-service/year=2025/month=01/**/*.parquet')
-WHERE Timestamp > NOW() - INTERVAL 1 HOUR
-ORDER BY Timestamp DESC
-LIMIT 100;
-```
-
-## API Reference
-
-### POST /v1/logs
-
-Ingest OpenTelemetry logs via OTLP protocol.
-
-**Request:**
-- **Content-Type:** `application/x-protobuf` (JSON coming soon)
-- **Body:** OTLP `ExportLogsServiceRequest` protobuf message
-
-**Response:**
-- **200 OK:** Logs successfully ingested and written to storage
-- **400 Bad Request:** Invalid protobuf or malformed request
-- **500 Internal Server Error:** Storage or processing error
-
-**Environment Variables:**
-
-| Variable | Platform | Description |
-|----------|----------|-------------|
-| `LISTEN_ADDR` | Server | HTTP server address (default: `0.0.0.0:8080`) |
-| `STORAGE_BACKEND` | Server | Storage backend: `fs`, `s3`, `r2` (default: `fs`) |
-| `STORAGE_PATH` | Server (fs) | Local filesystem path (default: `./data`) |
-| `S3_BUCKET` | Server (s3), Lambda | S3 bucket name |
-| `S3_REGION` | Server (s3), Lambda | AWS region |
-| `S3_ENDPOINT` | Server (s3) | Custom S3 endpoint (optional, for MinIO/etc) |
-| `R2_BUCKET` | Server (r2), Cloudflare | R2 bucket name |
-| `R2_ACCOUNT_ID` | Server (r2), Cloudflare | Cloudflare account ID |
-| `R2_ACCESS_KEY_ID` | Server (r2), Cloudflare | R2 API access key |
-| `R2_SECRET_ACCESS_KEY` | Server (r2), Cloudflare | R2 API secret key |
-| `LOG_LEVEL` | Server | Log level: `trace`, `debug`, `info`, `warn`, `error` (default: `info`) |
-| `LOG_FORMAT` | Server | Log format: `text`, `json` (default: `text`) |
-
-**Notes:**
-- **Server (default):** Full-featured Axum HTTP server with multi-backend storage
-- **Cloudflare Workers:** Uses OpenDAL S3 service with R2-compatible endpoint (WASM-constrained)
-- **Lambda:** OpenDAL automatically discovers AWS credentials from IAM role or environment (event-driven)
-
-## How It Works
-
-```
-┌─────────────────────────────────────────┐
-│  Platform-Specific Entry Points         │
-│  ├─ Server (default): Axum HTTP server │
-│  │   Full-featured, multi-backend       │
-│  ├─ Lambda: lambda_runtime::run()       │
-│  │   Event-driven, S3 only             │
-│  └─ Cloudflare: #[event(fetch)]        │
-│      WASM-constrained, R2 only          │
-└─────────────────────────────────────────┘
-                  ↓
-┌─────────────────────────────────────────┐
-│  Protocol Layer (HTTP)                  │
-│  ├─ POST /v1/logs (protobuf) ✅         │
-│  ├─ GET /health (health check) ✅       │
-│  └─ GET /ready (readiness) ✅           │
-└─────────────────────────────────────────┘
-                  ↓
-┌─────────────────────────────────────────┐
-│  Core Processing (PURE - no I/O)       │
-│  ├─ process_otlp_logs(bytes) -> bytes  │
-│  ├─ Parse OTLP protobuf ✅              │
-│  ├─ Convert to Arrow RecordBatch ✅     │
-│  ├─ Write Parquet (Snappy) ✅           │
-│  └─ Generate partition path ✅          │
-└─────────────────────────────────────────┘
-                  ↓
-┌─────────────────────────────────────────┐
-│  Unified Storage (Apache OpenDAL)        │
-│  ├─ S3 (Lambda, Server)                │
-│  ├─ R2 (Cloudflare, Server)            │
-│  ├─ Filesystem (Server)                │
-│  └─ GCS, Azure, etc. (Server-ready)    │
-└─────────────────────────────────────────┘
-```
-
-**Architecture Highlights:**
-- **Server is Default:** Full-featured mode with Axum HTTP server, structured logging, graceful shutdown
-- **Unified Storage:** Apache OpenDAL provides consistent API across all platforms
-- **Pure Core:** OTLP processing is deterministic with no I/O dependencies
-- **Platform-Native:** Each runtime uses its native async model (worker, tokio)
-- **Binary Size:** WASM compressed to 720KB (~24% of 3MB limit)
-
-**Workspace Structure:**
-
-```
-otlp2parquet/
-├── crates/
-│   ├── otlp2parquet-core/     # ✅ Platform-agnostic logic (PURE)
-│   │   ├── otlp/              # ✅ OTLP→Arrow conversion
-│   │   ├── parquet/           # ✅ Parquet writing + partitioning
-│   │   └── schema.rs          # ✅ Arrow schema (15 fields)
-│   ├── otlp2parquet-runtime/  # Platform adapters + OpenDAL storage
-│   │   ├── opendal_storage.rs # ✅ Unified storage abstraction
-│   │   ├── server.rs          # ✅ Default mode (Axum + multi-backend)
-│   │   ├── lambda.rs          # ✅ Lambda handler (OpenDAL S3)
-│   │   └── cloudflare.rs      # ✅ CF Workers handler (OpenDAL S3→R2)
-│   └── otlp2parquet-proto/    # ✅ Generated protobuf (v1.3.2)
-└── src/main.rs                # ✅ Platform detection
-```
-
-**Schema:**
-
-ClickHouse-compatible schema with PascalCase naming (15 fields):
-
-- **Timestamps:** Timestamp, ObservedTimestamp (nanosecond precision, UTC)
-- **Trace context:** TraceId, SpanId, TraceFlags
-- **Severity:** SeverityText, SeverityNumber
-- **Body:** Log message content
-- **Extracted attributes:** ServiceName, ServiceNamespace, ServiceInstanceId
-- **Scope:** ScopeName, ScopeVersion
-- **Maps:** ResourceAttributes, LogAttributes (remaining key-value pairs)
-
-<details>
-<summary><b>Development Setup</b></summary>
-
-### Prerequisites
-
-```bash
-# Install Rust toolchain
-rustup toolchain install stable
-rustup component add rustfmt clippy
-rustup target add wasm32-unknown-unknown
-
-# Install wasm-opt (required for WASM optimization)
-# macOS:
-brew install binaryen
-
-# Linux (Ubuntu/Debian):
-sudo apt install binaryen
-
-# Install development tools (optional but recommended)
-cargo install twiggy          # WASM binary profiler
-curl -LsSf https://astral.sh/uv/install.sh | sh  # uv for Python tools
-
-# Setup pre-commit hooks
-uvx pre-commit install
-```
-
-### Quick Start with Makefile
-
-```bash
-# Show all available commands
-make help
-
-# Quick development check (fast)
-make dev
-
-# Format and lint
-make fmt
-make clippy
-
-# Run tests
-make test
-
-# Build for specific platform
-make build-server
-make build-lambda
-make build-cloudflare
-
-# Full WASM pipeline: build → optimize → compress → profile
-make wasm-full
-```
-
-### Building
-
-#### Using Makefile (Recommended)
-
-```bash
-# Cloudflare Workers - full WASM pipeline
-make wasm-full
-
-# AWS Lambda
-make build-lambda
-
-# Server mode (default)
-make build-server
-
-# Run pre-commit checks before committing
-make pre-commit
-
-# Run full CI locally
-make ci
-```
-
-#### Manual Build Commands
-
-**Cloudflare Workers (WASM):**
-
-```bash
-# Build with minimal features
-cargo build --release \
-  --target wasm32-unknown-unknown \
-  --no-default-features \
-  --features cloudflare
-
-# Optimize
-wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
-  -o optimized.wasm target/wasm32-unknown-unknown/release/otlp2parquet.wasm
-
-# Compress and check size (must be <3MB)
-gzip -9 optimized.wasm
-ls -lh optimized.wasm.gz
-```
-
-**AWS Lambda:**
-
-```bash
-# Install cargo-lambda (optional, for local testing)
-cargo install cargo-lambda
-
-# Build
-cargo build --release --no-default-features --features lambda
-
-# Or with gRPC support
-cargo build --release --no-default-features --features lambda,grpc
-```
-
-**Server Mode (Default - Docker/Kubernetes/Development):**
-
-```bash
-# Build
-cargo build --release --no-default-features --features server
-
-# Run with filesystem storage (default)
-./target/release/otlp2parquet
-
-# Run with S3 storage
-STORAGE_BACKEND=s3 \
-S3_BUCKET=my-logs-bucket \
-S3_REGION=us-east-1 \
-./target/release/otlp2parquet
-
-# Run with R2 storage
-STORAGE_BACKEND=r2 \
-R2_BUCKET=my-r2-bucket \
-R2_ACCOUNT_ID=your_account_id \
-R2_ACCESS_KEY_ID=your_key_id \
-R2_SECRET_ACCESS_KEY=your_secret \
-./target/release/otlp2parquet
-
-# Docker deployment example
-docker build -t otlp2parquet .
-docker run -p 8080:8080 \
-  -e STORAGE_BACKEND=s3 \
-  -e S3_BUCKET=my-logs-bucket \
-  -e S3_REGION=us-east-1 \
-  -e LOG_FORMAT=json \
-  otlp2parquet
-```
-
-### Size Optimization
-
-Target: <3MB compressed WASM
-
-Current optimizations:
-- `opt-level = "z"` (size optimization)
-- LTO enabled
-- `default-features = false` for all dependencies
-- Minimal feature flags
-- Snappy compression only
-- Strip symbols
-
-Profile with twiggy to identify bloat:
-```bash
-make wasm-profile
-```
-
-</details>
-
-## Status & Roadmap
-
-**Current Phase:** OpenDAL Migration Complete ✅
-
-### ✅ Completed (Phase 1-5)
-
-- [x] Workspace structure created
-- [x] Cargo.toml with size optimizations
-- [x] Arrow schema definition (15 fields, ClickHouse-compatible)
-- [x] OTLP protobuf integration (v1.3.2, code generation configured)
-- [x] OTLP → Arrow conversion (ArrowConverter with all fields)
-- [x] Parquet writer implementation (Snappy compression, minimal features)
-- [x] Partition path generation (Hive-style time partitioning)
-- [x] **Apache OpenDAL unified storage layer**
-- [x] HTTP protocol handlers (all platforms)
-- [x] Cloudflare Workers entry point (`#[event(fetch)]`) with OpenDAL S3→R2
-- [x] Lambda handler implementation with OpenDAL S3
-- [x] Standalone async HTTP server with OpenDAL Fs
-- [x] Binary size optimization (WASM: 1006KB compressed, 33% of 3MB limit)
-- [x] CI/CD with protoc installation
-- [x] Pre-commit hooks (fmt, clippy)
-
-### 🔄 Recent Changes (Phase 2 - OpenDAL Migration)
-
-- **Unified Storage:** Migrated from platform-specific implementations to Apache OpenDAL
-- **Removed Dependencies:** Eliminated `aws-sdk-s3` and `aws-config` (replaced by OpenDAL)
-- **Async Everywhere:** Standalone now uses tokio for API consistency
-- **Code Reduction:** -913 lines of code, cleaner architecture
-- **Binary Size:** Maintained excellent WASM size (<3MB compressed)
-
-### 📋 Planned (Phase 6+)
-
-- [ ] JSON input format support (OTLP spec compliance)
-- [ ] JSONL support (bonus feature)
-- [ ] One-click Cloudflare deployment
-- [ ] CloudFormation template for Lambda
-- [ ] Load testing
-- [ ] gRPC support (Lambda, optional)
-
-See [CLAUDE.md](./CLAUDE.md) for detailed implementation instructions and architecture decisions.
-
-## Troubleshooting
-
-### Binary Size Exceeds 3MB
-
-```bash
-# Profile binary to identify bloat
-make wasm-profile
-
-# Check feature flags
-cargo tree --features cloudflare --edges features
-
-# Verify optimizations in Cargo.toml
-grep -A 5 "\[profile.release\]" Cargo.toml
-```
-
-### OTLP Protobuf Parse Errors
-
-Ensure you're sending valid OTLP v1.3.2 format:
-```bash
-# Verify with otel-cli
-otel-cli logs --protocol http/protobuf --dry-run
-```
-
-### Storage Write Failures
-
-**Cloudflare Workers:**
-- Verify R2 bucket binding in `wrangler.toml`
-- Check bucket permissions
-
-**AWS Lambda:**
-- Verify IAM role has `s3:PutObject` permission
-- Check `AWS_REGION` and `BUCKET_NAME` environment variables
-
-**Server Mode:**
-- **Filesystem:** Verify `STORAGE_PATH` directory exists and is writable
-- **S3:** Verify AWS credentials and S3 bucket permissions
-- **R2:** Verify R2 credentials and bucket permissions
-- Check `/health` and `/ready` endpoints for diagnostics
-
-## License
-
-MIT OR Apache-2.0
+## Overview
+otlp2parquet is an OpenTelemetry ingestion pipeline that converts OTLP log exports into ClickHouse-compatible Parquet files. The project compiles to three deployment modes from the same codebase:
+
+- **Cloudflare Workers (`cf` feature):** WebAssembly worker optimized for <3MB bundles. Choose this when you need a globally distributed ingestion edge with R2 storage.
+- **Standalone server (`server` feature):** Tokio-based HTTP binary. Use for containers, bare-metal, or Kubernetes with direct access to object storage.
+- **AWS Lambda (`lambda` feature):** AWS Lambda function packaged as a zipped binary. Ideal for on-demand ingestion with S3 persistence.
+
+See the mode-specific guides in [`docs/`](./docs/) for deployment details.
+
+## Quickstart
+Spin up the standalone server locally, ingest a test log, and inspect the resulting Parquet file.
+
+1. **Clone and enter the repository.**
+   ```bash
+   git clone https://github.com/<ACCOUNT_ID>/otlp2parquet.git && cd otlp2parquet
+   ```
+   Expected output: Repository files listed when running `ls`.
+2. **Install Rust toolchain (stable) and required targets.**
+   ```bash
+   rustup toolchain install stable && rustup default stable
+   ```
+   Expected output: `stable-x86_64-unknown-linux-gnu installed - default set to stable`.
+3. **Build the server binary with size optimizations.**
+   ```bash
+   cargo build --release --features server
+   ```
+   Expected output: `Finished release [optimized] target(s) in ...`.
+4. **Prepare local configuration.**
+   ```bash
+   cp config.example.env .env && sed -i 's/STORAGE_BACKEND=.*/STORAGE_BACKEND=fs/' .env
+   ```
+   Expected output: `.env` present with filesystem storage enabled.
+5. **Run the server.**
+   ```bash
+   STORAGE_BACKEND=fs STORAGE_PATH=./data ./target/release/otlp2parquet
+   ```
+   Expected output: `Listening on 0.0.0.0:8080 (server mode)`.
+6. **Send a sample OTLP log via curl.**
+   ```bash
+   curl -sS -X POST http://127.0.0.1:8080/v1/logs \
+     -H "Content-Type: application/json" \
+     -d '{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"demo-service"}}]},"scopeLogs":[{"logRecords":[{"timeUnixNano":"1710000000000000000","severityText":"INFO","body":{"stringValue":"Quickstart log"}}]}]}]}'
+   ```
+   Expected output: `{}` (empty JSON response).
+7. **Inspect generated Parquet files.**
+   ```bash
+   ls data/logs/demo-service
+   ```
+   Expected output: Partitioned Parquet file path such as `year=2025/month=01/.../logs.parquet`.
+8. **Query the Parquet file with DuckDB.**
+   ```bash
+   duckdb -c "SELECT Body FROM read_parquet('data/logs/demo-service/**/*.parquet');"
+   ```
+   Expected output: `Quickstart log` returned in query results.
+9. **Stop the server with Ctrl+C when finished.**
+   ```bash
+   # Press Ctrl+C in the server terminal
+   ```
+   Expected output: `Shutting down gracefully`.
+
+Now you should have otlp2parquet running locally at http://127.0.0.1:8080/v1/logs.
+
+## Build Matrix
+| Target | Cargo feature | Build command | Required env vars | Output artifact | Cold-start notes |
+|--------|---------------|---------------|-------------------|-----------------|------------------|
+| Cloudflare Workers | `cf` | `cargo build --release --target wasm32-unknown-unknown --features cf` | `CF_ACCOUNT_ID`, `CF_API_TOKEN`, `R2_BUCKET` | `./target/wasm32-unknown-unknown/release/otlp2parquet.wasm` | Warmed edge caches keep p99 <15ms; first hit loads WASM (~50ms). |
+| Standalone server | `server` | `cargo build --release --features server` | `STORAGE_BACKEND`, `STORAGE_PATH` or S3/R2 vars | `./target/release/otlp2parquet` | Cold start equals process boot (<500ms) on typical x86 hosts. |
+| AWS Lambda | `lambda` | `cargo lambda build --release --features lambda` | `AWS_REGION`, `S3_BUCKET`, `S3_PREFIX` | `./target/lambda/otlp2parquet/bootstrap.zip` | Provisioned concurrency avoids 1-2s first-invoke penalty. |
+
+For detailed deployment procedures, follow the guides in [`docs/cloudflare.md`](./docs/cloudflare.md), [`docs/server.md`](./docs/server.md), and [`docs/lambda.md`](./docs/lambda.md).
