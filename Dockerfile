@@ -2,7 +2,9 @@
 # Produces multi-arch images (amd64/arm64) optimized for size
 
 # Build stage
-FROM rust:1.83-slim AS builder
+# NOTE: Using nightly temporarily due to transitive dependency (home-0.5.12) requiring edition2024
+# This can be switched back to stable once edition2024 is stabilized or the dependency is updated
+FROM rustlang/rust:nightly-slim AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
