@@ -1568,6 +1568,7 @@ dependencies = [
  "otlp2parquet-proto",
  "parquet",
  "prost",
+ "serde_json",
  "thiserror",
  "uuid",
 ]
@@ -1579,6 +1580,7 @@ dependencies = [
  "prost",
  "prost-build",
  "prost-types",
+ "serde",
 ]
 
 [[package]]

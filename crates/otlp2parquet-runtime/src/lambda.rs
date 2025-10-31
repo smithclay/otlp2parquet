@@ -42,11 +42,19 @@ async fn handle_request(
             let request = &*boxed_request;
             let method = request.http_method.as_str();
             let path = canonical_path(request.path.as_deref());
+
+            // Extract Content-Type header from API Gateway request
+            let content_type = request
+                .headers
+                .get("content-type")
+                .and_then(|v| v.to_str().ok());
+
             let response = handle_http_request(
                 method,
                 &path,
                 request.body.as_deref(),
                 request.is_base64_encoded,
+                content_type,
                 &storage,
             )
             .await;
@@ -66,11 +74,19 @@ async fn handle_request(
                     .as_deref()
                     .or(request.request_context.http.path.as_deref()),
             );
+
+            // Extract Content-Type header from Function URL request
+            let content_type = request
+                .headers
+                .get("content-type")
+                .and_then(|v| v.to_str().ok());
+
             let response = handle_http_request(
                 method,
                 &path,
                 request.body.as_deref(),
                 request.is_base64_encoded,
+                content_type,
                 &storage,
             )
             .await;
@@ -91,11 +107,12 @@ async fn handle_http_request(
     path: &str,
     body: Option<&str>,
     is_base64_encoded: bool,
+    content_type: Option<&str>,
     storage: &crate::opendal_storage::OpenDalStorage,
 ) -> HttpResponseData {
     let method = method.trim().to_ascii_uppercase();
     match method.as_str() {
-        "POST" => handle_post(path, body, is_base64_encoded, storage).await,
+        "POST" => handle_post(path, body, is_base64_encoded, content_type, storage).await,
         "GET" => handle_get(path),
         _ => HttpResponseData::json(405, json!({ "error": "method not allowed" }).to_string()),
     }
@@ -111,6 +128,7 @@ async fn handle_post(
     path: &str,
     body: Option<&str>,
     is_base64_encoded: bool,
+    content_type: Option<&str>,
     storage: &crate::opendal_storage::OpenDalStorage,
 ) -> HttpResponseData {
     if path != "/v1/logs" {
@@ -122,18 +140,27 @@ async fn handle_post(
         Err(response) => return response,
     };
 
+    // Detect input format from Content-Type header
+    let format = otlp2parquet_core::InputFormat::from_content_type(content_type);
+
     let mut parquet_bytes = Vec::new();
-    let metadata =
-        match otlp2parquet_core::process_otlp_logs_into(body.as_ref(), &mut parquet_bytes) {
-            Ok(metadata) => metadata,
-            Err(err) => {
-                eprintln!("Failed to process OTLP logs: {}", err);
-                return HttpResponseData::json(
-                    400,
-                    json!({ "error": "invalid OTLP payload" }).to_string(),
-                );
-            }
-        };
+    let metadata = match otlp2parquet_core::process_otlp_logs_into_with_format(
+        body.as_ref(),
+        format,
+        &mut parquet_bytes,
+    ) {
+        Ok(metadata) => metadata,
+        Err(err) => {
+            eprintln!(
+                "Failed to process OTLP logs (format: {:?}, content-type: {:?}): {}",
+                format, content_type, err
+            );
+            return HttpResponseData::json(
+                400,
+                json!({ "error": "invalid OTLP payload" }).to_string(),
+            );
+        }
+    };
 
     let partition_path = crate::partition::generate_partition_path(
         &metadata.service_name,

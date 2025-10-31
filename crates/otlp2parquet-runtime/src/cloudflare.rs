@@ -70,19 +70,35 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
         worker::Error::RustError(format!("Storage initialization error: {}", e))
     })?;
 
+    // Extract Content-Type header for format detection
+    let content_type_header = req.headers().get("content-type").ok().flatten();
+    let content_type = content_type_header.as_deref();
+
+    // Detect input format from Content-Type header
+    let format = otlp2parquet_core::InputFormat::from_content_type(content_type);
+
     // Read request body
     let body_bytes = req.bytes().await.map_err(|e| {
         console_error!("Failed to read request body: {:?}", e);
         e
     })?;
 
-    // Process OTLP logs (PURE - no I/O, deterministic)
+    // Process OTLP logs with format awareness (PURE - no I/O, deterministic)
     let mut parquet_bytes = Vec::new();
-    let metadata = otlp2parquet_core::process_otlp_logs_into(&body_bytes, &mut parquet_bytes)
-        .map_err(|e| {
-            console_error!("Failed to process OTLP logs: {:?}", e);
-            worker::Error::RustError(format!("Processing error: {}", e))
-        })?;
+    let metadata = otlp2parquet_core::process_otlp_logs_into_with_format(
+        &body_bytes,
+        format,
+        &mut parquet_bytes,
+    )
+    .map_err(|e| {
+        console_error!(
+            "Failed to process OTLP logs (format: {:?}, content-type: {:?}): {:?}",
+            format,
+            content_type,
+            e
+        );
+        worker::Error::RustError(format!("Processing error: {}", e))
+    })?;
 
     // Generate partition path (ACCIDENT - platform-specific storage decision)
     let partition_path = crate::partition::generate_partition_path(
