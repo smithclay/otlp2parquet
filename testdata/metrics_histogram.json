@@ -1,0 +1,113 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": { "stringValue": "api-gateway" }
+          },
+          {
+            "key": "deployment.environment",
+            "value": { "stringValue": "production" }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {
+            "name": "http-instrumentation",
+            "version": "1.2.0"
+          },
+          "metrics": [
+            {
+              "name": "http.server.duration",
+              "description": "Duration of HTTP requests in milliseconds",
+              "unit": "ms",
+              "histogram": {
+                "aggregationTemporality": 2,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "http.method",
+                        "value": { "stringValue": "GET" }
+                      },
+                      {
+                        "key": "http.route",
+                        "value": { "stringValue": "/api/users" }
+                      },
+                      {
+                        "key": "http.status_code",
+                        "value": { "intValue": "200" }
+                      }
+                    ],
+                    "timeUnixNano": "1705327800000000000",
+                    "count": "1543",
+                    "sum": 45120.5,
+                    "bucketCounts": ["23", "342", "687", "398", "78", "15"],
+                    "explicitBounds": [10.0, 25.0, 50.0, 100.0, 250.0],
+                    "min": 2.3,
+                    "max": 421.8
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "http.method",
+                        "value": { "stringValue": "POST" }
+                      },
+                      {
+                        "key": "http.route",
+                        "value": { "stringValue": "/api/users" }
+                      },
+                      {
+                        "key": "http.status_code",
+                        "value": { "intValue": "201" }
+                      }
+                    ],
+                    "timeUnixNano": "1705327800000000000",
+                    "count": "892",
+                    "sum": 67854.2,
+                    "bucketCounts": ["12", "156", "298", "321", "89", "16"],
+                    "explicitBounds": [10.0, 25.0, 50.0, 100.0, 250.0],
+                    "min": 5.1,
+                    "max": 512.3
+                  }
+                ]
+              }
+            },
+            {
+              "name": "db.query.duration",
+              "description": "Duration of database queries",
+              "unit": "ms",
+              "histogram": {
+                "aggregationTemporality": 2,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "db.system",
+                        "value": { "stringValue": "postgresql" }
+                      },
+                      {
+                        "key": "db.operation",
+                        "value": { "stringValue": "SELECT" }
+                      }
+                    ],
+                    "timeUnixNano": "1705327800000000000",
+                    "count": "5234",
+                    "sum": 12456.8,
+                    "bucketCounts": ["1234", "2891", "876", "198", "35"],
+                    "explicitBounds": [1.0, 5.0, 10.0, 50.0],
+                    "min": 0.2,
+                    "max": 89.5
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -3,6 +3,10 @@
 // This crate contains the generated protobuf code for OTLP.
 // The code is generated at build time from the OpenTelemetry proto files.
 
+// Allow clippy warnings in generated protobuf code
+#![allow(clippy::doc_overindented_list_items)]
+#![allow(clippy::doc_lazy_continuation)]
+
 // Include generated protobuf code
 pub mod opentelemetry {
     pub mod proto {
@@ -23,6 +27,14 @@ pub mod opentelemetry {
                     ));
                 }
             }
+            pub mod metrics {
+                pub mod v1 {
+                    include!(concat!(
+                        env!("OUT_DIR"),
+                        "/opentelemetry.proto.collector.metrics.v1.rs"
+                    ));
+                }
+            }
         }
         pub mod logs {
             pub mod v1 {
@@ -32,6 +44,11 @@ pub mod opentelemetry {
         pub mod trace {
             pub mod v1 {
                 include!(concat!(env!("OUT_DIR"), "/opentelemetry.proto.trace.v1.rs"));
+            }
+        }
+        pub mod metrics {
+            pub mod v1 {
+                include!(concat!(env!("OUT_DIR"), "/opentelemetry.proto.metrics.v1.rs"));
             }
         }
         pub mod common {

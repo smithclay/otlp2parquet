@@ -1,22 +1,89 @@
 # Usage
 
-Once `otlp2parquet` is deployed, you can start sending OpenTelemetry logs and querying the resulting Parquet files.
+Once `otlp2parquet` is deployed, you can start sending OpenTelemetry logs, metrics, and traces, then query the resulting Parquet files.
 
 ## Send Logs
 
 Send logs to your deployed `otlp2parquet` instance. The exact endpoint will depend on your deployment method (e.g., `http://localhost:4318/v1/logs` for Docker, your Worker URL for Cloudflare, or your Function URL for AWS Lambda).
 
 ```bash
+# Protobuf format
 curl -X POST http://localhost:4318/v1/logs \
   -H "Content-Type: application/x-protobuf" \
   --data-binary @logs.pb
+
+# JSON format
+curl -X POST http://localhost:4318/v1/logs \
+  -H "Content-Type: application/json" \
+  -d @logs.json
+```
+
+## Send Metrics
+
+Send metrics to the `/v1/metrics` endpoint. Multiple formats are supported:
+
+```bash
+# Protobuf format
+curl -X POST http://localhost:4318/v1/metrics \
+  -H "Content-Type: application/x-protobuf" \
+  --data-binary @metrics.pb
+
+# JSON format
+curl -X POST http://localhost:4318/v1/metrics \
+  -H "Content-Type: application/json" \
+  -d @metrics.json
+
+# JSONL format
+curl -X POST http://localhost:4318/v1/metrics \
+  -H "Content-Type: application/x-ndjson" \
+  --data-binary @metrics.jsonl
+```
+
+The response includes counts per metric type:
+
+```json
+{
+  "status": "ok",
+  "data_points_processed": 150,
+  "gauge_count": 50,
+  "sum_count": 75,
+  "histogram_count": 25,
+  "exponential_histogram_count": 0,
+  "summary_count": 0,
+  "partitions": [
+    "metrics/gauge/my-service/year=2024/.../file.parquet",
+    "metrics/sum/my-service/year=2024/.../file.parquet",
+    "metrics/histogram/my-service/year=2024/.../file.parquet"
+  ]
+}
+```
+
+## Send Traces
+
+Send traces to the `/v1/traces` endpoint:
+
+```bash
+# Protobuf format
+curl -X POST http://localhost:4318/v1/traces \
+  -H "Content-Type: application/x-protobuf" \
+  --data-binary @traces.pb
+
+# JSON format
+curl -X POST http://localhost:4318/v1/traces \
+  -H "Content-Type: application/json" \
+  -d @traces.json
+
+# JSONL format
+curl -X POST http://localhost:4318/v1/traces \
+  -H "Content-Type: application/x-ndjson" \
+  --data-binary @traces.jsonl
 ```
 
 ## Query with DuckDB
 
-Files are stored in a Hive-style partitioned format: `logs/{service}/year={yyyy}/month={mm}/day={dd}/hour={hh}/{uuid}.parquet`.
+### Logs
 
-You can query these Parquet files directly from object storage using tools like DuckDB. Below is an example for querying logs stored in MinIO (used in Docker local development):
+Files are stored in a Hive-style partitioned format: `logs/{service}/year={yyyy}/month={mm}/day={dd}/hour={hh}/{timestamp}-{hash}.parquet`.
 
 ```sql
 INSTALL httpfs; LOAD httpfs;
@@ -25,6 +92,66 @@ SET s3_access_key_id='minioadmin'; SET s3_secret_access_key='minioadmin';
 
 SELECT Timestamp, ServiceName, SeverityText, Body
 FROM read_parquet('s3://otlp-logs/logs/**/*.parquet')
+ORDER BY Timestamp DESC LIMIT 10;
+```
+
+### Metrics
+
+Metrics are partitioned by type: `metrics/{type}/{service}/year={yyyy}/month={mm}/day={dd}/hour={hh}/{timestamp}-{hash}.parquet`
+
+Each metric type has its own schema for optimal query performance:
+
+```sql
+-- Query gauge metrics
+SELECT Timestamp, ServiceName, MetricName, Value, Attributes
+FROM read_parquet('s3://otlp-logs/metrics/gauge/**/*.parquet')
+WHERE MetricName = 'cpu.usage'
+ORDER BY Timestamp DESC LIMIT 10;
+
+-- Query sum metrics with temporality
+SELECT Timestamp, ServiceName, MetricName, Value,
+       AggregationTemporality, IsMonotonic
+FROM read_parquet('s3://otlp-logs/metrics/sum/**/*.parquet')
+WHERE MetricName = 'http.requests.total'
+ORDER BY Timestamp DESC LIMIT 10;
+
+-- Query histogram metrics
+SELECT Timestamp, ServiceName, MetricName,
+       Count, Sum, BucketCounts, ExplicitBounds
+FROM read_parquet('s3://otlp-logs/metrics/histogram/**/*.parquet')
+WHERE MetricName = 'http.request.duration'
+ORDER BY Timestamp DESC LIMIT 10;
+
+-- Query all metric types together
+SELECT 'gauge' as type, COUNT(*) as count FROM read_parquet('s3://otlp-logs/metrics/gauge/**/*.parquet')
+UNION ALL
+SELECT 'sum', COUNT(*) FROM read_parquet('s3://otlp-logs/metrics/sum/**/*.parquet')
+UNION ALL
+SELECT 'histogram', COUNT(*) FROM read_parquet('s3://otlp-logs/metrics/histogram/**/*.parquet');
+```
+
+### Traces
+
+Traces are partitioned by service: `traces/{service}/year={yyyy}/month={mm}/day={dd}/hour={hh}/{timestamp}-{hash}.parquet`
+
+```sql
+-- Query spans with basic fields
+SELECT Timestamp, ServiceName, TraceId, SpanId, ParentSpanId,
+       Name, Kind, StatusCode
+FROM read_parquet('s3://otlp-logs/traces/**/*.parquet')
+ORDER BY Timestamp DESC LIMIT 10;
+
+-- Find slow traces (duration > 1 second)
+SELECT TraceId, ServiceName, Name,
+       (EndTimeUnixNano - StartTimeUnixNano) / 1e9 as duration_seconds
+FROM read_parquet('s3://otlp-logs/traces/**/*.parquet')
+WHERE (EndTimeUnixNano - StartTimeUnixNano) > 1000000000
+ORDER BY duration_seconds DESC;
+
+-- Query spans for a specific service
+SELECT Timestamp, Name, Kind, StatusCode, Attributes
+FROM read_parquet('s3://otlp-logs/traces/**/*.parquet')
+WHERE ServiceName = 'my-service'
 ORDER BY Timestamp DESC LIMIT 10;
 ```
 

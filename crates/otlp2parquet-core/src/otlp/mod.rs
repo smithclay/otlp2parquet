@@ -5,6 +5,7 @@
 
 pub mod common;
 pub mod logs;
+pub mod metrics;
 pub mod traces;
 
 pub use common::{field_names, field_numbers, InputFormat};

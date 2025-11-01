@@ -136,6 +136,26 @@ impl ParquetWriter {
         service_name: &str,
         timestamp_nanos: i64,
     ) -> Result<(String, Blake3Hash)> {
+        self.write_batches_with_signal(batches, service_name, timestamp_nanos, "logs", None)
+            .await
+    }
+
+    /// Write batches with custom signal type and optional subdirectory
+    ///
+    /// # Arguments
+    /// * `batches` - Arrow record batches to write
+    /// * `service_name` - Service name for partitioning
+    /// * `timestamp_nanos` - Timestamp for partitioning
+    /// * `signal_type` - Signal type (logs, metrics, traces)
+    /// * `subdirectory` - Optional subdirectory (e.g., metric type)
+    pub async fn write_batches_with_signal(
+        &self,
+        batches: &[RecordBatch],
+        service_name: &str,
+        timestamp_nanos: i64,
+        signal_type: &str,
+        subdirectory: Option<&str>,
+    ) -> Result<(String, Blake3Hash)> {
         if batches.is_empty() {
             bail!("Cannot write empty batch list");
         }
@@ -154,11 +174,13 @@ impl ParquetWriter {
 
         let (buffer, hash) = sink.finish();
 
-        // Generate partition path
-        let path = crate::partition::generate_partition_path(
+        // Generate partition path with signal type
+        let path = crate::partition::generate_partition_path_with_signal(
+            signal_type,
             service_name,
             timestamp_nanos,
             &hash.to_hex(),
+            subdirectory,
         );
 
         // Write to storage

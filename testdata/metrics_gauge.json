@@ -1,0 +1,88 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": { "stringValue": "demo-service" }
+          },
+          {
+            "key": "service.version",
+            "value": { "stringValue": "1.0.0" }
+          },
+          {
+            "key": "deployment.environment",
+            "value": { "stringValue": "production" }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {
+            "name": "demo-instrumentation",
+            "version": "1.0.0"
+          },
+          "metrics": [
+            {
+              "name": "cpu.usage",
+              "description": "Current CPU usage percentage",
+              "unit": "percent",
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "host",
+                        "value": { "stringValue": "web-01" }
+                      },
+                      {
+                        "key": "cpu",
+                        "value": { "intValue": "0" }
+                      }
+                    ],
+                    "timeUnixNano": "1705327800000000000",
+                    "asDouble": 45.2
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "host",
+                        "value": { "stringValue": "web-01" }
+                      },
+                      {
+                        "key": "cpu",
+                        "value": { "intValue": "1" }
+                      }
+                    ],
+                    "timeUnixNano": "1705327800000000000",
+                    "asDouble": 52.8
+                  }
+                ]
+              }
+            },
+            {
+              "name": "memory.available",
+              "description": "Available memory in bytes",
+              "unit": "bytes",
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "host",
+                        "value": { "stringValue": "web-01" }
+                      }
+                    ],
+                    "timeUnixNano": "1705327800000000000",
+                    "asInt": "8589934592"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

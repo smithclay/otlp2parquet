@@ -16,6 +16,29 @@ use chrono::{DateTime, Datelike, Timelike, Utc};
 /// # Returns
 /// Partition path string
 pub fn generate_partition_path(service_name: &str, timestamp_nanos: i64, hash_hex: &str) -> String {
+    generate_partition_path_with_signal("logs", service_name, timestamp_nanos, hash_hex, None)
+}
+
+/// Generate a partition path with custom signal type and optional subdirectory
+///
+/// Format: `{signal_type}/{subdirectory}/{service_name}/year={year}/month={month}/day={day}/hour={hour}/{timestamp}-{hash}.parquet`
+///
+/// # Arguments
+/// * `signal_type` - Signal type (logs, metrics, traces)
+/// * `service_name` - Service name from resource attributes
+/// * `timestamp_nanos` - Timestamp in nanoseconds since Unix epoch
+/// * `hash_hex` - Content hash in hex format
+/// * `subdirectory` - Optional subdirectory (e.g., metric type for metrics)
+///
+/// # Returns
+/// Partition path string
+pub fn generate_partition_path_with_signal(
+    signal_type: &str,
+    service_name: &str,
+    timestamp_nanos: i64,
+    hash_hex: &str,
+    subdirectory: Option<&str>,
+) -> String {
     // Convert nanoseconds to DateTime
     let timestamp_secs = timestamp_nanos / 1_000_000_000;
     let dt = DateTime::from_timestamp(timestamp_secs, 0).unwrap_or_else(Utc::now);
@@ -28,9 +51,19 @@ pub fn generate_partition_path(service_name: &str, timestamp_nanos: i64, hash_he
     };
     let filename = format!("{}-{}.parquet", timestamp_nanos, hash_prefix);
 
-    // Build partition path
+    // Build base path with signal type
+    let mut path = signal_type.to_string();
+
+    // Add subdirectory if provided (e.g., gauge, sum, histogram for metrics)
+    if let Some(subdir) = subdirectory {
+        path.push('/');
+        path.push_str(subdir);
+    }
+
+    // Add remaining partition components
     format!(
-        "logs/{}/year={}/month={:02}/day={:02}/hour={:02}/{}",
+        "{}/{}/year={}/month={:02}/day={:02}/hour={:02}/{}",
+        path,
         sanitize_service_name(service_name),
         dt.year(),
         dt.month(),

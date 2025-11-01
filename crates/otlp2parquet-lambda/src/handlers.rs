@@ -17,6 +17,7 @@ const HEALTHY_TEXT: &str = "Healthy";
 enum SignalKind {
     Logs,
     Traces,
+    Metrics,
 }
 
 /// Handle incoming HTTP request based on method and path
@@ -47,6 +48,7 @@ async fn handle_post(
     let signal = match path {
         "/v1/logs" => SignalKind::Logs,
         "/v1/traces" => SignalKind::Traces,
+        "/v1/metrics" => SignalKind::Metrics,
         _ => return HttpResponseData::json(404, json!({ "error": "not found" }).to_string()),
     };
 
@@ -71,6 +73,7 @@ async fn handle_post(
 
     match signal {
         SignalKind::Logs => process_logs(body.as_ref(), format, content_type, state).await,
+        SignalKind::Metrics => process_metrics(body.as_ref(), format, content_type, state).await,
         SignalKind::Traces => HttpResponseData::json(
             501,
             json!({
@@ -176,6 +179,104 @@ async fn process_logs(
             "status": "ok",
             "records_processed": metadata.record_count,
             "flush_count": uploaded_paths.len(),
+            "partitions": uploaded_paths,
+        })
+        .to_string(),
+    )
+}
+
+async fn process_metrics(
+    body: &[u8],
+    format: otlp2parquet_core::InputFormat,
+    content_type: Option<&str>,
+    state: &LambdaState,
+) -> HttpResponseData {
+    // Parse OTLP metrics request
+    let request = match otlp::metrics::parse_otlp_request(body, format) {
+        Ok(req) => req,
+        Err(err) => {
+            eprintln!(
+                "Failed to parse OTLP metrics (format: {:?}, content-type: {:?}): {}",
+                format, content_type, err
+            );
+            return HttpResponseData::json(
+                400,
+                json!({ "error": "invalid OTLP metrics payload" }).to_string(),
+            );
+        }
+    };
+
+    // Convert to Arrow (returns multiple batches, one per metric type)
+    let converter = otlp::metrics::ArrowConverter::new();
+    let (batches_by_type, metadata) = match converter.convert(request) {
+        Ok(result) => result,
+        Err(err) => {
+            eprintln!("Failed to convert OTLP metrics to Arrow: {}", err);
+            return HttpResponseData::json(
+                500,
+                json!({ "error": "internal encoding failure" }).to_string(),
+            );
+        }
+    };
+
+    if batches_by_type.is_empty() {
+        return HttpResponseData::json(
+            200,
+            json!({
+                "status": "ok",
+                "message": "No metrics data points to process",
+            })
+            .to_string(),
+        );
+    }
+
+    // Count total data points across all metric types
+    let total_data_points = metadata.gauge_count
+        + metadata.sum_count
+        + metadata.histogram_count
+        + metadata.exponential_histogram_count
+        + metadata.summary_count;
+
+    // Write each metric type batch to its own Parquet file
+    let mut uploaded_paths = Vec::new();
+    for (metric_type, batch) in batches_by_type {
+        let service_name = "default"; // TODO: Extract from metadata
+        let timestamp_nanos = 0; // TODO: Extract first timestamp from batch
+
+        match state
+            .parquet_writer
+            .write_batches_with_signal(
+                &[batch],
+                service_name,
+                timestamp_nanos,
+                "metrics",
+                Some(&metric_type),
+            )
+            .await
+        {
+            Ok((partition_path, _hash)) => {
+                uploaded_paths.push(partition_path);
+            }
+            Err(err) => {
+                eprintln!("Failed to write {} metrics Parquet: {}", metric_type, err);
+                return HttpResponseData::json(
+                    500,
+                    json!({ "error": "internal storage failure" }).to_string(),
+                );
+            }
+        }
+    }
+
+    HttpResponseData::json(
+        200,
+        json!({
+            "status": "ok",
+            "data_points_processed": total_data_points,
+            "gauge_count": metadata.gauge_count,
+            "sum_count": metadata.sum_count,
+            "histogram_count": metadata.histogram_count,
+            "exponential_histogram_count": metadata.exponential_histogram_count,
+            "summary_count": metadata.summary_count,
             "partitions": uploaded_paths,
         })
         .to_string(),

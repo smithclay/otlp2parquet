@@ -1,8 +1,8 @@
 # otlp2parquet - Agentic Coding Instructions
-**Universal OTel Log Ingestion Pipeline (Rust)**
+**Universal OTel Logs, Metrics & Traces Ingestion Pipeline (Rust)**
 
 ## Mission
-Build a Rust binary that ingests OpenTelemetry logs via OTLP HTTP (protobuf), converts to Arrow RecordBatch, writes Parquet files to object storage. Must compile to <3MB compressed WASM for Cloudflare Workers free plan AND native binary for AWS Lambda.
+Build a Rust binary that ingests OpenTelemetry logs, metrics, and traces via OTLP HTTP (protobuf/JSON/JSONL), converts to Arrow RecordBatch, writes Parquet files to object storage. Must compile to <3MB compressed WASM for Cloudflare Workers free plan AND native binary for AWS Lambda.
 
 ---
 
@@ -18,6 +18,7 @@ Build a Rust binary that ingests OpenTelemetry logs via OTLP HTTP (protobuf), co
    - Use exact column names from ClickHouse OTel exporter
    - PascalCase naming convention
    - Extract common resource attributes to dedicated columns
+   - Metrics: Separate schema per metric type (Gauge, Sum, Histogram, ExponentialHistogram, Summary)
    - See schema specification below
 
 3. **Platform Detection: Auto-detect at runtime**
@@ -30,6 +31,30 @@ Build a Rust binary that ingests OpenTelemetry logs via OTLP HTTP (protobuf), co
    - Lambda: S3 only (event-driven constraint)
    - CF Workers: R2 only (WASM constraint)
    - **Philosophy**: Leverage mature external abstractions vs NIH
+
+## Supported Signals
+
+### ✅ Logs
+- Full OTLP logs ingestion (protobuf, JSON, JSONL)
+- Single Parquet schema per batch
+- Partition: `logs/{service}/year={year}/month={month}/day={day}/hour={hour}/file.parquet`
+
+### ✅ Metrics
+- Full OTLP metrics ingestion (protobuf, JSON, JSONL)
+- **5 separate schemas** - one per metric type for optimal query performance
+  - Gauge - instant measurements
+  - Sum - cumulative/delta aggregations with temporality
+  - Histogram - distributions with explicit buckets
+  - ExponentialHistogram - distributions with exponential buckets
+  - Summary - quantile-based distributions
+- Partition: `metrics/{type}/{service}/year={year}/month={month}/day={day}/hour={hour}/file.parquet`
+- Each metric type written to its own file for schema homogeneity
+
+### ✅ Traces
+- Full OTLP traces ingestion (protobuf, JSON, JSONL)
+- Single Parquet schema per batch with ClickHouse-compatible fields
+- Partition: `traces/{service}/year={year}/month={month}/day={day}/hour={hour}/file.parquet`
+- Includes spans with events, links, attributes, and status
 
 
 ## Notes for AI Agent
