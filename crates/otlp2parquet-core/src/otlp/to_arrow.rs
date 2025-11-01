@@ -9,7 +9,9 @@ use arrow::array::{
     TimestampNanosecondBuilder, TimestampSecondBuilder, UInt32Builder,
 };
 use otlp2parquet_proto::opentelemetry::proto::{
-    collector::logs::v1::ExportLogsServiceRequest, common::v1::AnyValue,
+    collector::logs::v1::ExportLogsServiceRequest,
+    common::v1::AnyValue,
+    logs::v1::{LogRecord, ResourceLogs, ScopeLogs},
 };
 use prost::Message;
 use std::sync::Arc;
@@ -121,6 +123,11 @@ impl ArrowConverter {
         self.add_from_request_with_flush(request, usize::MAX, &mut |_, _| Ok(()))
     }
 
+    #[inline]
+    fn clamp_nanos(ns: u64) -> i64 {
+        (ns.min(i64::MAX as u64)) as i64
+    }
+
     pub fn add_from_request_with_flush<F>(
         &mut self,
         request: &ExportLogsServiceRequest,
@@ -131,194 +138,7 @@ impl ArrowConverter {
         F: FnMut(RecordBatch, LogMetadata) -> Result<()>,
     {
         for resource_logs in &request.resource_logs {
-            // Extract resource schema URL
-            let resource_schema_url = if resource_logs.schema_url.is_empty() {
-                None
-            } else {
-                Some(resource_logs.schema_url.as_str())
-            };
-
-            // Extract resource attributes
-            let mut resource_attrs: Vec<(&str, Option<&AnyValue>)> =
-                if let Some(resource) = &resource_logs.resource {
-                    Vec::with_capacity(resource.attributes.len())
-                } else {
-                    Vec::new()
-                };
-            let mut extracted_service_name: Option<&str> = None;
-            let mut extracted_service_namespace: Option<&str> = None;
-            let mut extracted_service_instance_id: Option<&str> = None;
-
-            if let Some(resource) = &resource_logs.resource {
-                for attr in &resource.attributes {
-                    let key = attr.key.as_str();
-
-                    if let Some(value) = attr.value.as_ref() {
-                        match key {
-                            "service.name" => {
-                                if let Some(val) = any_value_string(value) {
-                                    if self.service_name.is_empty() {
-                                        self.service_name = val.to_owned();
-                                    }
-                                    extracted_service_name = Some(val);
-                                }
-                                continue;
-                            }
-                            "service.namespace" => {
-                                if let Some(val) = any_value_string(value) {
-                                    extracted_service_namespace = Some(val);
-                                }
-                                continue;
-                            }
-                            "service.instance.id" => {
-                                if let Some(val) = any_value_string(value) {
-                                    extracted_service_instance_id = Some(val);
-                                }
-                                continue;
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    if !EXTRACTED_RESOURCE_ATTRS.contains(&key) {
-                        resource_attrs.push((key, attr.value.as_ref()));
-                    }
-                }
-            }
-
-            for scope_logs in &resource_logs.scope_logs {
-                // Extract scope schema URL
-                let scope_schema_url = if scope_logs.schema_url.is_empty() {
-                    None
-                } else {
-                    Some(scope_logs.schema_url.as_str())
-                };
-
-                // Extract scope metadata
-                let scope_name = scope_logs
-                    .scope
-                    .as_ref()
-                    .map(|s| s.name.as_str())
-                    .unwrap_or("");
-                let scope_version = scope_logs.scope.as_ref().and_then(|s| {
-                    if s.version.is_empty() {
-                        None
-                    } else {
-                        Some(s.version.as_str())
-                    }
-                });
-
-                // Extract scope attributes
-                let scope_attrs: Vec<(&str, Option<&AnyValue>)> = scope_logs
-                    .scope
-                    .as_ref()
-                    .map(|s| {
-                        s.attributes
-                            .iter()
-                            .map(|attr| (attr.key.as_str(), attr.value.as_ref()))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                for log_record in &scope_logs.log_records {
-                    let timestamp = log_record.time_unix_nano as i64;
-                    self.timestamp_builder.append_value(timestamp);
-                    // TimestampTime is timestamp rounded to seconds
-                    let timestamp_seconds = timestamp / 1_000_000_000;
-                    self.timestamp_time_builder.append_value(timestamp_seconds);
-                    self.observed_timestamp_builder
-                        .append_value(log_record.observed_time_unix_nano as i64);
-
-                    if self.first_timestamp.is_none() {
-                        self.first_timestamp = Some(timestamp);
-                    }
-
-                    if log_record.trace_id.len() == 16 {
-                        self.trace_id_builder.append_value(&log_record.trace_id)?;
-                    } else {
-                        self.trace_id_builder.append_value([0u8; 16])?;
-                    }
-
-                    if log_record.span_id.len() == 8 {
-                        self.span_id_builder.append_value(&log_record.span_id)?;
-                    } else {
-                        self.span_id_builder.append_value([0u8; 8])?;
-                    }
-
-                    self.trace_flags_builder.append_value(log_record.flags);
-
-                    self.severity_text_builder
-                        .append_value(&log_record.severity_text);
-                    self.severity_number_builder
-                        .append_value(log_record.severity_number);
-
-                    append_any_value(&mut self.body_builder, log_record.body.as_ref())?;
-
-                    let service_name_value = extracted_service_name.unwrap_or({
-                        if self.service_name.is_empty() {
-                            ""
-                        } else {
-                            self.service_name.as_str()
-                        }
-                    });
-                    self.service_name_builder.append_value(service_name_value);
-                    if let Some(ns) = extracted_service_namespace {
-                        self.service_namespace_builder.append_value(ns);
-                    } else {
-                        self.service_namespace_builder.append_null();
-                    }
-                    if let Some(id) = extracted_service_instance_id {
-                        self.service_instance_id_builder.append_value(id);
-                    } else {
-                        self.service_instance_id_builder.append_null();
-                    }
-                    if let Some(url) = resource_schema_url {
-                        self.resource_schema_url_builder.append_value(url);
-                    } else {
-                        self.resource_schema_url_builder.append_null();
-                    }
-
-                    self.scope_name_builder.append_value(scope_name);
-                    if let Some(ver) = scope_version {
-                        self.scope_version_builder.append_value(ver);
-                    } else {
-                        self.scope_version_builder.append_null();
-                    }
-                    // Append scope attributes
-                    for &(key, value) in &scope_attrs {
-                        self.scope_attributes_builder.keys().append_value(key);
-                        append_any_value(self.scope_attributes_builder.values(), value)?;
-                    }
-                    self.scope_attributes_builder.append(true)?;
-
-                    if let Some(url) = scope_schema_url {
-                        self.scope_schema_url_builder.append_value(url);
-                    } else {
-                        self.scope_schema_url_builder.append_null();
-                    }
-
-                    for &(key, value) in &resource_attrs {
-                        self.resource_attributes_builder.keys().append_value(key);
-                        append_any_value(self.resource_attributes_builder.values(), value)?;
-                    }
-                    self.resource_attributes_builder.append(true)?;
-
-                    for attr in &log_record.attributes {
-                        self.log_attributes_builder.keys().append_value(&attr.key);
-                        append_any_value(
-                            self.log_attributes_builder.values(),
-                            attr.value.as_ref(),
-                        )?;
-                    }
-                    self.log_attributes_builder.append(true)?;
-
-                    self.current_row_count += 1;
-
-                    if self.current_row_count >= max_rows_per_flush {
-                        self.flush(flush_fn)?;
-                    }
-                }
-            }
+            self.process_resource_logs(resource_logs, max_rows_per_flush, flush_fn)?;
         }
 
         Ok(())
@@ -386,5 +206,266 @@ impl ArrowConverter {
 impl Default for ArrowConverter {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+struct ServiceFields<'a> {
+    name: Option<&'a str>,
+    namespace: Option<&'a str>,
+    instance_id: Option<&'a str>,
+}
+
+struct ResourceContext<'a> {
+    schema_url: Option<&'a str>,
+    attributes: Vec<(&'a str, Option<&'a AnyValue>)>,
+    service: ServiceFields<'a>,
+}
+
+struct ScopeContext<'a> {
+    schema_url: Option<&'a str>,
+    name: &'a str,
+    version: Option<&'a str>,
+    attributes: Vec<(&'a str, Option<&'a AnyValue>)>,
+}
+
+impl ArrowConverter {
+    fn process_resource_logs<F>(
+        &mut self,
+        resource_logs: &ResourceLogs,
+        max_rows_per_flush: usize,
+        flush_fn: &mut F,
+    ) -> Result<()>
+    where
+        F: FnMut(RecordBatch, LogMetadata) -> Result<()>,
+    {
+        let resource_ctx = self.build_resource_context(resource_logs);
+
+        for scope_logs in &resource_logs.scope_logs {
+            let scope_ctx = self.build_scope_context(scope_logs);
+
+            for log_record in &scope_logs.log_records {
+                self.append_log_record(
+                    log_record,
+                    &resource_ctx,
+                    &scope_ctx,
+                    max_rows_per_flush,
+                    flush_fn,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn build_resource_context<'a>(
+        &mut self,
+        resource_logs: &'a ResourceLogs,
+    ) -> ResourceContext<'a> {
+        let schema_url =
+            (!resource_logs.schema_url.is_empty()).then_some(resource_logs.schema_url.as_str());
+
+        let mut attributes: Vec<(&str, Option<&AnyValue>)> =
+            if let Some(resource) = &resource_logs.resource {
+                Vec::with_capacity(resource.attributes.len())
+            } else {
+                Vec::new()
+            };
+
+        let mut service_fields = ServiceFields {
+            name: None,
+            namespace: None,
+            instance_id: None,
+        };
+
+        if let Some(resource) = &resource_logs.resource {
+            for attr in &resource.attributes {
+                let key = attr.key.as_str();
+
+                if let Some(value) = attr.value.as_ref() {
+                    match key {
+                        "service.name" => {
+                            if let Some(val) = any_value_string(value) {
+                                if self.service_name.is_empty() {
+                                    val.clone_into(&mut self.service_name);
+                                }
+                                service_fields.name = Some(val);
+                            }
+                            continue;
+                        }
+                        "service.namespace" => {
+                            if let Some(val) = any_value_string(value) {
+                                service_fields.namespace = Some(val);
+                            }
+                            continue;
+                        }
+                        "service.instance.id" => {
+                            if let Some(val) = any_value_string(value) {
+                                service_fields.instance_id = Some(val);
+                            }
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+
+                if !EXTRACTED_RESOURCE_ATTRS.contains(&key) {
+                    attributes.push((key, attr.value.as_ref()));
+                }
+            }
+        }
+
+        ResourceContext {
+            schema_url,
+            attributes,
+            service: service_fields,
+        }
+    }
+
+    fn build_scope_context<'a>(&self, scope_logs: &'a ScopeLogs) -> ScopeContext<'a> {
+        let schema_url = if scope_logs.schema_url.is_empty() {
+            None
+        } else {
+            Some(scope_logs.schema_url.as_str())
+        };
+
+        let name = scope_logs
+            .scope
+            .as_ref()
+            .map_or("", |scope| scope.name.as_str());
+        let version = scope_logs.scope.as_ref().and_then(|scope| {
+            if scope.version.is_empty() {
+                None
+            } else {
+                Some(scope.version.as_str())
+            }
+        });
+        let attributes: Vec<(&str, Option<&AnyValue>)> = scope_logs
+            .scope
+            .as_ref()
+            .map(|scope| {
+                scope
+                    .attributes
+                    .iter()
+                    .map(|attr| (attr.key.as_str(), attr.value.as_ref()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        ScopeContext {
+            schema_url,
+            name,
+            version,
+            attributes,
+        }
+    }
+
+    fn append_log_record<F>(
+        &mut self,
+        log_record: &LogRecord,
+        resource_ctx: &ResourceContext<'_>,
+        scope_ctx: &ScopeContext<'_>,
+        max_rows_per_flush: usize,
+        flush_fn: &mut F,
+    ) -> Result<()>
+    where
+        F: FnMut(RecordBatch, LogMetadata) -> Result<()>,
+    {
+        let timestamp = Self::clamp_nanos(log_record.time_unix_nano);
+        self.timestamp_builder.append_value(timestamp);
+        let timestamp_seconds = timestamp / 1_000_000_000;
+        self.timestamp_time_builder.append_value(timestamp_seconds);
+        self.observed_timestamp_builder
+            .append_value(Self::clamp_nanos(log_record.observed_time_unix_nano));
+
+        if self.first_timestamp.is_none() {
+            self.first_timestamp = Some(timestamp);
+        }
+
+        if log_record.trace_id.len() == TRACE_ID_SIZE as usize {
+            self.trace_id_builder.append_value(&log_record.trace_id)?;
+        } else {
+            self.trace_id_builder
+                .append_value([0u8; TRACE_ID_SIZE as usize])?;
+        }
+
+        if log_record.span_id.len() == SPAN_ID_SIZE as usize {
+            self.span_id_builder.append_value(&log_record.span_id)?;
+        } else {
+            self.span_id_builder
+                .append_value([0u8; SPAN_ID_SIZE as usize])?;
+        }
+
+        self.trace_flags_builder.append_value(log_record.flags);
+        self.severity_text_builder
+            .append_value(&log_record.severity_text);
+        self.severity_number_builder
+            .append_value(log_record.severity_number);
+
+        append_any_value(&mut self.body_builder, log_record.body.as_ref())?;
+
+        let fallback_name = if self.service_name.is_empty() {
+            ""
+        } else {
+            self.service_name.as_str()
+        };
+        let service_name = resource_ctx.service.name.unwrap_or(fallback_name);
+        self.service_name_builder.append_value(service_name);
+
+        if let Some(ns) = resource_ctx.service.namespace {
+            self.service_namespace_builder.append_value(ns);
+        } else {
+            self.service_namespace_builder.append_null();
+        }
+
+        if let Some(id) = resource_ctx.service.instance_id {
+            self.service_instance_id_builder.append_value(id);
+        } else {
+            self.service_instance_id_builder.append_null();
+        }
+
+        if let Some(url) = resource_ctx.schema_url {
+            self.resource_schema_url_builder.append_value(url);
+        } else {
+            self.resource_schema_url_builder.append_null();
+        }
+
+        self.scope_name_builder.append_value(scope_ctx.name);
+        if let Some(version) = scope_ctx.version {
+            self.scope_version_builder.append_value(version);
+        } else {
+            self.scope_version_builder.append_null();
+        }
+
+        for &(key, value) in &scope_ctx.attributes {
+            self.scope_attributes_builder.keys().append_value(key);
+            append_any_value(self.scope_attributes_builder.values(), value)?;
+        }
+        self.scope_attributes_builder.append(true)?;
+
+        if let Some(url) = scope_ctx.schema_url {
+            self.scope_schema_url_builder.append_value(url);
+        } else {
+            self.scope_schema_url_builder.append_null();
+        }
+
+        for &(key, value) in &resource_ctx.attributes {
+            self.resource_attributes_builder.keys().append_value(key);
+            append_any_value(self.resource_attributes_builder.values(), value)?;
+        }
+        self.resource_attributes_builder.append(true)?;
+
+        for attr in &log_record.attributes {
+            self.log_attributes_builder.keys().append_value(&attr.key);
+            append_any_value(self.log_attributes_builder.values(), attr.value.as_ref())?;
+        }
+        self.log_attributes_builder.append(true)?;
+
+        self.current_row_count += 1;
+
+        if self.current_row_count >= max_rows_per_flush {
+            self.flush(flush_fn)?;
+        }
+
+        Ok(())
     }
 }

@@ -60,14 +60,14 @@ pub(crate) async fn handle_logs(
         uploads.append(&mut expired);
 
         let (mut ready, meta) = batcher
-            .ingest(request, body.len())
+            .ingest(&request, body.len())
             .map_err(|e| e.context("Failed to enqueue batch"))?;
         uploads.append(&mut ready);
         metadata = meta;
     } else {
         let batch = state
             .passthrough
-            .ingest(request)
+            .ingest(&request)
             .map_err(|e| e.context("Failed to convert OTLP to Arrow"))?;
         metadata = batch.metadata.clone();
         uploads.push(batch);

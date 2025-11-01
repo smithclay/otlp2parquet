@@ -90,7 +90,7 @@ async fn handle_post(
             }
         }
 
-        match batcher.ingest(request, body.len()) {
+        match batcher.ingest(&request, body.len()) {
             Ok((mut ready, meta)) => {
                 uploads.append(&mut ready);
                 metadata = meta;
@@ -104,7 +104,7 @@ async fn handle_post(
             }
         }
     } else {
-        match state.passthrough.ingest(request) {
+        match state.passthrough.ingest(&request) {
             Ok(batch) => {
                 metadata = batch.metadata.clone();
                 uploads.push(batch);

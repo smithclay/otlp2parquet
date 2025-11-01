@@ -93,11 +93,11 @@ impl BatchManager {
 
     pub fn ingest(
         &self,
-        request: ExportLogsServiceRequest,
+        request: &ExportLogsServiceRequest,
         approx_bytes: usize,
     ) -> Result<(Vec<CompletedBatch>, LogMetadata)> {
-        let (batch, metadata) = convert_request_to_arrow(&request)
-            .context("Failed to convert OTLP request to Arrow")?;
+        let (batch, metadata) =
+            convert_request_to_arrow(request).context("Failed to convert OTLP request to Arrow")?;
 
         if metadata.record_count == 0 {
             return Ok((Vec::new(), metadata));
@@ -117,6 +117,8 @@ impl BatchManager {
                 .ok_or_else(|| anyhow!("batch evicted before flush: {:?}", key))?;
             completed.push(batch.finalize()?);
         }
+
+        drop(guard);
 
         Ok((completed, metadata))
     }
@@ -147,10 +149,10 @@ impl BatchManager {
 pub struct PassthroughBatcher;
 
 impl PassthroughBatcher {
-    pub fn ingest(&self, request: ExportLogsServiceRequest) -> Result<CompletedBatch> {
+    pub fn ingest(&self, request: &ExportLogsServiceRequest) -> Result<CompletedBatch> {
         // Parse to Arrow using new core API
-        let (batch, metadata) = convert_request_to_arrow(&request)
-            .context("Failed to convert OTLP request to Arrow")?;
+        let (batch, metadata) =
+            convert_request_to_arrow(request).context("Failed to convert OTLP request to Arrow")?;
 
         Ok(CompletedBatch {
             batches: vec![batch],
@@ -204,7 +206,7 @@ mod tests {
         let batcher = PassthroughBatcher;
         let request = create_test_request("test-service", 10);
 
-        let result = batcher.ingest(request);
+        let result = batcher.ingest(&request);
         assert!(result.is_ok());
 
         let completed = result.unwrap();
@@ -225,13 +227,13 @@ mod tests {
         // First request - should not flush
         let request1 = create_test_request("test-service", 10);
         let approx1 = request1.encoded_len();
-        let (completed1, _meta1) = manager.ingest(request1, approx1).unwrap();
+        let (completed1, _meta1) = manager.ingest(&request1, approx1).unwrap();
         assert_eq!(completed1.len(), 0); // Not flushed yet
 
         // Second request - should not flush (total 20 rows)
         let request2 = create_test_request("test-service", 10);
         let approx2 = request2.encoded_len();
-        let (completed2, _meta2) = manager.ingest(request2, approx2).unwrap();
+        let (completed2, _meta2) = manager.ingest(&request2, approx2).unwrap();
         assert_eq!(completed2.len(), 0); // Still not flushed
 
         // Third test with smaller limit - should flush when hitting threshold
@@ -244,12 +246,12 @@ mod tests {
 
         let req1 = create_test_request("test-service", 10);
         let approx_small_1 = req1.encoded_len();
-        let (c1, _) = manager_small.ingest(req1, approx_small_1).unwrap();
+        let (c1, _) = manager_small.ingest(&req1, approx_small_1).unwrap();
         assert_eq!(c1.len(), 0); // 10 rows < 20, no flush
 
         let req2 = create_test_request("test-service", 10);
         let approx_small_2 = req2.encoded_len();
-        let (c2, _) = manager_small.ingest(req2, approx_small_2).unwrap();
+        let (c2, _) = manager_small.ingest(&req2, approx_small_2).unwrap();
         assert_eq!(c2.len(), 1); // 10 + 10 = 20 rows, should flush!
         assert_eq!(
             c2[0].batches.iter().map(|b| b.num_rows()).sum::<usize>(),

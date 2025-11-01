@@ -192,7 +192,7 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
             }
         }
 
-        match manager.ingest(request, body_bytes.len()) {
+        match manager.ingest(&request, body_bytes.len()) {
             Ok((mut ready, meta)) => {
                 uploads.append(&mut ready);
                 metadata = meta;
@@ -203,7 +203,7 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
             }
         }
     } else {
-        match passthrough.ingest(request) {
+        match passthrough.ingest(&request) {
             Ok(batch) => {
                 metadata = batch.metadata.clone();
                 uploads.push(batch);
