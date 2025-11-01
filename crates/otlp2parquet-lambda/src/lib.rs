@@ -135,7 +135,7 @@ pub async fn run() -> Result<(), Error> {
     let state = Arc::new(LambdaState {
         parquet_writer,
         batcher,
-        passthrough: PassthroughBatcher,
+        passthrough: PassthroughBatcher::default(),
         max_payload_bytes,
     });
 

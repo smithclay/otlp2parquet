@@ -5,11 +5,13 @@
 //
 
 use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use arrow::array::RecordBatch;
+use otlp2parquet_core::otlp::traces::{TraceArrowConverter, TraceMetadata, TraceRequest};
 use otlp2parquet_core::otlp::LogMetadata;
 use otlp2parquet_core::{convert_request_to_arrow_with_capacity, estimate_request_row_count};
 use otlp2parquet_proto::opentelemetry::proto::collector::logs::v1::ExportLogsServiceRequest;
@@ -26,15 +28,15 @@ struct BatchKey {
 }
 
 impl BatchKey {
-    fn from_metadata(metadata: &LogMetadata) -> Self {
-        let bucket = if metadata.first_timestamp_nanos > 0 {
-            metadata.first_timestamp_nanos / 60_000_000_000
+    fn from_metadata<M: BatchMetadata>(metadata: &M) -> Self {
+        let bucket = if metadata.first_timestamp_nanos() > 0 {
+            metadata.first_timestamp_nanos() / 60_000_000_000
         } else {
             0
         };
 
         Self {
-            service: metadata.service_name.to_string(),
+            service: metadata.service_name().as_ref().to_string(),
             minute_bucket: bucket,
         }
     }
@@ -67,40 +69,160 @@ impl BatchConfig {
     }
 }
 
+/// Metadata required by the batching layer.
+pub trait BatchMetadata: Clone {
+    fn service_name(&self) -> &Arc<str>;
+    fn first_timestamp_nanos(&self) -> i64;
+    fn record_count(&self) -> usize;
+    fn aggregate(service_name: Arc<str>, first_timestamp_nanos: i64, record_count: usize) -> Self;
+}
+
+impl BatchMetadata for LogMetadata {
+    fn service_name(&self) -> &Arc<str> {
+        &self.service_name
+    }
+
+    fn first_timestamp_nanos(&self) -> i64 {
+        self.first_timestamp_nanos
+    }
+
+    fn record_count(&self) -> usize {
+        self.record_count
+    }
+
+    fn aggregate(service_name: Arc<str>, first_timestamp_nanos: i64, record_count: usize) -> Self {
+        Self {
+            service_name,
+            first_timestamp_nanos,
+            record_count,
+        }
+    }
+}
+
+impl BatchMetadata for TraceMetadata {
+    fn service_name(&self) -> &Arc<str> {
+        &self.service_name
+    }
+
+    fn first_timestamp_nanos(&self) -> i64 {
+        self.first_timestamp_nanos
+    }
+
+    fn record_count(&self) -> usize {
+        self.span_count
+    }
+
+    fn aggregate(service_name: Arc<str>, first_timestamp_nanos: i64, record_count: usize) -> Self {
+        Self {
+            service_name,
+            first_timestamp_nanos,
+            span_count: record_count,
+        }
+    }
+}
+
+/// Signal-specific logic used by the batching layer.
+pub trait SignalProcessor {
+    type Request;
+    type Metadata: BatchMetadata;
+
+    fn estimate_row_count(request: &Self::Request) -> usize;
+    fn convert_request(
+        request: &Self::Request,
+        capacity_hint: usize,
+    ) -> Result<(Vec<RecordBatch>, Self::Metadata)>;
+}
+
+type BatchIngestResult<M> = Result<(Vec<CompletedBatch<M>>, M)>;
+
+/// Log-specific signal processor.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LogSignalProcessor;
+
+impl SignalProcessor for LogSignalProcessor {
+    type Request = ExportLogsServiceRequest;
+    type Metadata = LogMetadata;
+
+    fn estimate_row_count(request: &Self::Request) -> usize {
+        estimate_request_row_count(request)
+    }
+
+    fn convert_request(
+        request: &Self::Request,
+        capacity_hint: usize,
+    ) -> Result<(Vec<RecordBatch>, Self::Metadata)> {
+        let (batch, metadata) = convert_request_to_arrow_with_capacity(request, capacity_hint)
+            .context("Failed to convert OTLP request to Arrow")?;
+        Ok((vec![batch], metadata))
+    }
+}
+
+/// Trace-specific signal processor placeholder.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TraceSignalProcessor;
+
+impl SignalProcessor for TraceSignalProcessor {
+    type Request = TraceRequest;
+    type Metadata = TraceMetadata;
+
+    fn estimate_row_count(request: &Self::Request) -> usize {
+        request
+            .resource_spans
+            .iter()
+            .map(|resource_spans| {
+                resource_spans
+                    .scope_spans
+                    .iter()
+                    .map(|scope_spans| scope_spans.spans.len())
+                    .sum::<usize>()
+            })
+            .sum()
+    }
+
+    fn convert_request(
+        request: &Self::Request,
+        _capacity_hint: usize,
+    ) -> Result<(Vec<RecordBatch>, Self::Metadata)> {
+        let (batches, metadata) = TraceArrowConverter::convert(request)?;
+        Ok((batches, metadata))
+    }
+}
+
 /// Completed batch ready for storage
 ///
 /// Contains merged Arrow RecordBatch + metadata.
 /// Hashing and serialization happen in the storage layer.
 #[derive(Debug)]
-pub struct CompletedBatch {
+pub struct CompletedBatch<M: BatchMetadata = LogMetadata> {
     pub batches: Vec<RecordBatch>,
-    pub metadata: LogMetadata,
+    pub metadata: M,
 }
 
 /// Thread-safe batch orchestrator shared across handlers.
-pub struct BatchManager {
+pub struct BatchManager<P: SignalProcessor = LogSignalProcessor> {
     config: BatchConfig,
-    inner: Arc<Mutex<HashMap<BatchKey, BufferedBatch>>>,
+    inner: Arc<Mutex<HashMap<BatchKey, BufferedBatch<P::Metadata>>>>,
+    _marker: PhantomData<P>,
 }
 
-impl BatchManager {
+impl<P: SignalProcessor> BatchManager<P> {
     pub fn new(config: BatchConfig) -> Self {
         Self {
             config,
             inner: Arc::new(Mutex::new(HashMap::new())),
+            _marker: PhantomData,
         }
     }
 
     pub fn ingest(
         &self,
-        request: &ExportLogsServiceRequest,
+        request: &P::Request,
         approx_bytes: usize,
-    ) -> Result<(Vec<CompletedBatch>, LogMetadata)> {
-        let capacity_hint = estimate_request_row_count(request);
-        let (batch, metadata) = convert_request_to_arrow_with_capacity(request, capacity_hint)
-            .context("Failed to convert OTLP request to Arrow")?;
+    ) -> BatchIngestResult<P::Metadata> {
+        let capacity_hint = P::estimate_row_count(request);
+        let (batches, metadata) = P::convert_request(request, capacity_hint)?;
 
-        if metadata.record_count == 0 {
+        if metadata.record_count() == 0 {
             return Ok((Vec::new(), metadata));
         }
 
@@ -109,7 +231,7 @@ impl BatchManager {
         let buffered = guard
             .entry(key.clone())
             .or_insert_with(|| BufferedBatch::new(&metadata));
-        buffered.add(batch, &metadata, approx_bytes);
+        buffered.add_batches(batches, &metadata, approx_bytes);
 
         let mut completed = Vec::new();
         if buffered.should_flush(&self.config) {
@@ -124,7 +246,7 @@ impl BatchManager {
         Ok((completed, metadata))
     }
 
-    pub fn drain_expired(&self) -> Result<Vec<CompletedBatch>> {
+    pub fn drain_expired(&self) -> Result<Vec<CompletedBatch<P::Metadata>>> {
         let mut guard = self.inner.lock();
         let mut completed = Vec::new();
         let keys: Vec<BatchKey> = guard
@@ -147,19 +269,20 @@ impl BatchManager {
 ///
 /// Converts each OTLP request directly to an Arrow batch without accumulation.
 #[derive(Debug, Clone)]
-pub struct PassthroughBatcher;
+pub struct PassthroughBatcher<P: SignalProcessor = LogSignalProcessor>(PhantomData<P>);
 
-impl PassthroughBatcher {
-    pub fn ingest(&self, request: &ExportLogsServiceRequest) -> Result<CompletedBatch> {
-        // Parse to Arrow using new core API
-        let capacity_hint = estimate_request_row_count(request);
-        let (batch, metadata) = convert_request_to_arrow_with_capacity(request, capacity_hint)
-            .context("Failed to convert OTLP request to Arrow")?;
+impl<P: SignalProcessor> Default for PassthroughBatcher<P> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
 
-        Ok(CompletedBatch {
-            batches: vec![batch],
-            metadata,
-        })
+impl<P: SignalProcessor> PassthroughBatcher<P> {
+    pub fn ingest(&self, request: &P::Request) -> Result<CompletedBatch<P::Metadata>> {
+        let capacity_hint = P::estimate_row_count(request);
+        let (batches, metadata) = P::convert_request(request, capacity_hint)?;
+
+        Ok(CompletedBatch { batches, metadata })
     }
 }
 
@@ -205,7 +328,7 @@ mod tests {
 
     #[test]
     fn test_passthrough_batcher() {
-        let batcher = PassthroughBatcher;
+        let batcher = PassthroughBatcher::<LogSignalProcessor>::default();
         let request = create_test_request("test-service", 10);
 
         let result = batcher.ingest(&request);
@@ -224,7 +347,7 @@ mod tests {
             max_bytes: 1024 * 1024,
             max_age: Duration::from_secs(10),
         };
-        let manager = BatchManager::new(config);
+        let manager = BatchManager::<LogSignalProcessor>::new(config);
 
         // First request - should not flush
         let request1 = create_test_request("test-service", 10);
@@ -244,7 +367,7 @@ mod tests {
             max_bytes: 1024 * 1024,
             max_age: Duration::from_secs(10),
         };
-        let manager_small = BatchManager::new(config_small);
+        let manager_small = BatchManager::<LogSignalProcessor>::new(config_small);
 
         let req1 = create_test_request("test-service", 10);
         let approx_small_1 = req1.encoded_len();

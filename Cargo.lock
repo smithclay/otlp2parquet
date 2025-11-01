@@ -1868,6 +1868,7 @@ dependencies = [
  "otlp2parquet-storage",
  "parquet",
  "prost",
+ "serde",
  "serde_json",
  "thiserror",
  "tokio",

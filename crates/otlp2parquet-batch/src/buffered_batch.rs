@@ -4,46 +4,48 @@
 
 use anyhow::{bail, Result};
 use arrow::array::RecordBatch;
-use otlp2parquet_core::otlp::LogMetadata;
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::{BatchConfig, CompletedBatch};
+use crate::{BatchConfig, BatchMetadata, CompletedBatch};
 
 /// Buffered batch accumulating Arrow RecordBatches
 #[derive(Debug)]
-pub(crate) struct BufferedBatch {
+pub(crate) struct BufferedBatch<M: BatchMetadata> {
     batches: Vec<RecordBatch>,
     total_rows: usize,
     total_bytes: usize, // Approximate size for flushing decisions
     first_timestamp: i64,
     service_name: Arc<str>,
     created_at: Instant,
+    _marker: PhantomData<M>,
 }
 
-impl BufferedBatch {
-    pub fn new(metadata: &LogMetadata) -> Self {
+impl<M: BatchMetadata> BufferedBatch<M> {
+    pub fn new(metadata: &M) -> Self {
         Self {
             batches: Vec::new(),
             total_rows: 0,
             total_bytes: 0,
-            first_timestamp: if metadata.first_timestamp_nanos > 0 {
-                metadata.first_timestamp_nanos
+            first_timestamp: if metadata.first_timestamp_nanos() > 0 {
+                metadata.first_timestamp_nanos()
             } else {
                 i64::MAX
             },
-            service_name: Arc::clone(&metadata.service_name),
+            service_name: Arc::clone(metadata.service_name()),
             created_at: Instant::now(),
+            _marker: PhantomData,
         }
     }
 
-    pub fn add(&mut self, batch: RecordBatch, metadata: &LogMetadata, approx_bytes: usize) {
-        if metadata.first_timestamp_nanos > 0 {
-            self.first_timestamp = self.first_timestamp.min(metadata.first_timestamp_nanos);
+    pub fn add_batches(&mut self, batches: Vec<RecordBatch>, metadata: &M, approx_bytes: usize) {
+        if metadata.first_timestamp_nanos() > 0 {
+            self.first_timestamp = self.first_timestamp.min(metadata.first_timestamp_nanos());
         }
-        self.total_rows += metadata.record_count;
+        self.total_rows += metadata.record_count();
         self.total_bytes += approx_bytes;
-        self.batches.push(batch);
+        self.batches.extend(batches);
     }
 
     pub fn should_flush(&self, cfg: &BatchConfig) -> bool {
@@ -52,20 +54,20 @@ impl BufferedBatch {
             || self.created_at.elapsed() >= cfg.max_age
     }
 
-    pub fn finalize(self) -> Result<CompletedBatch> {
+    pub fn finalize(self) -> Result<CompletedBatch<M>> {
         if self.batches.is_empty() {
             bail!("Cannot finalize empty batch");
         }
 
-        let metadata = LogMetadata {
-            service_name: self.service_name,
-            first_timestamp_nanos: if self.first_timestamp == i64::MAX {
+        let metadata = M::aggregate(
+            self.service_name,
+            if self.first_timestamp == i64::MAX {
                 0
             } else {
                 self.first_timestamp
             },
-            record_count: self.total_rows,
-        };
+            self.total_rows,
+        );
 
         Ok(CompletedBatch {
             batches: self.batches,

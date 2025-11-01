@@ -1,19 +1,11 @@
 // OTLP to Arrow conversion
 //
-// This module handles converting OpenTelemetry Protocol (OTLP) log records
+// This module handles converting OpenTelemetry Protocol (OTLP) signal data
 // into Arrow RecordBatches using the ClickHouse-compatible schema.
 
-pub mod format;
-pub mod to_arrow;
+pub mod common;
+pub mod logs;
+pub mod traces;
 
-// Constants
-pub mod field_names;
-pub mod field_numbers;
-
-// Submodules
-mod any_value_builder;
-mod builder_helpers;
-mod json_normalizer;
-
-pub use format::{parse_otlp_request, InputFormat};
-pub use to_arrow::{ArrowConverter, LogMetadata};
+pub use common::{field_names, field_numbers, InputFormat};
+pub use logs::{parse_otlp_request, ArrowConverter, LogMetadata};

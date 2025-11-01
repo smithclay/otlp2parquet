@@ -16,12 +16,11 @@ use otlp2parquet_proto::opentelemetry::proto::{
 use prost::Message;
 use std::sync::Arc;
 
-use crate::schema::{otel_logs_schema_arc, EXTRACTED_RESOURCE_ATTRS};
-
-use super::any_value_builder::{any_value_string, append_any_value};
-use super::builder_helpers::{
-    map_field_names, new_any_value_struct_builder, SPAN_ID_SIZE, TRACE_ID_SIZE,
+use crate::otlp::common::{
+    any_value_builder::{any_value_string, append_any_value},
+    builder_helpers::{map_field_names, new_any_value_struct_builder, SPAN_ID_SIZE, TRACE_ID_SIZE},
 };
+use crate::schema::{otel_logs_schema_arc, EXTRACTED_RESOURCE_ATTRS};
 
 /// Metadata extracted during OTLP parsing
 #[derive(Debug, Clone)]

@@ -32,6 +32,10 @@ pub mod otlp {
     pub const SPAN_ID: &str = "span_id";
     /// W3C trace flags (8 bits)
     pub const TRACE_FLAGS: &str = "trace_flags";
+    /// W3C trace state
+    pub const TRACE_STATE: &str = "trace_state";
+    /// Parent span identifier (8 bytes)
+    pub const PARENT_SPAN_ID: &str = "parent_span_id";
     /// Log record flags
     pub const FLAGS: &str = "flags";
 
@@ -40,6 +44,22 @@ pub mod otlp {
     pub const SEVERITY_NUMBER: &str = "severity_number";
     /// Human-readable severity text (e.g., "INFO", "ERROR")
     pub const SEVERITY_TEXT: &str = "severity_text";
+    /// Span start time in nanoseconds
+    pub const START_TIME_UNIX_NANO: &str = "start_time_unix_nano";
+    /// Span end time in nanoseconds
+    pub const END_TIME_UNIX_NANO: &str = "end_time_unix_nano";
+    /// Span kind enumeration value
+    pub const KIND: &str = "kind";
+    /// Span events container
+    pub const EVENTS: &str = "events";
+    /// Span links container
+    pub const LINKS: &str = "links";
+    /// Span status container
+    pub const STATUS: &str = "status";
+    /// Status code field name
+    pub const CODE: &str = "code";
+    /// Status message field name
+    pub const MESSAGE: &str = "message";
 
     // Content fields
     /// Log record body (AnyValue)
@@ -50,6 +70,10 @@ pub mod otlp {
     // Metadata fields
     /// Number of dropped attributes due to limits
     pub const DROPPED_ATTRIBUTES_COUNT: &str = "dropped_attributes_count";
+    /// Number of dropped span events
+    pub const DROPPED_EVENTS_COUNT: &str = "dropped_events_count";
+    /// Number of dropped span links
+    pub const DROPPED_LINKS_COUNT: &str = "dropped_links_count";
     /// Schema URL for versioning
     pub const SCHEMA_URL: &str = "schema_url";
 
@@ -80,8 +104,14 @@ pub mod otlp {
     pub const LOG_RECORDS: &str = "log_records";
     /// Array of scope logs
     pub const SCOPE_LOGS: &str = "scope_logs";
+    /// Array of scope spans
+    pub const SCOPE_SPANS: &str = "scope_spans";
     /// Array of resource logs
     pub const RESOURCE_LOGS: &str = "resource_logs";
+    /// Array of resource spans
+    pub const RESOURCE_SPANS: &str = "resource_spans";
+    /// Array of spans within a scope
+    pub const SPANS: &str = "spans";
     /// Resource container
     pub const RESOURCE: &str = "resource";
     /// Scope container
@@ -114,6 +144,10 @@ pub mod arrow {
     pub const SPAN_ID: &str = "SpanId";
     /// W3C trace flags
     pub const TRACE_FLAGS: &str = "TraceFlags";
+    /// W3C trace state
+    pub const TRACE_STATE: &str = "TraceState";
+    /// Parent span identifier
+    pub const PARENT_SPAN_ID: &str = "ParentSpanId";
 
     // Severity columns
     /// Severity level as text
@@ -128,6 +162,32 @@ pub mod arrow {
     pub const LOG_ATTRIBUTES: &str = "LogAttributes";
     /// Resource attributes map (after extraction)
     pub const RESOURCE_ATTRIBUTES: &str = "ResourceAttributes";
+    /// Span name column
+    pub const SPAN_NAME: &str = "SpanName";
+    /// Span kind column
+    pub const SPAN_KIND: &str = "SpanKind";
+    /// Span attributes column
+    pub const SPAN_ATTRIBUTES: &str = "SpanAttributes";
+    /// Span duration column
+    pub const DURATION: &str = "Duration";
+    /// Span status code column
+    pub const STATUS_CODE: &str = "StatusCode";
+    /// Span status message column
+    pub const STATUS_MESSAGE: &str = "StatusMessage";
+    /// Span events timestamp list column
+    pub const EVENTS_TIMESTAMP: &str = "EventsTimestamp";
+    /// Span events name list column
+    pub const EVENTS_NAME: &str = "EventsName";
+    /// Span events attributes list column
+    pub const EVENTS_ATTRIBUTES: &str = "EventsAttributes";
+    /// Span links trace_id list column
+    pub const LINKS_TRACE_ID: &str = "LinksTraceId";
+    /// Span links span_id list column
+    pub const LINKS_SPAN_ID: &str = "LinksSpanId";
+    /// Span links trace_state list column
+    pub const LINKS_TRACE_STATE: &str = "LinksTraceState";
+    /// Span links attributes list column
+    pub const LINKS_ATTRIBUTES: &str = "LinksAttributes";
 
     // Extracted resource attribute columns
     /// Service name (extracted from resource attributes)
