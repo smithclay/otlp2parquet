@@ -21,6 +21,7 @@ use crate::{AppError, AppState};
 enum SignalKind {
     Logs,
     Traces,
+    Metrics,
 }
 
 impl SignalKind {
@@ -28,6 +29,7 @@ impl SignalKind {
         match self {
             SignalKind::Logs => "logs",
             SignalKind::Traces => "traces",
+            SignalKind::Metrics => "metrics",
         }
     }
 }
@@ -48,6 +50,15 @@ pub(crate) async fn handle_traces(
     body: axum::body::Bytes,
 ) -> Result<Response, AppError> {
     handle_signal(SignalKind::Traces, &state, headers, body).await
+}
+
+/// POST /v1/metrics - OTLP metrics ingestion endpoint
+pub(crate) async fn handle_metrics(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<Response, AppError> {
+    handle_signal(SignalKind::Metrics, &state, headers, body).await
 }
 
 /// GET /health - Basic health check
@@ -103,7 +114,8 @@ async fn handle_signal(
 
     match signal {
         SignalKind::Logs => process_logs(state, format, body).await,
-        SignalKind::Traces => Ok(build_not_implemented_response()),
+        SignalKind::Traces => Ok(build_not_implemented_response("traces")),
+        SignalKind::Metrics => process_metrics(state, format, body).await,
     }
 }
 
@@ -180,12 +192,97 @@ async fn process_logs(
     Ok((StatusCode::OK, response).into_response())
 }
 
-fn build_not_implemented_response() -> Response {
-    warn!("Received OTLP traces request but trace ingestion is not implemented yet");
+async fn process_metrics(
+    state: &AppState,
+    format: InputFormat,
+    body: axum::body::Bytes,
+) -> Result<Response, AppError> {
+    let start = Instant::now();
+    counter!("otlp.ingest.requests", 1, "signal" => "metrics");
+    histogram!("otlp.ingest.bytes", body.len() as f64, "signal" => "metrics");
+
+    // Parse OTLP metrics request
+    let request = otlp::metrics::parse_otlp_request(&body, format)
+        .map_err(|e| e.context("Failed to parse OTLP metrics request payload"))?;
+
+    // Convert to Arrow (returns multiple batches, one per metric type)
+    let converter = otlp::metrics::ArrowConverter::new();
+    let (batches_by_type, metadata) = converter
+        .convert(request)
+        .map_err(|e| e.context("Failed to convert OTLP metrics to Arrow"))?;
+
+    if batches_by_type.is_empty() {
+        return Ok((
+            StatusCode::OK,
+            Json(json!({
+                "status": "ok",
+                "message": "No metrics data points to process",
+            })),
+        )
+            .into_response());
+    }
+
+    // Count total data points across all metric types
+    let total_data_points = metadata.gauge_count
+        + metadata.sum_count
+        + metadata.histogram_count
+        + metadata.exponential_histogram_count
+        + metadata.summary_count;
+
+    counter!("otlp.ingest.records", total_data_points as u64, "signal" => "metrics");
+
+    // Write each metric type batch to its own Parquet file
+    let mut uploaded_paths = Vec::new();
+    for (metric_type, batch) in batches_by_type {
+        let service_name = "default"; // TODO: Extract from metadata
+        let timestamp_nanos = 0; // TODO: Extract first timestamp from batch
+
+        let (partition_path, _hash) = state
+            .parquet_writer
+            .write_batches_with_signal(
+                &[batch],
+                service_name,
+                timestamp_nanos,
+                "metrics",
+                Some(&metric_type), // Use metric type as subdirectory
+            )
+            .await
+            .map_err(|e| e.context(format!("Failed to write {} metrics Parquet", metric_type)))?;
+
+        counter!("otlp.metrics.flushes", 1, "metric_type" => metric_type.clone());
+        info!(
+            "Committed metrics batch path={} metric_type={} service={}",
+            partition_path, metric_type, service_name
+        );
+        uploaded_paths.push(partition_path);
+    }
+
+    histogram!(
+        "otlp.ingest.latency_ms",
+        start.elapsed().as_secs_f64() * 1000.0,
+        "signal" => "metrics"
+    );
+
+    let response = Json(json!({
+        "status": "ok",
+        "data_points_processed": total_data_points,
+        "gauge_count": metadata.gauge_count,
+        "sum_count": metadata.sum_count,
+        "histogram_count": metadata.histogram_count,
+        "exponential_histogram_count": metadata.exponential_histogram_count,
+        "summary_count": metadata.summary_count,
+        "partitions": uploaded_paths,
+    }));
+
+    Ok((StatusCode::OK, response).into_response())
+}
+
+fn build_not_implemented_response(signal_type: &str) -> Response {
+    warn!("Received OTLP {} request but ingestion is not implemented yet", signal_type);
     (
         StatusCode::NOT_IMPLEMENTED,
         Json(json!({
-            "error": "OTLP trace ingestion not implemented yet",
+            "error": format!("OTLP {} ingestion not implemented yet", signal_type),
         })),
     )
         .into_response()
