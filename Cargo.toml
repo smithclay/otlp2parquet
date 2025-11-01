@@ -93,12 +93,24 @@ tokio = { workspace = true, optional = true, features = ["rt-multi-thread", "mac
 # Utilities
 anyhow = { workspace = true }
 
+# Memory profiling (optional, enable with --features dhat-heap)
+dhat = { version = "0.3", optional = true }
+
+[dev-dependencies]
+# Benchmarking infrastructure
+criterion = { version = "0.5", features = ["html_reports"] }
+otlp2parquet-proto = { path = "crates/otlp2parquet-proto" }
+flate2 = "1.0"
+serde_json = { workspace = true }
+prost = { workspace = true }
+
 [features]
 default = []
 cloudflare = ["otlp2parquet-cloudflare", "worker"]
 lambda = ["otlp2parquet-lambda", "lambda_runtime", "tokio"]
 server = ["otlp2parquet-server", "tokio"]
 full = ["server"]
+dhat-heap = ["dep:dhat"]
 
 [[bin]]
 name = "otlp2parquet"
@@ -109,3 +121,20 @@ path = "src/lib.rs"
 
 [build-dependencies]
 prost-build = { workspace = true }
+
+# Benchmark targets
+[[bench]]
+name = "e2e_pipeline"
+harness = false
+
+[[bench]]
+name = "decode_otlp"
+harness = false
+
+[[bench]]
+name = "transform_arrow"
+harness = false
+
+[[bench]]
+name = "parquet_write"
+harness = false

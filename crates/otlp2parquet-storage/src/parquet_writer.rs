@@ -168,6 +168,48 @@ impl ParquetWriter {
     }
 }
 
+/// Synchronous helper for benchmarking: write batches to in-memory buffer
+/// without async/storage overhead
+pub fn write_batches_to_parquet<W: Write + Send>(
+    mut writer: W,
+    batches: Vec<RecordBatch>,
+) -> Result<()> {
+    if batches.is_empty() {
+        bail!("Cannot write empty batch list");
+    }
+
+    let props = writer_properties().clone();
+    let mut arrow_writer =
+        parquet::arrow::ArrowWriter::try_new(&mut writer, batches[0].schema(), Some(props))?;
+
+    for batch in batches {
+        arrow_writer.write(&batch)?;
+    }
+    arrow_writer.close()?;
+    Ok(())
+}
+
+/// Synchronous helper for benchmarking: write batches to buffer and compute hash
+pub fn write_batches_with_hash(batches: Vec<RecordBatch>) -> Result<(Vec<u8>, Blake3Hash)> {
+    if batches.is_empty() {
+        bail!("Cannot write empty batch list");
+    }
+
+    let mut sink = HashingBuffer::new();
+    let props = writer_properties().clone();
+    {
+        let mut writer =
+            parquet::arrow::ArrowWriter::try_new(&mut sink, batches[0].schema(), Some(props))?;
+
+        for batch in batches {
+            writer.write(&batch)?;
+        }
+        writer.close()?;
+    }
+
+    Ok(sink.finish())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

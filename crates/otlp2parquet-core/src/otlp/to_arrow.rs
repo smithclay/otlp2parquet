@@ -257,6 +257,7 @@ impl ArrowConverter {
         Ok(())
     }
 
+    #[inline]
     fn build_resource_context<'a>(
         &mut self,
         resource_logs: &'a ResourceLogs,
@@ -321,6 +322,7 @@ impl ArrowConverter {
         }
     }
 
+    #[inline]
     fn build_scope_context<'a>(&self, scope_logs: &'a ScopeLogs) -> ScopeContext<'a> {
         let schema_url = if scope_logs.schema_url.is_empty() {
             None
@@ -359,6 +361,7 @@ impl ArrowConverter {
         }
     }
 
+    #[inline]
     fn append_log_record<F>(
         &mut self,
         log_record: &LogRecord,
