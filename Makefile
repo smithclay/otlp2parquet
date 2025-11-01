@@ -91,13 +91,11 @@ build-cloudflare: ## Build Cloudflare Workers WASM binary (optimized for wrangle
 		exit 1; \
 	fi
 	@mkdir -p build/worker
-	@wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
-		-o build/worker/otlp2parquet.wasm $(WASM_BINARY)
+	@wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext \
+	        -o build/worker/otlp2parquet.wasm $(WASM_BINARY)
 	@echo "==> WASM ready for wrangler at: build/worker/otlp2parquet.wasm"
 	@SIZE=$$(stat -f%z build/worker/otlp2parquet.wasm 2>/dev/null || stat -c%s build/worker/otlp2parquet.wasm 2>/dev/null); \
-	SIZE_KB=$$(echo "scale=1; $$SIZE / 1024" | bc); \
-	SIZE_MB=$$(echo "scale=3; $$SIZE / 1024 / 1024" | bc); \
-	echo "==> Optimized size: $$SIZE_KB KB ($$SIZE_MB MB)"
+	python3 -c "import sys; size=int(sys.argv[1]); print(f\"==> Optimized size: {size/1024:.1f} KB ({size/1024/1024:.3f} MB)\")" $$SIZE
 
 #
 # WASM-Specific Commands
@@ -119,8 +117,8 @@ wasm-opt: wasm ## Optimize WASM binary with wasm-opt
 		echo "  Linux: apt install binaryen or download from https://github.com/WebAssembly/binaryen/releases"; \
 		exit 1; \
 	fi
-	@wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
-		-o $(WASM_OPTIMIZED) $(WASM_BINARY)
+	@wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext \
+	        -o $(WASM_OPTIMIZED) $(WASM_BINARY)
 	@echo "==> WASM optimization complete"
 	@$(MAKE) wasm-size
 
@@ -138,28 +136,15 @@ wasm-size: ## Show WASM binary sizes
 	@echo "=================="
 	@if [ -f $(WASM_BINARY) ]; then \
 		SIZE=$$(stat -f%z $(WASM_BINARY) 2>/dev/null || stat -c%s $(WASM_BINARY) 2>/dev/null); \
-		SIZE_KB=$$(echo "scale=1; $$SIZE / 1024" | bc); \
-		SIZE_MB=$$(echo "scale=3; $$SIZE / 1024 / 1024" | bc); \
-		echo "Original:  $$SIZE_KB KB ($$SIZE_MB MB)"; \
+		python3 -c "import sys; size=int(sys.argv[1]); label=sys.argv[2]; print(f\"{label}:  {size/1024:.1f} KB ({size/1024/1024:.3f} MB)\")" $$SIZE Original; \
 	fi
 	@if [ -f $(WASM_OPTIMIZED) ]; then \
 		SIZE=$$(stat -f%z $(WASM_OPTIMIZED) 2>/dev/null || stat -c%s $(WASM_OPTIMIZED) 2>/dev/null); \
-		SIZE_KB=$$(echo "scale=1; $$SIZE / 1024" | bc); \
-		SIZE_MB=$$(echo "scale=3; $$SIZE / 1024 / 1024" | bc); \
-		echo "Optimized: $$SIZE_KB KB ($$SIZE_MB MB)"; \
+		python3 -c "import sys; size=int(sys.argv[1]); label=sys.argv[2]; print(f\"{label}: {size/1024:.1f} KB ({size/1024/1024:.3f} MB)\")" $$SIZE Optimized; \
 	fi
 	@if [ -f $(WASM_COMPRESSED) ]; then \
 		SIZE=$$(stat -f%z $(WASM_COMPRESSED) 2>/dev/null || stat -c%s $(WASM_COMPRESSED) 2>/dev/null); \
-		SIZE_KB=$$(echo "scale=1; $$SIZE / 1024" | bc); \
-		SIZE_MB=$$(echo "scale=3; $$SIZE / 1024 / 1024" | bc); \
-		MAX_SIZE=3145728; \
-		PERCENT=$$(echo "scale=1; ($$SIZE * 100) / $$MAX_SIZE" | bc); \
-		echo "Compressed: $$SIZE_KB KB ($$SIZE_MB MB) - $$PERCENT% of 3MB limit"; \
-		if [ $$SIZE -gt $$MAX_SIZE ]; then \
-			echo "WARNING: Exceeds 3MB Cloudflare Workers limit!"; \
-		else \
-			echo "✓ Within Cloudflare Workers 3MB limit"; \
-		fi \
+		python3 -c "import sys; size=int(sys.argv[1]); max_size=3145728; percent=size*100/max_size; print(f\"Compressed: {size/1024:.1f} KB ({size/1024/1024:.3f} MB) - {percent:.1f}% of 3MB limit\"); print(\"WARNING: Exceeds 3MB Cloudflare Workers limit!\" if size > max_size else \"✓ Within Cloudflare Workers 3MB limit\")" $$SIZE; \
 	fi
 	@echo ""
 
