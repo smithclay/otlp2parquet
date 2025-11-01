@@ -110,12 +110,76 @@ pub mod otlp {
     pub const RESOURCE_LOGS: &str = "resource_logs";
     /// Array of resource spans
     pub const RESOURCE_SPANS: &str = "resource_spans";
+    /// Array of resource metrics
+    pub const RESOURCE_METRICS: &str = "resource_metrics";
+    /// Array of scope metrics
+    pub const SCOPE_METRICS: &str = "scope_metrics";
+    /// Array of metrics within a scope
+    pub const METRICS: &str = "metrics";
     /// Array of spans within a scope
     pub const SPANS: &str = "spans";
     /// Resource container
     pub const RESOURCE: &str = "resource";
     /// Scope container
     pub const SCOPE: &str = "scope";
+
+    // Metrics fields
+    /// Metric name
+    pub const METRIC_NAME: &str = "name";
+    /// Metric description
+    pub const DESCRIPTION: &str = "description";
+    /// Metric unit
+    pub const UNIT: &str = "unit";
+    /// Gauge data
+    pub const GAUGE: &str = "gauge";
+    /// Sum data
+    pub const SUM: &str = "sum";
+    /// Histogram data
+    pub const HISTOGRAM: &str = "histogram";
+    /// Exponential histogram data
+    pub const EXPONENTIAL_HISTOGRAM: &str = "exponential_histogram";
+    /// Summary data
+    pub const SUMMARY: &str = "summary";
+    /// Data points
+    pub const DATA_POINTS: &str = "data_points";
+    /// Aggregation temporality
+    pub const AGGREGATION_TEMPORALITY: &str = "aggregation_temporality";
+    /// Is monotonic flag
+    pub const IS_MONOTONIC: &str = "is_monotonic";
+    /// Count field
+    pub const COUNT: &str = "count";
+    /// Bucket counts
+    pub const BUCKET_COUNTS: &str = "bucket_counts";
+    /// Explicit bounds
+    pub const EXPLICIT_BOUNDS: &str = "explicit_bounds";
+    /// Min value
+    pub const MIN: &str = "min";
+    /// Max value
+    pub const MAX: &str = "max";
+    /// Scale for exponential histogram
+    pub const SCALE: &str = "scale";
+    /// Zero count
+    pub const ZERO_COUNT: &str = "zero_count";
+    /// Positive offset
+    pub const POSITIVE_OFFSET: &str = "offset";
+    /// Positive bucket counts
+    pub const POSITIVE_BUCKET_COUNTS: &str = "bucket_counts";
+    /// Negative offset
+    pub const NEGATIVE_OFFSET: &str = "offset";
+    /// Negative bucket counts
+    pub const NEGATIVE_BUCKET_COUNTS: &str = "bucket_counts";
+    /// Positive buckets container
+    pub const POSITIVE: &str = "positive";
+    /// Negative buckets container
+    pub const NEGATIVE: &str = "negative";
+    /// Quantile values
+    pub const QUANTILE_VALUES: &str = "quantile_values";
+    /// Quantile value
+    pub const QUANTILE: &str = "quantile";
+    /// As double value
+    pub const AS_DOUBLE: &str = "as_double";
+    /// As int value
+    pub const AS_INT: &str = "as_int";
 
     // Key-value pair fields
     /// Attribute key
@@ -234,6 +298,50 @@ pub mod arrow {
     pub const VALUE: &str = "value";
     /// Map entries container
     pub const ENTRIES: &str = "entries";
+
+    // Metrics columns
+    /// Metric name column
+    pub const METRIC_NAME: &str = "MetricName";
+    /// Metric description column
+    pub const METRIC_DESCRIPTION: &str = "MetricDescription";
+    /// Metric unit column
+    pub const METRIC_UNIT: &str = "MetricUnit";
+    /// Metric attributes column
+    pub const ATTRIBUTES: &str = "Attributes";
+    /// Metric value column (for gauge and sum)
+    pub const VALUE_COL: &str = "Value";
+    /// Aggregation temporality column
+    pub const AGGREGATION_TEMPORALITY: &str = "AggregationTemporality";
+    /// Is monotonic flag column
+    pub const IS_MONOTONIC: &str = "IsMonotonic";
+    /// Count column
+    pub const COUNT: &str = "Count";
+    /// Sum column
+    pub const SUM: &str = "Sum";
+    /// Bucket counts column
+    pub const BUCKET_COUNTS: &str = "BucketCounts";
+    /// Explicit bounds column
+    pub const EXPLICIT_BOUNDS: &str = "ExplicitBounds";
+    /// Min value column
+    pub const MIN: &str = "Min";
+    /// Max value column
+    pub const MAX: &str = "Max";
+    /// Scale column
+    pub const SCALE: &str = "Scale";
+    /// Zero count column
+    pub const ZERO_COUNT: &str = "ZeroCount";
+    /// Positive offset column
+    pub const POSITIVE_OFFSET: &str = "PositiveOffset";
+    /// Positive bucket counts column
+    pub const POSITIVE_BUCKET_COUNTS: &str = "PositiveBucketCounts";
+    /// Negative offset column
+    pub const NEGATIVE_OFFSET: &str = "NegativeOffset";
+    /// Negative bucket counts column
+    pub const NEGATIVE_BUCKET_COUNTS: &str = "NegativeBucketCounts";
+    /// Quantile values column
+    pub const QUANTILE_VALUES: &str = "QuantileValues";
+    /// Quantile quantiles column
+    pub const QUANTILE_QUANTILES: &str = "QuantileQuantiles";
 }
 
 /// OpenTelemetry semantic conventions for resource attributes.

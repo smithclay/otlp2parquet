@@ -23,6 +23,14 @@ pub mod opentelemetry {
                     ));
                 }
             }
+            pub mod metrics {
+                pub mod v1 {
+                    include!(concat!(
+                        env!("OUT_DIR"),
+                        "/opentelemetry.proto.collector.metrics.v1.rs"
+                    ));
+                }
+            }
         }
         pub mod logs {
             pub mod v1 {
@@ -32,6 +40,11 @@ pub mod opentelemetry {
         pub mod trace {
             pub mod v1 {
                 include!(concat!(env!("OUT_DIR"), "/opentelemetry.proto.trace.v1.rs"));
+            }
+        }
+        pub mod metrics {
+            pub mod v1 {
+                include!(concat!(env!("OUT_DIR"), "/opentelemetry.proto.metrics.v1.rs"));
             }
         }
         pub mod common {
