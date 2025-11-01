@@ -18,7 +18,7 @@ pub struct TraceArrowConverter;
 
 impl TraceArrowConverter {
     /// Convert the supplied trace request into an Arrow record batch and metadata.
-    pub fn convert(_request: &TraceRequest) -> Result<(RecordBatch, TraceMetadata)> {
+    pub fn convert(_request: &TraceRequest) -> Result<(Vec<RecordBatch>, TraceMetadata)> {
         Err(anyhow!("trace ingestion not implemented"))
     }
 }

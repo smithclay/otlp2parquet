@@ -30,10 +30,6 @@ impl InputFormat {
                     Self::Jsonl
                 } else if ct_lower.contains("application/json") {
                     Self::Json
-                } else if ct_lower.contains("application/x-protobuf")
-                    || ct_lower.contains("application/protobuf")
-                {
-                    Self::Protobuf
                 } else {
                     Self::Protobuf
                 }

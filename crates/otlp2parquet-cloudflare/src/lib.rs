@@ -7,7 +7,9 @@
 // Entry point is #[event(fetch)] macro, not main()
 
 use once_cell::sync::OnceCell;
-use otlp2parquet_batch::{BatchConfig, BatchManager, CompletedBatch, PassthroughBatcher};
+use otlp2parquet_batch::{
+    BatchConfig, BatchManager, CompletedBatch, LogSignalProcessor, PassthroughBatcher,
+};
 use otlp2parquet_core::otlp;
 use serde_json::json;
 use std::sync::Arc;
@@ -15,8 +17,14 @@ use worker::*;
 
 static STORAGE: OnceCell<Arc<otlp2parquet_storage::opendal_storage::OpenDalStorage>> =
     OnceCell::new();
-static BATCHER: OnceCell<Option<Arc<BatchManager>>> = OnceCell::new();
+static BATCHER: OnceCell<Option<Arc<BatchManager<LogSignalProcessor>>>> = OnceCell::new();
 static MAX_PAYLOAD_BYTES: OnceCell<usize> = OnceCell::new();
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum SignalKind {
+    Logs,
+    Traces,
+}
 
 /// WASM-specific Parquet writer helper
 ///
@@ -75,9 +83,11 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
     }
 
     let path = req.path();
-    if path != "/v1/logs" {
-        return Response::error("Not found", 404);
-    }
+    let signal = match path.as_str() {
+        "/v1/logs" => SignalKind::Logs,
+        "/v1/traces" => SignalKind::Traces,
+        _ => return Response::error("Not found", 404),
+    };
 
     let storage = if let Some(existing) = STORAGE.get() {
         existing.clone()
@@ -155,7 +165,7 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
 
     let max_payload_bytes =
         *MAX_PAYLOAD_BYTES.get_or_init(|| max_payload_bytes_from_env(1024 * 1024));
-    let passthrough = PassthroughBatcher;
+    let passthrough: PassthroughBatcher<LogSignalProcessor> = PassthroughBatcher::default();
 
     let content_type_header = req.headers().get("content-type").ok().flatten();
     let content_type = content_type_header.as_deref();
@@ -170,6 +180,14 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
         return Response::error("Payload too large", 413);
     }
 
+    if matches!(signal, SignalKind::Traces) {
+        let response = Response::from_json(&json!({
+            "error": "OTLP trace ingestion not implemented yet",
+        }))?
+        .with_status(501);
+        return Ok(response);
+    }
+
     let request = otlp::parse_otlp_request(&body_bytes, format).map_err(|e| {
         console_error!(
             "Failed to parse OTLP logs (format: {:?}, content-type: {:?}): {:?}",
@@ -180,10 +198,8 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
         worker::Error::RustError(format!("Processing error: {}", e))
     })?;
 
-    let mut uploads: Vec<CompletedBatch> = Vec::new();
-    let metadata;
-
-    if let Some(manager) = batcher.as_ref() {
+    let mut uploads: Vec<CompletedBatch<otlp::LogMetadata>> = Vec::new();
+    let metadata: otlp::LogMetadata = if let Some(manager) = batcher.as_ref() {
         match manager.drain_expired() {
             Ok(mut expired) => uploads.append(&mut expired),
             Err(err) => {
@@ -195,7 +211,7 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
         match manager.ingest(&request, body_bytes.len()) {
             Ok((mut ready, meta)) => {
                 uploads.append(&mut ready);
-                metadata = meta;
+                meta
             }
             Err(err) => {
                 console_error!("Batch enqueue failed: {:?}", err);
@@ -205,15 +221,16 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
     } else {
         match passthrough.ingest(&request) {
             Ok(batch) => {
-                metadata = batch.metadata.clone();
+                let meta: otlp::LogMetadata = batch.metadata.clone();
                 uploads.push(batch);
+                meta
             }
             Err(err) => {
                 console_error!("Failed to convert OTLP to Arrow: {:?}", err);
                 return Response::error("Internal encoding failure", 500);
             }
         }
-    }
+    };
 
     let mut uploaded_paths = Vec::new();
     for batch in uploads {

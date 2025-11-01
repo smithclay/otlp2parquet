@@ -13,6 +13,12 @@ use crate::{HttpResponseData, LambdaState};
 
 const HEALTHY_TEXT: &str = "Healthy";
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum SignalKind {
+    Logs,
+    Traces,
+}
+
 /// Handle incoming HTTP request based on method and path
 pub(crate) async fn handle_http_request(
     method: &str,
@@ -38,9 +44,11 @@ async fn handle_post(
     content_type: Option<&str>,
     state: &LambdaState,
 ) -> HttpResponseData {
-    if path != "/v1/logs" {
-        return HttpResponseData::json(404, json!({ "error": "not found" }).to_string());
-    }
+    let signal = match path {
+        "/v1/logs" => SignalKind::Logs,
+        "/v1/traces" => SignalKind::Traces,
+        _ => return HttpResponseData::json(404, json!({ "error": "not found" }).to_string()),
+    };
 
     let body = match decode_body(body, is_base64_encoded) {
         Ok(bytes) => bytes,
@@ -61,7 +69,25 @@ async fn handle_post(
     // Detect input format from Content-Type header
     let format = otlp2parquet_core::InputFormat::from_content_type(content_type);
 
-    let request = match otlp::parse_otlp_request(body.as_ref(), format) {
+    match signal {
+        SignalKind::Logs => process_logs(body.as_ref(), format, content_type, state).await,
+        SignalKind::Traces => HttpResponseData::json(
+            501,
+            json!({
+                "error": "OTLP trace ingestion not implemented yet",
+            })
+            .to_string(),
+        ),
+    }
+}
+
+async fn process_logs(
+    body: &[u8],
+    format: otlp2parquet_core::InputFormat,
+    content_type: Option<&str>,
+    state: &LambdaState,
+) -> HttpResponseData {
+    let request = match otlp::parse_otlp_request(body, format) {
         Ok(req) => req,
         Err(err) => {
             eprintln!(
@@ -75,8 +101,8 @@ async fn handle_post(
         }
     };
 
-    let mut uploads: Vec<CompletedBatch> = Vec::new();
-    let metadata;
+    let mut uploads: Vec<CompletedBatch<otlp::LogMetadata>> = Vec::new();
+    let metadata: otlp::LogMetadata;
 
     if let Some(batcher) = &state.batcher {
         match batcher.drain_expired() {

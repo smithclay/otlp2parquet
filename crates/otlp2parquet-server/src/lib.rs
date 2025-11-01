@@ -31,7 +31,7 @@ use tracing::{error, info};
 mod handlers;
 mod init;
 
-use handlers::{handle_logs, health_check, ready_check};
+use handlers::{handle_logs, handle_traces, health_check, ready_check};
 use init::{init_storage, init_tracing, max_payload_bytes_from_env};
 
 /// Application state shared across all requests
@@ -151,13 +151,14 @@ pub async fn run() -> Result<()> {
         storage,
         parquet_writer,
         batcher,
-        passthrough: PassthroughBatcher,
+        passthrough: PassthroughBatcher::default(),
         max_payload_bytes,
     };
 
     // Build router
     let app = Router::new()
         .route("/v1/logs", post(handle_logs))
+        .route("/v1/traces", post(handle_traces))
         .route("/health", get(health_check))
         .route("/ready", get(ready_check))
         .with_state(state);
@@ -169,7 +170,11 @@ pub async fn run() -> Result<()> {
 
     info!("OTLP HTTP endpoint listening on http://{}", addr);
     info!("Routes:");
-    info!("  POST http://{}/v1/logs - OTLP log ingestion", addr);
+    info!("  POST http://{}/v1/logs   - OTLP log ingestion", addr);
+    info!(
+        "  POST http://{}/v1/traces - OTLP trace ingestion (not yet implemented)",
+        addr
+    );
     info!("  GET  http://{}/health  - Health check", addr);
     info!("  GET  http://{}/ready   - Readiness check", addr);
     info!("Press Ctrl+C or send SIGTERM to stop");
