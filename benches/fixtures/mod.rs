@@ -109,7 +109,7 @@ fn generate_log_record(idx: usize, base_timestamp_nanos: u64) -> LogRecord {
     let observed_timestamp_nanos = timestamp_nanos + 100_000; // 100μs observation delay
 
     // Generate trace/span IDs for about 50% of logs (realistic for traced logs)
-    let (trace_id, span_id, trace_flags) = if idx % 2 == 0 {
+    let (trace_id, span_id, trace_flags) = if idx.is_multiple_of(2) {
         let trace_id = generate_trace_id(idx);
         let span_id = generate_span_id(idx);
         (trace_id, span_id, 1u32) // Sampled
@@ -143,7 +143,7 @@ fn generate_log_record(idx: usize, base_timestamp_nanos: u64) -> LogRecord {
             key_value("file.name", "benchmark.rs"),
             key_value("code.lineno", &((idx % 1000) + 1).to_string()),
             key_value_int("request.id", (idx / 10) as i64),
-            key_value_bool("is_sampled", idx % 2 == 0),
+            key_value_bool("is_sampled", idx.is_multiple_of(2)),
         ],
         dropped_attributes_count: 0,
         flags: trace_flags,
