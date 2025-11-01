@@ -893,6 +893,10 @@ fn extract_number_value(point: &NumberDataPoint) -> Result<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::otlp::common::InputFormat;
+    use crate::otlp::metrics::parse_otlp_request;
+    use arrow::array::{ListArray, StringArray};
+    use arrow::record_batch::RecordBatch;
 
     #[test]
     fn test_converter_creation() {
@@ -1185,5 +1189,145 @@ mod tests {
         assert!(batch_types.contains(&"gauge"));
         assert!(batch_types.contains(&"sum"));
         assert!(batch_types.contains(&"histogram"));
+    }
+
+    fn convert_fixture(bytes: &[u8]) -> (Vec<(String, RecordBatch)>, MetricsMetadata) {
+        let request = parse_otlp_request(bytes, InputFormat::Protobuf).unwrap();
+        ArrowConverter::new().convert(request).unwrap()
+    }
+
+    fn find_batch<'a>(batches: &'a [(String, RecordBatch)], ty: &str) -> &'a RecordBatch {
+        batches
+            .iter()
+            .find(|(name, _)| name == ty)
+            .map(|(_, batch)| batch)
+            .expect("expected metric batch")
+    }
+
+    #[test]
+    fn converts_gauge_protobuf_fixture() {
+        let bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/metrics_gauge.pb"
+        ));
+        let (batches, metadata) = convert_fixture(bytes);
+
+        assert_eq!(metadata.resource_metrics_count, 1);
+        assert_eq!(metadata.scope_metrics_count, 1);
+        assert_eq!(metadata.gauge_count, 3);
+        assert_eq!(metadata.sum_count, 0);
+
+        let batch = find_batch(&batches, "gauge");
+        assert_eq!(batch.num_rows(), 3);
+        let service_names = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        for row in 0..service_names.len() {
+            assert_eq!(service_names.value(row), "demo-service");
+        }
+    }
+
+    #[test]
+    fn converts_sum_protobuf_fixture() {
+        let bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/metrics_sum.pb"
+        ));
+        let (batches, metadata) = convert_fixture(bytes);
+
+        assert_eq!(metadata.resource_metrics_count, 1);
+        assert_eq!(metadata.scope_metrics_count, 1);
+        assert_eq!(metadata.sum_count, 4);
+        assert_eq!(metadata.gauge_count, 0);
+
+        let batch = find_batch(&batches, "sum");
+        assert_eq!(batch.num_rows(), 4);
+        let service_names = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        for row in 0..service_names.len() {
+            assert_eq!(service_names.value(row), "api-gateway");
+        }
+    }
+
+    #[test]
+    fn converts_histogram_protobuf_fixture() {
+        let bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/metrics_histogram.pb"
+        ));
+        let (batches, metadata) = convert_fixture(bytes);
+
+        assert_eq!(metadata.histogram_count, 3);
+        assert_eq!(metadata.resource_metrics_count, 1);
+
+        let batch = find_batch(&batches, "histogram");
+        assert_eq!(batch.num_rows(), 3);
+        let service_names = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        for row in 0..service_names.len() {
+            assert_eq!(service_names.value(row), "api-gateway");
+        }
+    }
+
+    #[test]
+    fn converts_exponential_histogram_protobuf_fixture() {
+        let bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/metrics_exponential_histogram.pb"
+        ));
+        let (batches, metadata) = convert_fixture(bytes);
+
+        assert_eq!(metadata.exponential_histogram_count, 2);
+        assert_eq!(metadata.resource_metrics_count, 1);
+
+        let batch = find_batch(&batches, "exponential_histogram");
+        assert_eq!(batch.num_rows(), 2);
+        let service_names = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        for row in 0..service_names.len() {
+            assert_eq!(service_names.value(row), "payment-service");
+        }
+    }
+
+    #[test]
+    fn converts_summary_protobuf_fixture() {
+        let bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/metrics_summary.pb"
+        ));
+        let (batches, metadata) = convert_fixture(bytes);
+
+        assert_eq!(metadata.summary_count, 2);
+        assert_eq!(metadata.resource_metrics_count, 1);
+
+        let batch = find_batch(&batches, "summary");
+        assert_eq!(batch.num_rows(), 2);
+        let service_names = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        for row in 0..service_names.len() {
+            assert_eq!(service_names.value(row), "analytics-service");
+        }
+
+        let quantiles = batch
+            .column(11)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        assert_eq!(quantiles.value_length(0), 6);
+        assert_eq!(quantiles.value_length(1), 6);
     }
 }

@@ -23,6 +23,7 @@
             "name": "system-instrumentation",
             "version": "1.0.0"
           },
+          "schemaUrl": "",
           "metrics": [
             {
               "name": "system.cpu.utilization",
@@ -91,7 +92,8 @@
             }
           ]
         }
-      ]
+      ],
+      "schemaUrl": ""
     }
   ]
 }

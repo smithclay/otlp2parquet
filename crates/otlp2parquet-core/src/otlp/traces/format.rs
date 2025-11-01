@@ -174,6 +174,38 @@ mod tests {
     }
 
     #[test]
+    fn parses_protobuf_trace_fixture() {
+        let proto_bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/trace.pb"
+        ));
+
+        let request =
+            parse_otlp_trace_request(proto_bytes, InputFormat::Protobuf).expect("protobuf decode");
+
+        assert_eq!(request.resource_spans.len(), 1);
+        let scope_spans = &request.resource_spans[0].scope_spans;
+        assert_eq!(scope_spans.len(), 1);
+        let span_total: usize = scope_spans.iter().map(|scope| scope.spans.len()).sum();
+        assert_eq!(span_total, 2);
+
+        let service_name = request.resource_spans[0]
+            .resource
+            .as_ref()
+            .and_then(|resource| {
+                resource
+                    .attributes
+                    .iter()
+                    .find(|attr| attr.key == semconv::SERVICE_NAME)
+            })
+            .and_then(|attr| attr.value.as_ref())
+            .and_then(any_value_string)
+            .unwrap();
+
+        assert_eq!(service_name, "frontend-proxy");
+    }
+
+    #[test]
     fn any_value_deserializes_from_canonical_shape() {
         let mut json: JsonValue = serde_json::from_str(r#"{"stringValue":"example"}"#).unwrap();
         normalise_json_value(&mut json, Some(otlp::VALUE)).unwrap();
