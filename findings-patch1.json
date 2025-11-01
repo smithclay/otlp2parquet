@@ -12,9 +12,9 @@
     "baseline": "base"
   },
   "metrics": {
-    "e2e_ms_p50": 1755.77,
-    "e2e_ms_p95": 1811.17,
-    "throughput_rows_per_s": 5695.51,
+    "e2e_ms_p50": 1793.86,
+    "e2e_ms_p95": 1837.85,
+    "throughput_rows_per_s": 5574.56,
     "alloc_bytes_total": 0,
     "max_rss_mb": 0.0,
     "lambda": {
@@ -50,6 +50,12 @@
     },
     {
       "type": "alloc_bloat",
+      "detail": "Found 16 builders without capacity hints",
+      "file": "crates/otlp2parquet-core/src/otlp/to_arrow.rs:64-108",
+      "proposed_fix": "Add with_capacity() hints based on expected batch sizes to reduce reallocation"
+    },
+    {
+      "type": "alloc_bloat",
       "detail": "JSON serialization used for complex AnyValue types (arrays/maps)",
       "file": "crates/otlp2parquet-core/src/otlp/any_value_builder.rs:68-82",
       "proposed_fix": "Consider using Arrow native List/Map types instead of JSON strings"
@@ -62,6 +68,11 @@
     }
   ],
   "next_actions": [
+    {
+      "priority": 2,
+      "title": "Pre-allocate builders with capacity hints",
+      "diff_hint": "ArrowConverter::new() should call .with_capacity(estimated_rows) on all builders"
+    },
     {
       "priority": 3,
       "title": "Optimize service_name extraction to avoid clones",

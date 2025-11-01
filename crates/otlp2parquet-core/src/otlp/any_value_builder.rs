@@ -27,6 +27,7 @@ struct AnyValueFieldIndexes {
 /// - Type: string indicating the variant type
 /// - StringValue, BoolValue, IntValue, DoubleValue, BytesValue: scalar values
 /// - JsonValue: JSON-serialized representation of arrays and maps
+#[inline]
 pub(super) fn append_any_value(
     builder: &mut StructBuilder,
     any_val: Option<&AnyValue>,
@@ -56,6 +57,7 @@ pub(super) fn any_value_string(any_val: &AnyValue) -> Option<&str> {
 }
 
 /// Convert OTLP AnyValue to serde_json::Value for JSON serialization
+#[inline]
 pub(super) fn any_value_to_json_value(any_val: &AnyValue) -> JsonValue {
     match any_val.value.as_ref() {
         Some(any_value::Value::StringValue(s)) => JsonValue::String(s.clone()),
@@ -66,10 +68,14 @@ pub(super) fn any_value_to_json_value(any_val: &AnyValue) -> JsonValue {
             .unwrap_or_else(|| JsonValue::String(d.to_string())),
         Some(any_value::Value::BytesValue(b)) => JsonValue::String(format!("bytes:{}", b.len())),
         Some(any_value::Value::ArrayValue(arr)) => {
-            JsonValue::Array(arr.values.iter().map(any_value_to_json_value).collect())
+            let mut values = Vec::with_capacity(arr.values.len());
+            for val in &arr.values {
+                values.push(any_value_to_json_value(val));
+            }
+            JsonValue::Array(values)
         }
         Some(any_value::Value::KvlistValue(kv)) => {
-            let mut map = JsonMap::new();
+            let mut map = JsonMap::with_capacity(kv.values.len());
             for entry in &kv.values {
                 let value = entry
                     .value
@@ -84,6 +90,7 @@ pub(super) fn any_value_to_json_value(any_val: &AnyValue) -> JsonValue {
     }
 }
 
+#[inline]
 fn append_present_any_value(
     builder: &mut StructBuilder,
     inner: &any_value::Value,
@@ -117,20 +124,22 @@ fn append_present_any_value(
             "bytes"
         }
         any_value::Value::ArrayValue(arr) => {
-            json_value = Some(serde_json::to_string(&JsonValue::Array(
-                arr.values.iter().map(any_value_to_json_value).collect(),
-            ))?);
+            let mut values = Vec::with_capacity(arr.values.len());
+            for val in &arr.values {
+                values.push(any_value_to_json_value(val));
+            }
+            json_value = Some(serde_json::to_string(&JsonValue::Array(values))?);
             "array"
         }
         any_value::Value::KvlistValue(kv) => {
-            let mut map = JsonMap::new();
-            for kv in &kv.values {
-                let value_json = kv
+            let mut map = JsonMap::with_capacity(kv.values.len());
+            for entry in &kv.values {
+                let value_json = entry
                     .value
                     .as_ref()
                     .map(any_value_to_json_value)
                     .unwrap_or(JsonValue::Null);
-                map.insert(kv.key.clone(), value_json);
+                map.insert(entry.key.clone(), value_json);
             }
             json_value = Some(serde_json::to_string(&JsonValue::Object(map))?);
             "kvlist"
@@ -148,6 +157,7 @@ fn append_present_any_value(
     Ok(())
 }
 
+#[inline]
 fn append_null_any_value(builder: &mut StructBuilder, indexes: AnyValueFieldIndexes) -> Result<()> {
     append_optional_string(builder, indexes.type_idx, None)?;
     append_optional_string(builder, indexes.string_idx, None)?;
@@ -160,6 +170,7 @@ fn append_null_any_value(builder: &mut StructBuilder, indexes: AnyValueFieldInde
     Ok(())
 }
 
+#[inline(always)]
 fn append_required_string(builder: &mut StructBuilder, index: usize, value: &str) -> Result<()> {
     let field = builder
         .field_builder::<StringBuilder>(index)
@@ -173,6 +184,7 @@ fn append_required_string(builder: &mut StructBuilder, index: usize, value: &str
     Ok(())
 }
 
+#[inline(always)]
 fn append_optional_string(
     builder: &mut StructBuilder,
     index: usize,
@@ -193,6 +205,7 @@ fn append_optional_string(
     Ok(())
 }
 
+#[inline(always)]
 fn append_optional_bool(
     builder: &mut StructBuilder,
     index: usize,
@@ -213,6 +226,7 @@ fn append_optional_bool(
     Ok(())
 }
 
+#[inline(always)]
 fn append_optional_i64(
     builder: &mut StructBuilder,
     index: usize,
@@ -233,6 +247,7 @@ fn append_optional_i64(
     Ok(())
 }
 
+#[inline(always)]
 fn append_optional_f64(
     builder: &mut StructBuilder,
     index: usize,
@@ -253,6 +268,7 @@ fn append_optional_f64(
     Ok(())
 }
 
+#[inline(always)]
 fn append_optional_bytes(
     builder: &mut StructBuilder,
     index: usize,
@@ -273,6 +289,7 @@ fn append_optional_bytes(
     Ok(())
 }
 
+#[inline(always)]
 fn append_optional_json(
     builder: &mut StructBuilder,
     index: usize,

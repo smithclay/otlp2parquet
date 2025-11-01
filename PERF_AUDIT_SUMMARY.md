@@ -54,10 +54,18 @@ make profile-all        # Run all profiling tools
 uv run scripts/perf_audit.py
 ```
 
+**What it does automatically:**
+1. Runs `cargo bench` (all benchmarks - takes 5-10 min)
+2. Runs `cargo bloat` (binary size analysis)
+3. Performs static code analysis
+4. Generates structured JSON report
+
 **Outputs:**
 - `findings.json` - Complete metrics + findings
 - `bloat.txt` - Binary size breakdown
 - `target/criterion/report/index.html` - Interactive benchmark results
+
+**Note:** You don't need to run `make bench` separately - the script does it for you!
 
 ### 4. Optimization Patches (Ready to Apply)
 
@@ -107,17 +115,27 @@ From static analysis (`findings.json`):
 
 ## 🚀 Quick Start Guide
 
-### Run Baseline Benchmarks
+### Run Complete Automated Audit
 
 ```bash
-# Run all benchmarks (takes ~5-10 minutes)
-make bench
-
-# Or run specific benchmark
-cargo bench --features server --bench e2e_pipeline
+# ONE COMMAND - does everything automatically:
+./scripts/perf_audit.py
+# ↑ Runs benchmarks, profiling, analysis - takes 5-10 minutes
 
 # View results
-open target/criterion/report/index.html
+cat findings.json              # Structured metrics
+open target/criterion/report/index.html  # Interactive charts
+```
+
+### Or Run Benchmarks Manually
+
+```bash
+# If you want just the benchmarks without analysis:
+make bench                     # All benchmarks
+cargo bench --features server --bench e2e_pipeline  # Specific benchmark
+
+# Then run analysis separately:
+./scripts/perf_audit.py        # Generates findings.json
 ```
 
 ### Apply Optimizations & Measure

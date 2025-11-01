@@ -12,9 +12,9 @@
     "baseline": "base"
   },
   "metrics": {
-    "e2e_ms_p50": 1755.77,
-    "e2e_ms_p95": 1811.17,
-    "throughput_rows_per_s": 5695.51,
+    "e2e_ms_p50": 1772.58,
+    "e2e_ms_p95": 1814.82,
+    "throughput_rows_per_s": 5641.5,
     "alloc_bytes_total": 0,
     "max_rss_mb": 0.0,
     "lambda": {

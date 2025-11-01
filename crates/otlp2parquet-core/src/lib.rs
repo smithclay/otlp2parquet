@@ -69,9 +69,41 @@ pub fn parse_otlp_to_arrow(
 pub fn convert_request_to_arrow(
     request: &otlp2parquet_proto::opentelemetry::proto::collector::logs::v1::ExportLogsServiceRequest,
 ) -> Result<(RecordBatch, LogMetadata)> {
-    let mut converter = otlp::ArrowConverter::new();
+    let capacity_hint = estimate_request_row_count(request);
+    convert_request_to_arrow_with_capacity(request, capacity_hint)
+}
+
+/// Variant of `convert_request_to_arrow` that accepts an explicit capacity hint for pre-allocation.
+///
+/// Callers that already know approximately how many log records will be produced can use this to
+/// avoid recomputing the count inside the converter.
+pub fn convert_request_to_arrow_with_capacity(
+    request: &otlp2parquet_proto::opentelemetry::proto::collector::logs::v1::ExportLogsServiceRequest,
+    capacity_hint: usize,
+) -> Result<(RecordBatch, LogMetadata)> {
+    let mut converter = otlp::ArrowConverter::with_capacity(capacity_hint.max(1));
     converter.add_from_request(request)?;
     converter.finish()
+}
+
+/// Estimate the number of log records contained in an OTLP request.
+///
+/// This is used to size Arrow builders before conversion. The count is exact because the OTLP
+/// schema exposes log record vectors directly.
+pub fn estimate_request_row_count(
+    request: &otlp2parquet_proto::opentelemetry::proto::collector::logs::v1::ExportLogsServiceRequest,
+) -> usize {
+    request
+        .resource_logs
+        .iter()
+        .map(|resource_logs| {
+            resource_logs
+                .scope_logs
+                .iter()
+                .map(|scope_logs| scope_logs.log_records.len())
+                .sum::<usize>()
+        })
+        .sum()
 }
 
 #[cfg(test)]
@@ -100,7 +132,7 @@ mod tests {
 
         let (batch, metadata) = result.unwrap();
         assert_eq!(batch.num_rows(), 0);
-        assert_eq!(metadata.service_name, "unknown");
+        assert_eq!(metadata.service_name.as_ref(), "");
         assert_eq!(metadata.record_count, 0);
     }
 }

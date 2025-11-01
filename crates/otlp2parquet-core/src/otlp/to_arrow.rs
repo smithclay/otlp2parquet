@@ -26,7 +26,7 @@ use super::builder_helpers::{
 /// Metadata extracted during OTLP parsing
 #[derive(Debug, Clone)]
 pub struct LogMetadata {
-    pub service_name: String,
+    pub service_name: Arc<str>,
     pub first_timestamp_nanos: i64,
     pub record_count: usize,
 }
@@ -55,54 +55,63 @@ pub struct ArrowConverter {
     log_attributes_builder: MapBuilder<StringBuilder, StructBuilder>,
 
     // Metadata tracking (not part of schema)
-    service_name: String,
+    service_name: Arc<str>,
     first_timestamp: Option<i64>,
     current_row_count: usize,
 }
 
+/// Default capacity for builders when expected row count is unknown
+const DEFAULT_BUILDER_CAPACITY: usize = 1024;
+
 impl ArrowConverter {
+    /// Create a new ArrowConverter with default capacity
     pub fn new() -> Self {
+        Self::with_capacity(DEFAULT_BUILDER_CAPACITY)
+    }
+
+    /// Create a new ArrowConverter with specified capacity hint
+    pub fn with_capacity(capacity: usize) -> Self {
         let schema = otel_logs_schema_arc();
 
         Self {
-            timestamp_builder: TimestampNanosecondBuilder::new()
+            timestamp_builder: TimestampNanosecondBuilder::with_capacity(capacity)
                 .with_timezone("UTC")
                 .with_data_type(schema.field(0).data_type().clone()),
-            timestamp_time_builder: TimestampSecondBuilder::new()
+            timestamp_time_builder: TimestampSecondBuilder::with_capacity(capacity)
                 .with_timezone("UTC")
                 .with_data_type(schema.field(1).data_type().clone()),
-            observed_timestamp_builder: TimestampNanosecondBuilder::new()
+            observed_timestamp_builder: TimestampNanosecondBuilder::with_capacity(capacity)
                 .with_timezone("UTC")
                 .with_data_type(schema.field(2).data_type().clone()),
-            trace_id_builder: FixedSizeBinaryBuilder::new(TRACE_ID_SIZE),
-            span_id_builder: FixedSizeBinaryBuilder::new(SPAN_ID_SIZE),
-            trace_flags_builder: UInt32Builder::new(),
-            severity_text_builder: StringBuilder::new(),
-            severity_number_builder: Int32Builder::new(),
+            trace_id_builder: FixedSizeBinaryBuilder::with_capacity(capacity, TRACE_ID_SIZE),
+            span_id_builder: FixedSizeBinaryBuilder::with_capacity(capacity, SPAN_ID_SIZE),
+            trace_flags_builder: UInt32Builder::with_capacity(capacity),
+            severity_text_builder: StringBuilder::with_capacity(capacity, capacity * 20),
+            severity_number_builder: Int32Builder::with_capacity(capacity),
             body_builder: new_any_value_struct_builder(),
-            service_name_builder: StringBuilder::new(),
-            service_namespace_builder: StringBuilder::new(),
-            service_instance_id_builder: StringBuilder::new(),
-            resource_schema_url_builder: StringBuilder::new(),
-            scope_name_builder: StringBuilder::new(),
-            scope_version_builder: StringBuilder::new(),
+            service_name_builder: StringBuilder::with_capacity(capacity, capacity * 32),
+            service_namespace_builder: StringBuilder::with_capacity(capacity, capacity * 32),
+            service_instance_id_builder: StringBuilder::with_capacity(capacity, capacity * 32),
+            resource_schema_url_builder: StringBuilder::with_capacity(capacity, capacity * 64),
+            scope_name_builder: StringBuilder::with_capacity(capacity, capacity * 32),
+            scope_version_builder: StringBuilder::with_capacity(capacity, capacity * 16),
             scope_attributes_builder: MapBuilder::new(
                 Some(map_field_names()),
-                StringBuilder::new(),
+                StringBuilder::with_capacity(capacity * 4, capacity * 64),
                 new_any_value_struct_builder(),
             ),
-            scope_schema_url_builder: StringBuilder::new(),
+            scope_schema_url_builder: StringBuilder::with_capacity(capacity, capacity * 64),
             resource_attributes_builder: MapBuilder::new(
                 Some(map_field_names()),
-                StringBuilder::new(),
+                StringBuilder::with_capacity(capacity * 8, capacity * 128),
                 new_any_value_struct_builder(),
             ),
             log_attributes_builder: MapBuilder::new(
                 Some(map_field_names()),
-                StringBuilder::new(),
+                StringBuilder::with_capacity(capacity * 16, capacity * 256),
                 new_any_value_struct_builder(),
             ),
-            service_name: String::new(),
+            service_name: Arc::from(""),
             first_timestamp: None,
             current_row_count: 0,
         }
@@ -190,11 +199,7 @@ impl ArrowConverter {
         // Build metadata from tracked values
         let record_count = batch.num_rows();
         let metadata = LogMetadata {
-            service_name: if self.service_name.is_empty() {
-                "unknown".to_string()
-            } else {
-                self.service_name
-            },
+            service_name: Arc::clone(&self.service_name),
             first_timestamp_nanos: self.first_timestamp.unwrap_or(0),
             record_count,
         };
@@ -287,7 +292,7 @@ impl ArrowConverter {
                         "service.name" => {
                             if let Some(val) = any_value_string(value) {
                                 if self.service_name.is_empty() {
-                                    val.clone_into(&mut self.service_name);
+                                    self.service_name = Arc::from(val);
                                 }
                                 service_fields.name = Some(val);
                             }
@@ -409,7 +414,7 @@ impl ArrowConverter {
         let fallback_name = if self.service_name.is_empty() {
             ""
         } else {
-            self.service_name.as_str()
+            self.service_name.as_ref()
         };
         let service_name = resource_ctx.service.name.unwrap_or(fallback_name);
         self.service_name_builder.append_value(service_name);

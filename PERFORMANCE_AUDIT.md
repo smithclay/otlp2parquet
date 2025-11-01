@@ -5,13 +5,14 @@ Comprehensive benchmarking and profiling infrastructure for measuring and optimi
 ## Quick Start
 
 ```bash
-# Run complete automated audit (benchmarks + profiling + analysis)
+# Run complete automated audit (runs benchmarks + profiling + analysis automatically)
 ./scripts/perf_audit.py
+# ↑ This does everything: cargo bench, cargo bloat, analysis, generates findings.json
 
-# Or manually run individual tools
-make bench-baseline          # Save benchmark baseline
+# Or manually run individual tools if you want finer control
+make bench                  # Just run benchmarks
 make profile-all            # Run all profiling tools
-make bench-compare          # Compare against baseline
+make flamegraph             # CPU profiling only
 ```
 
 ## Infrastructure Overview
@@ -115,15 +116,15 @@ Will output allocation profile showing:
 
 **Location**: `scripts/perf_audit.py`
 
-Runs complete audit pipeline:
-1. Benchmark all workloads
-2. Parse Criterion JSON results
-3. Run cargo bloat analysis
-4. Analyze for common performance issues
-5. Generate `findings.json` with metrics + recommendations
+**Runs complete audit pipeline automatically** (no need to run `make bench` first):
+1. ✅ **Runs `cargo bench`** - All benchmarks (5-10 minutes)
+2. ✅ Parse Criterion JSON results
+3. ✅ **Runs `cargo bloat`** - Binary size analysis
+4. ✅ Static code analysis for performance anti-patterns
+5. ✅ Generate `findings.json` with metrics + recommendations
 
 ```bash
-# Run with uv (recommended)
+# Run with uv (recommended) - does EVERYTHING automatically
 ./scripts/perf_audit.py
 
 # Or with Python directly
@@ -131,6 +132,8 @@ python3 scripts/perf_audit.py
 ```
 
 **Output**: `findings.json` - Structured performance report
+
+**Note**: The script runs benchmarks for you - you don't need to run `make bench` separately!
 
 ```json
 {
@@ -199,11 +202,13 @@ git apply --check patches/001-add-inline-annotations.patch
 
 ### Before Optimization
 ```bash
-# 1. Save baseline
-cargo bench --features server -- --save-baseline before
+# Option A: Automated (recommended)
+./scripts/perf_audit.py              # Runs benchmarks + analysis automatically
+cp findings.json findings-before.json
 
-# 2. Record metrics
-./scripts/perf_audit.py
+# Option B: Manual control
+cargo bench --features server        # Run benchmarks manually
+./scripts/perf_audit.py              # Still need this for analysis + findings.json
 cp findings.json findings-before.json
 ```
 
