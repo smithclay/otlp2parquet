@@ -1,8 +1,8 @@
 # otlp2parquet - Agentic Coding Instructions
-**Universal OTel Logs & Metrics Ingestion Pipeline (Rust)**
+**Universal OTel Logs, Metrics & Traces Ingestion Pipeline (Rust)**
 
 ## Mission
-Build a Rust binary that ingests OpenTelemetry logs and metrics via OTLP HTTP (protobuf/JSON/JSONL), converts to Arrow RecordBatch, writes Parquet files to object storage. Must compile to <3MB compressed WASM for Cloudflare Workers free plan AND native binary for AWS Lambda.
+Build a Rust binary that ingests OpenTelemetry logs, metrics, and traces via OTLP HTTP (protobuf/JSON/JSONL), converts to Arrow RecordBatch, writes Parquet files to object storage. Must compile to <3MB compressed WASM for Cloudflare Workers free plan AND native binary for AWS Lambda.
 
 ---
 
@@ -50,8 +50,11 @@ Build a Rust binary that ingests OpenTelemetry logs and metrics via OTLP HTTP (p
 - Partition: `metrics/{type}/{service}/year={year}/month={month}/day={day}/hour={hour}/file.parquet`
 - Each metric type written to its own file for schema homogeneity
 
-### ❌ Traces
-- Not yet implemented
+### ✅ Traces
+- Full OTLP traces ingestion (protobuf, JSON, JSONL)
+- Single Parquet schema per batch with ClickHouse-compatible fields
+- Partition: `traces/{service}/year={year}/month={month}/day={day}/hour={hour}/file.parquet`
+- Includes spans with events, links, attributes, and status
 
 
 ## Notes for AI Agent

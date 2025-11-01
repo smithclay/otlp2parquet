@@ -1,9 +1,9 @@
 # otlp2parquet
 
-`otlp2parquet` is a multi-platform tool for ingesting OpenTelemetry logs and metrics, converting them to Apache Parquet format, and storing them efficiently in object storage. It's designed for high performance and cost-effectiveness, with a ClickHouse-compatible schema.
+`otlp2parquet` is a multi-platform tool for ingesting OpenTelemetry logs, metrics, and traces, converting them to Apache Parquet format, and storing them efficiently in object storage. It's designed for high performance and cost-effectiveness, with a ClickHouse-compatible schema.
 
 **Key Features:**
-*   Ingests OTLP HTTP (protobuf, JSON, or JSONL) for logs and metrics.
+*   Ingests OTLP HTTP (protobuf, JSON, or JSONL) for logs, metrics, and traces.
 *   Converts to Apache Arrow RecordBatch and writes Parquet files.
 *   Supports Docker, Cloudflare Workers (WASM), and AWS Lambda deployments.
 *   Separate Parquet files per metric type for optimal query performance.
@@ -16,7 +16,7 @@
 | :----------------- | :----------------- | :----------------- | :--------- |
 | OTLP Logs Ingestion | ✅ | ✅ | ✅ |
 | OTLP Metrics Ingestion | ✅ | ✅ | ✅ |
-| OTLP Traces Ingestion | ❌ | ❌ | ❌ |
+| OTLP Traces Ingestion | ✅ | ✅ | ✅ |
 | Parquet Conversion | ✅ | ✅ | ✅ |
 | ClickHouse Schema | ✅ | ✅ | ✅ |
 | OpenDAL Storage | ✅ (Multi-backend) | ✅ (R2) | ✅ (S3) |

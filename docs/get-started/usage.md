@@ -1,6 +1,6 @@
 # Usage
 
-Once `otlp2parquet` is deployed, you can start sending OpenTelemetry logs and metrics, then query the resulting Parquet files.
+Once `otlp2parquet` is deployed, you can start sending OpenTelemetry logs, metrics, and traces, then query the resulting Parquet files.
 
 ## Send Logs
 
@@ -58,6 +58,27 @@ The response includes counts per metric type:
 }
 ```
 
+## Send Traces
+
+Send traces to the `/v1/traces` endpoint:
+
+```bash
+# Protobuf format
+curl -X POST http://localhost:4318/v1/traces \
+  -H "Content-Type: application/x-protobuf" \
+  --data-binary @traces.pb
+
+# JSON format
+curl -X POST http://localhost:4318/v1/traces \
+  -H "Content-Type: application/json" \
+  -d @traces.json
+
+# JSONL format
+curl -X POST http://localhost:4318/v1/traces \
+  -H "Content-Type: application/x-ndjson" \
+  --data-binary @traces.jsonl
+```
+
 ## Query with DuckDB
 
 ### Logs
@@ -107,6 +128,31 @@ UNION ALL
 SELECT 'sum', COUNT(*) FROM read_parquet('s3://otlp-logs/metrics/sum/**/*.parquet')
 UNION ALL
 SELECT 'histogram', COUNT(*) FROM read_parquet('s3://otlp-logs/metrics/histogram/**/*.parquet');
+```
+
+### Traces
+
+Traces are partitioned by service: `traces/{service}/year={yyyy}/month={mm}/day={dd}/hour={hh}/{timestamp}-{hash}.parquet`
+
+```sql
+-- Query spans with basic fields
+SELECT Timestamp, ServiceName, TraceId, SpanId, ParentSpanId,
+       Name, Kind, StatusCode
+FROM read_parquet('s3://otlp-logs/traces/**/*.parquet')
+ORDER BY Timestamp DESC LIMIT 10;
+
+-- Find slow traces (duration > 1 second)
+SELECT TraceId, ServiceName, Name,
+       (EndTimeUnixNano - StartTimeUnixNano) / 1e9 as duration_seconds
+FROM read_parquet('s3://otlp-logs/traces/**/*.parquet')
+WHERE (EndTimeUnixNano - StartTimeUnixNano) > 1000000000
+ORDER BY duration_seconds DESC;
+
+-- Query spans for a specific service
+SELECT Timestamp, Name, Kind, StatusCode, Attributes
+FROM read_parquet('s3://otlp-logs/traces/**/*.parquet')
+WHERE ServiceName = 'my-service'
+ORDER BY Timestamp DESC LIMIT 10;
 ```
 
 ## Troubleshooting
