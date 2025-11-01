@@ -127,6 +127,13 @@ pub(crate) fn normalise_json_value(value: &mut JsonValue, key_hint: Option<&str>
                     .or_insert_with(|| JsonValue::Array(Vec::new()));
             }
 
+            if let Some(otlp::VALUE) = key_hint {
+                if !map.contains_key(otlp::VALUE) {
+                    let inner = JsonValue::Object(std::mem::take(map));
+                    map.insert(otlp::VALUE.to_string(), inner);
+                }
+            }
+
             if let Some(otlp::RESOURCE) = key_hint {
                 map.entry(otlp::DROPPED_ATTRIBUTES_COUNT.to_string())
                     .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u32)));
@@ -154,6 +161,8 @@ pub(crate) fn normalise_json_value(value: &mut JsonValue, key_hint: Option<&str>
                     .or_insert_with(|| JsonValue::Array(Vec::new()));
                 map.entry(otlp::TRACE_STATE.to_string())
                     .or_insert_with(|| JsonValue::String(String::new()));
+                map.entry(otlp::FLAGS.to_string())
+                    .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u32)));
                 map.entry(otlp::NAME.to_string())
                     .or_insert_with(|| JsonValue::String(String::new()));
                 map.entry(otlp::KIND.to_string())
@@ -350,7 +359,6 @@ fn camel_to_snake_case(input: &str) -> String {
     result
 }
 
-/// Convert snake_case to PascalCase
 fn snake_to_pascal_case(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut capitalize_next = true;

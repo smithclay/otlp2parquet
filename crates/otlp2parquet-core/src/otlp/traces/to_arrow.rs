@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use arrow::array::{
     Int64Builder, ListBuilder, MapBuilder, RecordBatch, StringBuilder, TimestampNanosecondBuilder,
 };
+use arrow::datatypes::DataType;
 use otlp2parquet_proto::opentelemetry::proto::{
     collector::trace::v1::ExportTraceServiceRequest,
     common::v1::{any_value, AnyValue, InstrumentationScope, KeyValue},
@@ -103,8 +104,42 @@ impl TraceArrowBuilder {
             .with_timezone("UTC")
             .with_data_type(schema.field(0).data_type().clone());
 
-        let events_timestamp_values =
-            TimestampNanosecondBuilder::with_capacity(capacity * 4).with_timezone("UTC");
+        let events_timestamp_field = match schema.field(15).data_type() {
+            DataType::List(field) => field.clone(),
+            _ => unreachable!("unexpected data type for events timestamp list"),
+        };
+        let events_name_field = match schema.field(16).data_type() {
+            DataType::List(field) => field.clone(),
+            _ => unreachable!("unexpected data type for events name list"),
+        };
+        let events_attributes_field = match schema.field(17).data_type() {
+            DataType::List(field) => field.clone(),
+            _ => unreachable!("unexpected data type for events attributes list"),
+        };
+        let links_trace_id_field = match schema.field(18).data_type() {
+            DataType::List(field) => field.clone(),
+            _ => unreachable!("unexpected data type for links trace id list"),
+        };
+        let links_span_id_field = match schema.field(19).data_type() {
+            DataType::List(field) => field.clone(),
+            _ => unreachable!("unexpected data type for links span id list"),
+        };
+        let links_trace_state_field = match schema.field(20).data_type() {
+            DataType::List(field) => field.clone(),
+            _ => unreachable!("unexpected data type for links trace state list"),
+        };
+        let links_attributes_field = match schema.field(21).data_type() {
+            DataType::List(field) => field.clone(),
+            _ => unreachable!("unexpected data type for links attributes list"),
+        };
+
+        let events_timestamp_values = TimestampNanosecondBuilder::with_capacity(capacity * 4)
+            .with_timezone("UTC")
+            .with_data_type(events_timestamp_field.data_type().clone());
+
+        let events_timestamp_builder =
+            ListBuilder::with_capacity(events_timestamp_values, capacity)
+                .with_field(events_timestamp_field.clone());
 
         let events_attributes_values = MapBuilder::new(
             Some(map_field_names()),
@@ -112,11 +147,36 @@ impl TraceArrowBuilder {
             StringBuilder::new(),
         );
 
+        let events_attributes_builder =
+            ListBuilder::with_capacity(events_attributes_values, capacity)
+                .with_field(events_attributes_field.clone());
+
+        let events_name_values = StringBuilder::with_capacity(capacity * 4, capacity * 32);
+        let events_name_builder = ListBuilder::with_capacity(events_name_values, capacity)
+            .with_field(events_name_field.clone());
+
+        let links_trace_id_values = StringBuilder::with_capacity(capacity * 2, capacity * 32);
+        let links_trace_id_builder = ListBuilder::with_capacity(links_trace_id_values, capacity)
+            .with_field(links_trace_id_field.clone());
+
+        let links_span_id_values = StringBuilder::with_capacity(capacity * 2, capacity * 16);
+        let links_span_id_builder = ListBuilder::with_capacity(links_span_id_values, capacity)
+            .with_field(links_span_id_field.clone());
+
+        let links_trace_state_values = StringBuilder::with_capacity(capacity * 2, capacity * 32);
+        let links_trace_state_builder =
+            ListBuilder::with_capacity(links_trace_state_values, capacity)
+                .with_field(links_trace_state_field.clone());
+
         let links_attributes_values = MapBuilder::new(
             Some(map_field_names()),
             StringBuilder::new(),
             StringBuilder::new(),
         );
+
+        let links_attributes_builder =
+            ListBuilder::with_capacity(links_attributes_values, capacity)
+                .with_field(links_attributes_field.clone());
 
         Self {
             timestamp_builder,
@@ -142,13 +202,13 @@ impl TraceArrowBuilder {
             duration_builder: Int64Builder::with_capacity(capacity),
             status_code_builder: StringBuilder::with_capacity(capacity, capacity * 24),
             status_message_builder: StringBuilder::with_capacity(capacity, capacity * 64),
-            events_timestamp_builder: ListBuilder::new(events_timestamp_values),
-            events_name_builder: ListBuilder::new(StringBuilder::new()),
-            events_attributes_builder: ListBuilder::new(events_attributes_values),
-            links_trace_id_builder: ListBuilder::new(StringBuilder::new()),
-            links_span_id_builder: ListBuilder::new(StringBuilder::new()),
-            links_trace_state_builder: ListBuilder::new(StringBuilder::new()),
-            links_attributes_builder: ListBuilder::new(links_attributes_values),
+            events_timestamp_builder,
+            events_name_builder,
+            events_attributes_builder,
+            links_trace_id_builder,
+            links_span_id_builder,
+            links_trace_state_builder,
+            links_attributes_builder,
             service_name: Arc::from(""),
             first_timestamp: None,
             span_count: 0,
@@ -491,7 +551,8 @@ fn append_hex_value(builder: &mut StringBuilder, bytes: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::{Int64Array, StringArray};
+    use crate::otlp::{common::format::InputFormat, traces::parse_otlp_trace_request};
+    use arrow::array::{Array, Int64Array, ListArray, StringArray};
     use otlp2parquet_proto::opentelemetry::proto::trace::v1::Status;
 
     #[test]
@@ -599,5 +660,112 @@ mod tests {
             .downcast_ref::<Int64Array>()
             .unwrap();
         assert_eq!(durations.value(0), 1_500);
+    }
+
+    #[test]
+    fn converts_trace_json_fixture() {
+        let json_bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/trace.json"
+        ));
+
+        let request = parse_otlp_trace_request(json_bytes, InputFormat::Json).unwrap();
+        let (batches, metadata) = TraceArrowConverter::convert(&request).unwrap();
+
+        assert_eq!(metadata.service_name.as_ref(), "frontend-proxy");
+        assert_eq!(metadata.first_timestamp_nanos, 1_760_738_064_624_180_000);
+        assert_eq!(metadata.span_count, 2);
+
+        assert_eq!(batches.len(), 1);
+        let batch = &batches[0];
+        assert_eq!(batch.num_rows(), 2);
+
+        let span_names = batch
+            .column(5)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(span_names.value(0), "router frontend egress");
+        assert_eq!(span_names.value(1), "ingress");
+
+        let durations = batch
+            .column(12)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        assert_eq!(durations.value(0), 4_021_000);
+        assert_eq!(durations.value(1), 4_328_000);
+
+        let events = batch
+            .column(16)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        assert_eq!(events.value_length(0), 0);
+        assert_eq!(events.value_length(1), 0);
+    }
+
+    #[test]
+    fn converts_jsonl_trace_fixture() {
+        let jsonl_bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/traces.jsonl"
+        ));
+
+        let request = parse_otlp_trace_request(jsonl_bytes, InputFormat::Jsonl).unwrap();
+        let (batches, metadata) = TraceArrowConverter::convert(&request).unwrap();
+
+        assert_eq!(metadata.span_count, 63);
+        assert_eq!(metadata.first_timestamp_nanos, 1_760_738_032_995_001_500);
+        assert_eq!(metadata.service_name.as_ref(), "frontend-proxy");
+
+        let batch = &batches[0];
+        assert_eq!(batch.num_rows(), 63);
+
+        let events = batch
+            .column(16)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        let event_names = events
+            .values()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+
+        let mut total_events = 0usize;
+        let mut saw_product_found = false;
+        for row in 0..batch.num_rows() {
+            let len = events.value_length(row) as usize;
+            total_events += len;
+
+            if len > 0 {
+                let values = events.value(row);
+                let names = values.as_any().downcast_ref::<StringArray>().unwrap();
+                for idx in 0..names.len() {
+                    if names.value(idx) == "Product Found" {
+                        saw_product_found = true;
+                    }
+                }
+            }
+        }
+
+        assert!(total_events > 0);
+        assert!(saw_product_found);
+
+        let links = batch
+            .column(18)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        let mut spans_with_links = 0;
+        for row in 0..batch.num_rows() {
+            if links.value_length(row) > 0 {
+                spans_with_links += 1;
+            }
+        }
+
+        assert!(spans_with_links >= 2);
+        assert!(event_names.len() >= total_events);
     }
 }
