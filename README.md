@@ -1,14 +1,15 @@
 # otlp2parquet
 
-`otlp2parquet` is a multi-platform tool for ingesting OpenTelemetry logs, metrics, and traces, converting them to Apache Parquet format, and storing them efficiently in object storage. It's designed for high performance and cost-effectiveness, with a ClickHouse-compatible schema.
+> Ingest and store observability data in cheap object storage, servers optional
+
+`otlp2parquet` is a multi-platform tool for ingesting OpenTelemetry logs, metrics, and traces, converting them to Apache Parquet format, and storing them efficiently in object storage. It's designed for running in serverless runtimes like AWS Lambda and Cloudflare workers.
+
+The current schema, like the [duckdb-otlp extension](https://github.com/smithclay/duckdb-otlp), is based on the ClickHouse OpenTelemetry exporter schema. Long-term, one goal of this project is to beome obsolete: in late 2025, initial work is underway on the [OpenTelemetry Arrow Protocol](https://github.com/open-telemetry/otel-arrow) that will make much of the translation this tool does unnessecary.
 
 **Key Features:**
 *   Ingests OTLP HTTP (protobuf, JSON, or JSONL) for logs, metrics, and traces.
-*   Converts to Apache Arrow RecordBatch and writes Parquet files.
+*   Writes Parquet files for easy querying in duckdb.
 *   Supports Docker, Cloudflare Workers (WASM), and AWS Lambda deployments.
-*   Separate Parquet files per metric type for optimal query performance.
-*   Optimized for binary size and performance.
-*   Unified storage layer via Apache OpenDAL (S3, R2, Filesystem, etc.).
 
 ## Platform & Feature Matrix
 
@@ -22,17 +23,6 @@
 | OpenDAL Storage | ✅ (Multi-backend) | ✅ (R2) | ✅ (S3) |
 | Output Formats | Filesystem, S3, R2, GCS, Azure | R2 | S3 |
 | Binary Size Optimized | N/A (Native) | ✅ (<3MB WASM) | ✅ (Native) |
-
-## Metrics Support
-
-Metrics are written to separate Parquet files per metric type for efficient querying:
-- **Gauge** - Instant measurements
-- **Sum** - Cumulative or delta aggregations
-- **Histogram** - Distribution with explicit buckets
-- **ExponentialHistogram** - Distribution with exponential buckets
-- **Summary** - Quantile-based distributions
-
-Partition structure: `metrics/{type}/{service}/year={year}/month={month}/day={day}/hour={hour}/file.parquet`
 
 ## Quick Start
 
