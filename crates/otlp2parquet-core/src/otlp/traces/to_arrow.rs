@@ -591,7 +591,6 @@ mod tests {
                 name: "evt".into(),
                 attributes: vec![],
                 dropped_attributes_count: 0,
-                ..Default::default()
             }],
             links: vec![span::Link {
                 trace_id: vec![0x33; 16],
@@ -600,12 +599,10 @@ mod tests {
                 attributes: Vec::new(),
                 dropped_attributes_count: 0,
                 flags: 0,
-                ..Default::default()
             }],
             status: Some(Status {
                 message: "ok".into(),
                 code: status::StatusCode::Ok as i32,
-                ..Default::default()
             }),
             ..Default::default()
         };

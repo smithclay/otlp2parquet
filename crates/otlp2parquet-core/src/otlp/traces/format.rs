@@ -160,7 +160,7 @@ mod tests {
         assert_eq!(span_total, 63);
 
         let has_service_name = request.resource_spans.iter().any(|resource| {
-            resource.resource.as_ref().map_or(false, |res| {
+            resource.resource.as_ref().is_some_and(|res| {
                 res.attributes
                     .iter()
                     .any(|attr| attr.key == semconv::SERVICE_NAME)

@@ -1,11 +1,12 @@
 # otlp2parquet
 
-`otlp2parquet` is a multi-platform tool for ingesting OpenTelemetry logs, converting them to Apache Parquet format, and storing them efficiently in object storage. It's designed for high performance and cost-effectiveness, with a ClickHouse-compatible schema.
+`otlp2parquet` is a multi-platform tool for ingesting OpenTelemetry logs and metrics, converting them to Apache Parquet format, and storing them efficiently in object storage. It's designed for high performance and cost-effectiveness, with a ClickHouse-compatible schema.
 
 **Key Features:**
-*   Ingests OTLP HTTP (protobuf or JSON) logs.
+*   Ingests OTLP HTTP (protobuf, JSON, or JSONL) for logs and metrics.
 *   Converts to Apache Arrow RecordBatch and writes Parquet files.
 *   Supports Docker, Cloudflare Workers (WASM), and AWS Lambda deployments.
+*   Separate Parquet files per metric type for optimal query performance.
 *   Optimized for binary size and performance.
 *   Unified storage layer via Apache OpenDAL (S3, R2, Filesystem, etc.).
 
@@ -13,12 +14,25 @@
 
 | Feature / Platform | Docker (Server) | Cloudflare Workers | AWS Lambda |
 | :----------------- | :----------------- | :----------------- | :--------- |
-| OTLP HTTP Ingestion | ✅ | ✅ | ✅ |
+| OTLP Logs Ingestion | ✅ | ✅ | ✅ |
+| OTLP Metrics Ingestion | ✅ | ✅ | ✅ |
+| OTLP Traces Ingestion | ❌ | ❌ | ❌ |
 | Parquet Conversion | ✅ | ✅ | ✅ |
 | ClickHouse Schema | ✅ | ✅ | ✅ |
 | OpenDAL Storage | ✅ (Multi-backend) | ✅ (R2) | ✅ (S3) |
 | Output Formats | Filesystem, S3, R2, GCS, Azure | R2 | S3 |
 | Binary Size Optimized | N/A (Native) | ✅ (<3MB WASM) | ✅ (Native) |
+
+## Metrics Support
+
+Metrics are written to separate Parquet files per metric type for efficient querying:
+- **Gauge** - Instant measurements
+- **Sum** - Cumulative or delta aggregations
+- **Histogram** - Distribution with explicit buckets
+- **ExponentialHistogram** - Distribution with exponential buckets
+- **Summary** - Quantile-based distributions
+
+Partition structure: `metrics/{type}/{service}/year={year}/month={month}/day={day}/hour={hour}/file.parquet`
 
 ## Quick Start
 

@@ -5,9 +5,11 @@
 
 use anyhow::{Context, Result};
 use arrow::array::{
-    BooleanBuilder, Float64Builder, Int32Builder, ListBuilder, MapBuilder, RecordBatch,
-    StringBuilder, TimestampNanosecondBuilder, UInt64Builder,
+    Array, BooleanBuilder, Float64Builder, GenericListArray, Int32Builder, ListBuilder,
+    MapBuilder, OffsetSizeTrait, RecordBatch, StringBuilder, TimestampNanosecondBuilder,
+    UInt64Builder,
 };
+use arrow::datatypes::{DataType, Field};
 use otlp2parquet_proto::opentelemetry::proto::{
     collector::metrics::v1::ExportMetricsServiceRequest,
     common::v1::KeyValue,
@@ -24,6 +26,25 @@ use crate::otlp::common::{
     field_names::semconv,
 };
 use crate::schema::metrics::*;
+
+/// Helper to convert a ListArray from a ListBuilder to have non-nullable items
+///
+/// ListBuilder creates lists with nullable items by default, but our schema
+/// requires non-nullable items. This function reconstructs the array with
+/// the correct field definition.
+fn list_array_with_non_nullable_items<OffsetSize: OffsetSizeTrait>(
+    list_array: GenericListArray<OffsetSize>,
+    item_type: DataType,
+) -> GenericListArray<OffsetSize> {
+    let values = list_array.values().clone();
+    let offsets = list_array.offsets().clone();
+    let nulls = list_array.nulls().cloned();
+
+    // Create field with non-nullable items
+    let field = Arc::new(Field::new("item", item_type, false));
+
+    GenericListArray::new(field, offsets, values, nulls)
+}
 
 /// Metadata extracted from metrics request
 #[derive(Debug, Clone, Default)]
@@ -582,6 +603,16 @@ impl HistogramBuilder {
     }
 
     fn finish(mut self, schema: Arc<arrow::datatypes::Schema>) -> Result<RecordBatch> {
+        // Convert list arrays to have non-nullable items (schema requirement)
+        let bucket_counts = list_array_with_non_nullable_items(
+            self.bucket_counts_builder.finish(),
+            DataType::UInt64,
+        );
+        let explicit_bounds = list_array_with_non_nullable_items(
+            self.explicit_bounds_builder.finish(),
+            DataType::Float64,
+        );
+
         let batch = RecordBatch::try_new(
             schema,
             vec![
@@ -596,8 +627,8 @@ impl HistogramBuilder {
                 Arc::new(self.base.attributes_builder.finish()),
                 Arc::new(self.count_builder.finish()),
                 Arc::new(self.sum_builder.finish()),
-                Arc::new(self.bucket_counts_builder.finish()),
-                Arc::new(self.explicit_bounds_builder.finish()),
+                Arc::new(bucket_counts),
+                Arc::new(explicit_bounds),
                 Arc::new(self.min_builder.finish()),
                 Arc::new(self.max_builder.finish()),
             ],
@@ -700,6 +731,16 @@ impl ExponentialHistogramBuilder {
     }
 
     fn finish(mut self, schema: Arc<arrow::datatypes::Schema>) -> Result<RecordBatch> {
+        // Convert list arrays to have non-nullable items (schema requirement)
+        let positive_bucket_counts = list_array_with_non_nullable_items(
+            self.positive_bucket_counts_builder.finish(),
+            DataType::UInt64,
+        );
+        let negative_bucket_counts = list_array_with_non_nullable_items(
+            self.negative_bucket_counts_builder.finish(),
+            DataType::UInt64,
+        );
+
         let batch = RecordBatch::try_new(
             schema,
             vec![
@@ -717,9 +758,9 @@ impl ExponentialHistogramBuilder {
                 Arc::new(self.scale_builder.finish()),
                 Arc::new(self.zero_count_builder.finish()),
                 Arc::new(self.positive_offset_builder.finish()),
-                Arc::new(self.positive_bucket_counts_builder.finish()),
+                Arc::new(positive_bucket_counts),
                 Arc::new(self.negative_offset_builder.finish()),
-                Arc::new(self.negative_bucket_counts_builder.finish()),
+                Arc::new(negative_bucket_counts),
                 Arc::new(self.min_builder.finish()),
                 Arc::new(self.max_builder.finish()),
             ],
@@ -782,6 +823,16 @@ impl SummaryBuilder {
     }
 
     fn finish(mut self, schema: Arc<arrow::datatypes::Schema>) -> Result<RecordBatch> {
+        // Convert list arrays to have non-nullable items (schema requirement)
+        let quantile_values = list_array_with_non_nullable_items(
+            self.quantile_values_builder.finish(),
+            DataType::Float64,
+        );
+        let quantile_quantiles = list_array_with_non_nullable_items(
+            self.quantile_quantiles_builder.finish(),
+            DataType::Float64,
+        );
+
         let batch = RecordBatch::try_new(
             schema,
             vec![
@@ -796,8 +847,8 @@ impl SummaryBuilder {
                 Arc::new(self.base.attributes_builder.finish()),
                 Arc::new(self.count_builder.finish()),
                 Arc::new(self.sum_builder.finish()),
-                Arc::new(self.quantile_values_builder.finish()),
-                Arc::new(self.quantile_quantiles_builder.finish()),
+                Arc::new(quantile_values),
+                Arc::new(quantile_quantiles),
             ],
         )?;
         Ok(batch)
@@ -854,5 +905,263 @@ mod tests {
         assert_eq!(clamp_nanos(1000), 1000);
         assert_eq!(clamp_nanos(i64::MAX as u64), i64::MAX);
         assert_eq!(clamp_nanos(u64::MAX), i64::MAX);
+    }
+
+    #[test]
+    fn test_gauge_conversion() {
+        use otlp2parquet_proto::opentelemetry::proto::metrics::v1::{
+            metric::Data, number_data_point::Value, Gauge, Metric, NumberDataPoint,
+            ResourceMetrics, ScopeMetrics,
+        };
+        use otlp2parquet_proto::opentelemetry::proto::{
+            common::v1::KeyValue, resource::v1::Resource,
+        };
+
+        let converter = ArrowConverter::new();
+
+        let request = ExportMetricsServiceRequest {
+            resource_metrics: vec![ResourceMetrics {
+                resource: Some(Resource {
+                    attributes: vec![KeyValue {
+                        key: "service.name".to_string(),
+                        value: Some(otlp2parquet_proto::opentelemetry::proto::common::v1::AnyValue {
+                            value: Some(otlp2parquet_proto::opentelemetry::proto::common::v1::any_value::Value::StringValue("test-service".to_string())),
+                        }),
+                    }],
+                    ..Default::default()
+                }),
+                scope_metrics: vec![ScopeMetrics {
+                    scope: None,
+                    metrics: vec![Metric {
+                        name: "cpu.usage".to_string(),
+                        description: "CPU usage percentage".to_string(),
+                        unit: "%".to_string(),
+                        data: Some(Data::Gauge(Gauge {
+                            data_points: vec![NumberDataPoint {
+                                attributes: vec![],
+                                time_unix_nano: 1_705_327_800_000_000_000,
+                                value: Some(Value::AsDouble(42.5)),
+                                start_time_unix_nano: 0,
+                                flags: 0,
+                                exemplars: vec![],
+                            }],
+                        })),
+                    }],
+                    schema_url: String::new(),
+                }],
+                schema_url: String::new(),
+            }],
+        };
+
+        let result = converter.convert(request);
+        assert!(result.is_ok());
+
+        let (batches, metadata) = result.unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].0, "gauge");
+        assert_eq!(metadata.gauge_count, 1);
+        assert_eq!(metadata.sum_count, 0);
+
+        let batch = &batches[0].1;
+        assert_eq!(batch.num_rows(), 1);
+        assert_eq!(batch.num_columns(), 10); // 9 base + 1 value
+    }
+
+    #[test]
+    fn test_sum_conversion() {
+        use otlp2parquet_proto::opentelemetry::proto::metrics::v1::{
+            metric::Data, number_data_point::Value, AggregationTemporality, Metric,
+            NumberDataPoint, ResourceMetrics, ScopeMetrics, Sum,
+        };
+        use otlp2parquet_proto::opentelemetry::proto::resource::v1::Resource;
+
+        let converter = ArrowConverter::new();
+
+        let request = ExportMetricsServiceRequest {
+            resource_metrics: vec![ResourceMetrics {
+                resource: Some(Resource::default()),
+                scope_metrics: vec![ScopeMetrics {
+                    scope: None,
+                    metrics: vec![Metric {
+                        name: "requests.total".to_string(),
+                        description: String::new(),
+                        unit: "1".to_string(),
+                        data: Some(Data::Sum(Sum {
+                            data_points: vec![NumberDataPoint {
+                                attributes: vec![],
+                                time_unix_nano: 1_705_327_800_000_000_000,
+                                value: Some(Value::AsInt(1000)),
+                                start_time_unix_nano: 0,
+                                flags: 0,
+                                exemplars: vec![],
+                            }],
+                            aggregation_temporality: AggregationTemporality::Cumulative as i32,
+                            is_monotonic: true,
+                        })),
+                    }],
+                    schema_url: String::new(),
+                }],
+                schema_url: String::new(),
+            }],
+        };
+
+        let result = converter.convert(request);
+        assert!(result.is_ok());
+
+        let (batches, metadata) = result.unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].0, "sum");
+        assert_eq!(metadata.sum_count, 1);
+
+        let batch = &batches[0].1;
+        assert_eq!(batch.num_rows(), 1);
+        assert_eq!(batch.num_columns(), 12); // 9 base + 3 sum fields
+    }
+
+    #[test]
+    fn test_histogram_conversion() {
+        use otlp2parquet_proto::opentelemetry::proto::metrics::v1::{
+            metric::Data, Histogram, HistogramDataPoint, Metric, ResourceMetrics, ScopeMetrics,
+        };
+        use otlp2parquet_proto::opentelemetry::proto::resource::v1::Resource;
+
+        let converter = ArrowConverter::new();
+
+        let request = ExportMetricsServiceRequest {
+            resource_metrics: vec![ResourceMetrics {
+                resource: Some(Resource::default()),
+                scope_metrics: vec![ScopeMetrics {
+                    scope: None,
+                    metrics: vec![Metric {
+                        name: "request.duration".to_string(),
+                        description: String::new(),
+                        unit: "ms".to_string(),
+                        data: Some(Data::Histogram(Histogram {
+                            data_points: vec![HistogramDataPoint {
+                                attributes: vec![],
+                                time_unix_nano: 1_705_327_800_000_000_000,
+                                count: 100,
+                                sum: Some(5000.0),
+                                bucket_counts: vec![10, 30, 40, 15, 5],
+                                explicit_bounds: vec![10.0, 50.0, 100.0, 500.0],
+                                min: Some(5.0),
+                                max: Some(1000.0),
+                                start_time_unix_nano: 0,
+                                flags: 0,
+                                exemplars: vec![],
+                            }],
+                            aggregation_temporality: 0,
+                        })),
+                    }],
+                    schema_url: String::new(),
+                }],
+                schema_url: String::new(),
+            }],
+        };
+
+        let result = converter.convert(request);
+        if let Err(e) = &result {
+            eprintln!("Conversion error: {:?}", e);
+            panic!("Failed to convert histogram: {:?}", e);
+        }
+        let (batches, metadata) = result.unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].0, "histogram");
+        assert_eq!(metadata.histogram_count, 1);
+
+        let batch = &batches[0].1;
+        assert_eq!(batch.num_rows(), 1);
+        assert_eq!(batch.num_columns(), 15); // 9 base + 6 histogram fields
+    }
+
+    #[test]
+    fn test_multiple_metric_types() {
+        use otlp2parquet_proto::opentelemetry::proto::metrics::v1::{
+            metric::Data, number_data_point::Value, Gauge, Histogram, HistogramDataPoint, Metric,
+            NumberDataPoint, ResourceMetrics, ScopeMetrics, Sum,
+        };
+        use otlp2parquet_proto::opentelemetry::proto::resource::v1::Resource;
+
+        let converter = ArrowConverter::new();
+
+        let request = ExportMetricsServiceRequest {
+            resource_metrics: vec![ResourceMetrics {
+                resource: Some(Resource::default()),
+                scope_metrics: vec![ScopeMetrics {
+                    scope: None,
+                    metrics: vec![
+                        Metric {
+                            name: "cpu.usage".to_string(),
+                            description: String::new(),
+                            unit: "%".to_string(),
+                            data: Some(Data::Gauge(Gauge {
+                                data_points: vec![NumberDataPoint {
+                                    attributes: vec![],
+                                    time_unix_nano: 1_705_327_800_000_000_000,
+                                    value: Some(Value::AsDouble(75.0)),
+                                    start_time_unix_nano: 0,
+                                    flags: 0,
+                                    exemplars: vec![],
+                                }],
+                            })),
+                        },
+                        Metric {
+                            name: "requests.total".to_string(),
+                            description: String::new(),
+                            unit: "1".to_string(),
+                            data: Some(Data::Sum(Sum {
+                                data_points: vec![NumberDataPoint {
+                                    attributes: vec![],
+                                    time_unix_nano: 1_705_327_800_000_000_000,
+                                    value: Some(Value::AsInt(500)),
+                                    start_time_unix_nano: 0,
+                                    flags: 0,
+                                    exemplars: vec![],
+                                }],
+                                aggregation_temporality: 2, // Cumulative
+                                is_monotonic: true,
+                            })),
+                        },
+                        Metric {
+                            name: "latency".to_string(),
+                            description: String::new(),
+                            unit: "ms".to_string(),
+                            data: Some(Data::Histogram(Histogram {
+                                data_points: vec![HistogramDataPoint {
+                                    attributes: vec![],
+                                    time_unix_nano: 1_705_327_800_000_000_000,
+                                    count: 50,
+                                    sum: Some(2500.0),
+                                    bucket_counts: vec![5, 15, 20, 10],
+                                    explicit_bounds: vec![10.0, 50.0, 100.0],
+                                    min: None,
+                                    max: None,
+                                    start_time_unix_nano: 0,
+                                    flags: 0,
+                                    exemplars: vec![],
+                                }],
+                                aggregation_temporality: 0,
+                            })),
+                        },
+                    ],
+                    schema_url: String::new(),
+                }],
+                schema_url: String::new(),
+            }],
+        };
+
+        let (batches, metadata) = converter.convert(request).expect("Failed to convert multiple metrics");
+        assert_eq!(batches.len(), 3); // gauge, sum, histogram
+        assert_eq!(metadata.gauge_count, 1);
+        assert_eq!(metadata.sum_count, 1);
+        assert_eq!(metadata.histogram_count, 1);
+        assert_eq!(metadata.exponential_histogram_count, 0);
+        assert_eq!(metadata.summary_count, 0);
+
+        // Verify batch types
+        let batch_types: Vec<&str> = batches.iter().map(|(t, _)| t.as_str()).collect();
+        assert!(batch_types.contains(&"gauge"));
+        assert!(batch_types.contains(&"sum"));
+        assert!(batch_types.contains(&"histogram"));
     }
 }
