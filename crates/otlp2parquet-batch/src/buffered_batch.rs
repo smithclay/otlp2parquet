@@ -5,6 +5,7 @@
 use anyhow::{bail, Result};
 use arrow::array::RecordBatch;
 use otlp2parquet_core::otlp::LogMetadata;
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::{BatchConfig, CompletedBatch};
@@ -16,7 +17,7 @@ pub(crate) struct BufferedBatch {
     total_rows: usize,
     total_bytes: usize, // Approximate size for flushing decisions
     first_timestamp: i64,
-    service_name: String,
+    service_name: Arc<str>,
     created_at: Instant,
 }
 
@@ -31,7 +32,7 @@ impl BufferedBatch {
             } else {
                 i64::MAX
             },
-            service_name: metadata.service_name.clone(),
+            service_name: Arc::clone(&metadata.service_name),
             created_at: Instant::now(),
         }
     }

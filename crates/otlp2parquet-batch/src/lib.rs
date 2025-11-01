@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use arrow::array::RecordBatch;
-use otlp2parquet_core::convert_request_to_arrow;
 use otlp2parquet_core::otlp::LogMetadata;
+use otlp2parquet_core::{convert_request_to_arrow_with_capacity, estimate_request_row_count};
 use otlp2parquet_proto::opentelemetry::proto::collector::logs::v1::ExportLogsServiceRequest;
 use parking_lot::Mutex;
 
@@ -34,7 +34,7 @@ impl BatchKey {
         };
 
         Self {
-            service: metadata.service_name.clone(),
+            service: metadata.service_name.to_string(),
             minute_bucket: bucket,
         }
     }
@@ -96,8 +96,9 @@ impl BatchManager {
         request: &ExportLogsServiceRequest,
         approx_bytes: usize,
     ) -> Result<(Vec<CompletedBatch>, LogMetadata)> {
-        let (batch, metadata) =
-            convert_request_to_arrow(request).context("Failed to convert OTLP request to Arrow")?;
+        let capacity_hint = estimate_request_row_count(request);
+        let (batch, metadata) = convert_request_to_arrow_with_capacity(request, capacity_hint)
+            .context("Failed to convert OTLP request to Arrow")?;
 
         if metadata.record_count == 0 {
             return Ok((Vec::new(), metadata));
@@ -151,8 +152,9 @@ pub struct PassthroughBatcher;
 impl PassthroughBatcher {
     pub fn ingest(&self, request: &ExportLogsServiceRequest) -> Result<CompletedBatch> {
         // Parse to Arrow using new core API
-        let (batch, metadata) =
-            convert_request_to_arrow(request).context("Failed to convert OTLP request to Arrow")?;
+        let capacity_hint = estimate_request_row_count(request);
+        let (batch, metadata) = convert_request_to_arrow_with_capacity(request, capacity_hint)
+            .context("Failed to convert OTLP request to Arrow")?;
 
         Ok(CompletedBatch {
             batches: vec![batch],
@@ -211,7 +213,7 @@ mod tests {
 
         let completed = result.unwrap();
         assert_eq!(completed.batches[0].num_rows(), 10);
-        assert_eq!(completed.metadata.service_name, "test-service");
+        assert_eq!(completed.metadata.service_name.as_ref(), "test-service");
         assert_eq!(completed.metadata.record_count, 10);
     }
 

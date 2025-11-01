@@ -190,7 +190,7 @@ fn convert_string_field(key: &str, value: &str) -> Result<Option<JsonValue>> {
 
     // Convert hex-encoded trace/span IDs to byte arrays
     if matches!(key, k if k == otlp::TRACE_ID || k == otlp::SPAN_ID)
-        && value.len() % 2 == 0
+        && value.len().is_multiple_of(2)
         && value.chars().all(|c| c.is_ascii_hexdigit())
     {
         let bytes = Vec::from_hex(value).with_context(|| {

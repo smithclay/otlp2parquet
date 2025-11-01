@@ -254,3 +254,62 @@ version: ## Show versions of build tools
 .PHONY: audit
 audit: ## Run security audit on dependencies
 	@cargo audit || (echo "cargo-audit not installed. Install with: cargo install cargo-audit" && exit 1)
+
+#
+# Performance Profiling & Benchmarking Commands
+#
+
+.PHONY: bench
+bench: ## Run all benchmarks with Criterion
+	@echo "==> Running benchmarks..."
+	@cargo bench --no-default-features --features server
+	@echo "==> Benchmark results: target/criterion/report/index.html"
+
+.PHONY: bench-baseline
+bench-baseline: ## Save benchmark baseline for comparison
+	@echo "==> Saving benchmark baseline..."
+	@cargo bench --no-default-features --features server -- --save-baseline base
+	@echo "==> Baseline saved as 'base'"
+
+.PHONY: bench-compare
+bench-compare: ## Run benchmarks and compare against baseline
+	@echo "==> Running benchmarks and comparing to baseline..."
+	@cargo bench --no-default-features --features server -- --baseline base
+	@echo "==> Comparison results: target/criterion/report/index.html"
+
+.PHONY: flamegraph
+flamegraph: ## Generate CPU flamegraph for e2e_pipeline benchmark
+	@echo "==> Generating flamegraph..."
+	@if ! command -v cargo-flamegraph >/dev/null 2>&1; then \
+		echo "Installing cargo-flamegraph..."; \
+		cargo install flamegraph; \
+	fi
+	@cargo flamegraph --bench e2e_pipeline --no-default-features --features server -- --bench
+	@echo "==> Flamegraph saved to: flamegraph.svg"
+
+.PHONY: bloat
+bloat: ## Analyze binary size with cargo-bloat
+	@echo "==> Analyzing binary size (top 20)..."
+	@if ! command -v cargo-bloat >/dev/null 2>&1; then \
+		echo "Installing cargo-bloat..."; \
+		cargo install cargo-bloat; \
+	fi
+	@cargo bloat --release --no-default-features --features server -n 20 | tee bloat.txt
+	@echo "==> Results saved to: bloat.txt"
+
+.PHONY: llvm-lines
+llvm-lines: ## Analyze LLVM IR line counts with cargo-llvm-lines
+	@echo "==> Analyzing LLVM IR line counts..."
+	@if ! command -v cargo-llvm-lines >/dev/null 2>&1; then \
+		echo "Installing cargo-llvm-lines..."; \
+		cargo install cargo-llvm-lines; \
+	fi
+	@cargo llvm-lines --release --no-default-features --features server | head -50 | tee llvm_lines.txt
+	@echo "==> Results saved to: llvm_lines.txt"
+
+.PHONY: profile-all
+profile-all: bloat llvm-lines flamegraph ## Run all profiling tools
+	@echo "==> All profiling complete!"
+	@echo "    - Binary size: bloat.txt"
+	@echo "    - LLVM lines: llvm_lines.txt"
+	@echo "    - CPU profile: flamegraph.svg"
