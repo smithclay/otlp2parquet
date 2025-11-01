@@ -49,26 +49,6 @@ pub struct BatchConfig {
     pub max_age: Duration,
 }
 
-impl BatchConfig {
-    pub fn from_env(default_rows: usize, default_bytes: usize, default_age_secs: u64) -> Self {
-        fn parse_env<T: std::str::FromStr>(key: &str) -> Option<T> {
-            std::env::var(key).ok()?.parse().ok()
-        }
-
-        let max_rows = parse_env("BATCH_MAX_ROWS").unwrap_or(default_rows);
-        let max_bytes = parse_env("BATCH_MAX_BYTES").unwrap_or(default_bytes);
-        let max_age = parse_env("BATCH_MAX_AGE_SECS")
-            .map(Duration::from_secs)
-            .unwrap_or_else(|| Duration::from_secs(default_age_secs));
-
-        Self {
-            max_rows,
-            max_bytes,
-            max_age,
-        }
-    }
-}
-
 /// Metadata required by the batching layer.
 pub trait BatchMetadata: Clone {
     fn service_name(&self) -> &Arc<str>;

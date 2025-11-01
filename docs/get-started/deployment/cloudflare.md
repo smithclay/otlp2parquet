@@ -135,28 +135,43 @@ curl -X POST http://localhost:8787/v1/logs \
 
 ## Configuration
 
+For complete configuration options, see the [Configuration Guide](../configuration.md).
+
+### Runtime Configuration
+
+Cloudflare Workers automatically uses these settings:
+- **Storage Backend**: R2 (required for Workers)
+- **Batch Defaults**: 100,000 rows, 64 MB, 5 seconds max age
+- **Max Payload**: 1 MB (optimized for Workers free tier)
+
 ### Environment Variables
 
 Set environment variables in `wrangler.toml`:
 
 ```toml
 [vars]
-LOG_LEVEL = "info"
-MAX_BATCH_SIZE = "1000"
+OTLP2PARQUET_R2_BUCKET = "otlp-logs"
+OTLP2PARQUET_R2_ACCOUNT_ID = "your_account_id"
+OTLP2PARQUET_R2_ACCESS_KEY_ID = "your_access_key"
+OTLP2PARQUET_BATCH_MAX_ROWS = "100000"
+OTLP2PARQUET_BATCH_MAX_BYTES = "67108864"  # 64 MB
+OTLP2PARQUET_BATCHING_ENABLED = "true"
 ```
 
 ### Secrets (for sensitive data)
 
+Store sensitive values like R2 secret keys using Cloudflare Secrets:
+
 ```bash
-# Set secrets via CLI (not in wrangler.toml!)
-wrangler secret put API_KEY
+# Set R2 secret access key (recommended - not in wrangler.toml!)
+wrangler secret put OTLP2PARQUET_R2_SECRET_ACCESS_KEY
 # Prompts for value
 
 # List secrets
 wrangler secret list
 
 # Delete secret
-wrangler secret delete API_KEY
+wrangler secret delete OTLP2PARQUET_R2_SECRET_ACCESS_KEY
 ```
 
 ### Custom Domain

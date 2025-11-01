@@ -156,9 +156,11 @@ sam local invoke OtlpToParquetFunction -e event.json
 
 ## Configuration
 
-### Parameters
+For complete configuration options, see the [Configuration Guide](../configuration.md).
 
-Edit `samconfig.toml` to customize:
+### SAM Template Parameters
+
+Edit `samconfig.toml` to customize deployment parameters:
 
 ```toml
 [default.deploy.parameters]
@@ -168,6 +170,34 @@ parameter_overrides = [
     "BucketName=my-otlp-logs",       # S3 bucket name
     "LogRetentionDays=30"            # CloudWatch logs retention
 ]
+```
+
+### Runtime Configuration
+
+Lambda automatically uses these settings:
+- **Storage Backend**: S3 (required, validated at startup)
+- **Batch Defaults**: 200,000 rows, 128 MB, 10 seconds max age
+- **Max Payload**: 6 MB (optimized for Lambda)
+
+You can override these via environment variables in the SAM template or after deployment:
+
+```yaml
+# In template.yaml
+Globals:
+  Function:
+    Environment:
+      Variables:
+        OTLP2PARQUET_BATCH_MAX_ROWS: "100000"
+        OTLP2PARQUET_BATCH_MAX_BYTES: "67108864"  # 64 MB
+        OTLP2PARQUET_BATCHING_ENABLED: "true"
+```
+
+Or update after deployment:
+
+```bash
+aws lambda update-function-configuration \
+  --function-name otlp2parquet-OtlpToParquetFunction \
+  --environment "Variables={OTLP2PARQUET_BATCH_MAX_ROWS=100000}"
 ```
 
 ### Environment-Specific Deployments

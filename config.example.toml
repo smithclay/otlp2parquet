@@ -1,0 +1,82 @@
+# otlp2parquet Configuration File Example
+# Copy this file to config.toml or .otlp2parquet.toml and customize for your environment
+# Alternatively, use environment variables with the OTLP2PARQUET_ prefix
+
+# ==============================================================================
+# Batch Configuration (All Platforms)
+# ==============================================================================
+[batch]
+# Maximum number of rows per batch before flushing
+max_rows = 200_000
+
+# Maximum bytes per batch before flushing (128 MB default)
+max_bytes = 134_217_728
+
+# Maximum age of batch in seconds before flushing
+max_age_secs = 10
+
+# Enable or disable batching entirely
+enabled = true
+
+
+# ==============================================================================
+# Request Handling Configuration (All Platforms)
+# ==============================================================================
+[request]
+# Maximum payload size in bytes (8 MB default)
+max_payload_bytes = 8_388_608
+
+
+# ==============================================================================
+# Storage Configuration
+# ==============================================================================
+[storage]
+# Storage backend type: "fs", "s3", or "r2"
+# Platform defaults: Server=fs, Lambda=s3, Cloudflare=r2
+backend = "fs"
+
+# --- Filesystem Storage (backend="fs") ---
+[storage.fs]
+path = "./data"
+
+# --- S3 Storage (backend="s3") ---
+# [storage.s3]
+# bucket = "my-otlp-bucket"
+# region = "us-east-1"
+# # Optional custom S3 endpoint (for S3-compatible services like MinIO)
+# endpoint = "https://s3.custom-endpoint.com"
+
+# --- R2 Storage (backend="r2") ---
+# [storage.r2]
+# bucket = "my-r2-bucket"
+# account_id = "your_account_id"
+# access_key_id = "your_access_key"
+# secret_access_key = "your_secret_key"
+
+
+# ==============================================================================
+# Server-Specific Configuration (Server Platform Only)
+# ==============================================================================
+[server]
+# HTTP server listen address
+listen_addr = "0.0.0.0:4318"
+
+# Log level: trace, debug, info, warn, error
+log_level = "info"
+
+# Log format: "text" (human-readable) or "json" (structured)
+log_format = "text"
+
+
+# ==============================================================================
+# Lambda-Specific Configuration (Lambda Platform Only)
+# ==============================================================================
+# [lambda]
+# (Currently no lambda-specific config - uses common settings above)
+
+
+# ==============================================================================
+# Cloudflare Workers-Specific Configuration (Cloudflare Platform Only)
+# ==============================================================================
+# [cloudflare]
+# (Currently no cloudflare-specific config - uses common settings above)

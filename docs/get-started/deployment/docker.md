@@ -21,15 +21,20 @@ Override environment variables:
 
 **AWS S3:**
 ```bash
-S3_ENDPOINT= S3_REGION=us-east-1 \
+OTLP2PARQUET_STORAGE_BACKEND=s3 \
+OTLP2PARQUET_S3_BUCKET=my-otlp-bucket \
+OTLP2PARQUET_S3_REGION=us-east-1 \
 AWS_ACCESS_KEY_ID=xxx AWS_SECRET_ACCESS_KEY=xxx \
 docker-compose up
 ```
 
 **Cloudflare R2:**
 ```bash
-S3_ENDPOINT=https://ACCOUNT_ID.r2.cloudflarestorage.com \
-AWS_ACCESS_KEY_ID=xxx AWS_SECRET_ACCESS_KEY=xxx \
+OTLP2PARQUET_STORAGE_BACKEND=r2 \
+OTLP2PARQUET_R2_BUCKET=my-r2-bucket \
+OTLP2PARQUET_R2_ACCOUNT_ID=your_account_id \
+OTLP2PARQUET_R2_ACCESS_KEY_ID=xxx \
+OTLP2PARQUET_R2_SECRET_ACCESS_KEY=xxx \
 docker-compose up
 ```
 
@@ -51,16 +56,31 @@ kubectl apply -f deploy/docker/kubernetes/
 
 ## Environment Variables
 
+For complete configuration options, see the [Configuration Guide](../configuration.md).
+
+### Key Variables
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `STORAGE_BACKEND` | `s3` | Storage: `s3`, `r2`, `filesystem` |
-| `S3_BUCKET` | `otlp-logs` | Bucket name |
-| `S3_REGION` | `us-east-1` | AWS region |
-| `S3_ENDPOINT` | `http://minio:9000` | S3 endpoint (blank for AWS) |
-| `AWS_ACCESS_KEY_ID` | `minioadmin` | Access key |
-| `AWS_SECRET_ACCESS_KEY` | `minioadmin` | Secret key |
-| `HTTP_PORT` | `4318` | HTTP server port |
-| `RUST_LOG` | `info` | Log level |
+| `OTLP2PARQUET_STORAGE_BACKEND` | `fs` | Storage backend: `fs`, `s3`, or `r2` |
+| `OTLP2PARQUET_STORAGE_PATH` | `./data` | Filesystem storage path (when backend=fs) |
+| `OTLP2PARQUET_S3_BUCKET` | `otlp-logs` | S3 bucket name (when backend=s3) |
+| `OTLP2PARQUET_S3_REGION` | `us-east-1` | AWS region (when backend=s3) |
+| `OTLP2PARQUET_S3_ENDPOINT` | - | Custom S3 endpoint (optional, for MinIO/S3-compatible) |
+| `OTLP2PARQUET_LISTEN_ADDR` | `0.0.0.0:4318` | HTTP server listen address |
+| `OTLP2PARQUET_LOG_LEVEL` | `info` | Log level: `trace`, `debug`, `info`, `warn`, `error` |
+| `OTLP2PARQUET_LOG_FORMAT` | `text` | Log format: `text` or `json` |
+| `OTLP2PARQUET_BATCH_MAX_ROWS` | `200000` | Maximum rows per batch |
+| `OTLP2PARQUET_BATCH_MAX_BYTES` | `134217728` | Maximum bytes per batch (128 MB) |
+| `OTLP2PARQUET_BATCH_MAX_AGE_SECS` | `10` | Maximum batch age (seconds) |
+| `OTLP2PARQUET_BATCHING_ENABLED` | `true` | Enable/disable batching |
+
+### AWS Credentials
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AWS_ACCESS_KEY_ID` | `minioadmin` | AWS/MinIO access key |
+| `AWS_SECRET_ACCESS_KEY` | `minioadmin` | AWS/MinIO secret key |
 
 ## Troubleshooting
 
