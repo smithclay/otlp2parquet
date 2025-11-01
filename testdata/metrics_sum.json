@@ -19,6 +19,7 @@
             "name": "http-instrumentation",
             "version": "1.2.0"
           },
+          "schemaUrl": "",
           "metrics": [
             {
               "name": "http.requests.total",
@@ -108,7 +109,8 @@
             }
           ]
         }
-      ]
+      ],
+      "schemaUrl": ""
     }
   ]
 }

@@ -703,6 +703,25 @@ mod tests {
     }
 
     #[test]
+    fn converts_trace_protobuf_fixture() {
+        let proto_bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/trace.pb"
+        ));
+
+        let request =
+            parse_otlp_trace_request(proto_bytes, InputFormat::Protobuf).expect("protobuf parse");
+        let (batches, metadata) = TraceArrowConverter::convert(&request).unwrap();
+
+        assert_eq!(metadata.service_name.as_ref(), "frontend-proxy");
+        assert_eq!(metadata.first_timestamp_nanos, 1_760_738_064_624_180_000);
+        assert_eq!(metadata.span_count, 2);
+
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].num_rows(), 2);
+    }
+
+    #[test]
     fn converts_jsonl_trace_fixture() {
         let jsonl_bytes = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -764,5 +783,24 @@ mod tests {
 
         assert!(spans_with_links >= 2);
         assert!(event_names.len() >= total_events);
+    }
+
+    #[test]
+    fn converts_protobuf_traces_fixture() {
+        let proto_bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/traces.pb"
+        ));
+
+        let request =
+            parse_otlp_trace_request(proto_bytes, InputFormat::Protobuf).expect("protobuf parse");
+        let (batches, metadata) = TraceArrowConverter::convert(&request).unwrap();
+
+        assert_eq!(metadata.span_count, 63);
+        assert_eq!(metadata.first_timestamp_nanos, 1_760_738_032_995_001_500);
+        assert_eq!(metadata.service_name.as_ref(), "frontend-proxy");
+
+        let batch = &batches[0];
+        assert_eq!(batch.num_rows(), 63);
     }
 }

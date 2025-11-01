@@ -19,6 +19,7 @@
             "name": "payment-instrumentation",
             "version": "1.0.0"
           },
+          "schemaUrl": "",
           "metrics": [
             {
               "name": "payment.processing.duration",
@@ -86,7 +87,8 @@
             }
           ]
         }
-      ]
+      ],
+      "schemaUrl": ""
     }
   ]
 }
