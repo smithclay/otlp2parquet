@@ -8,6 +8,9 @@
 use anyhow::{anyhow, Context, Result};
 use otlp2parquet_proto::opentelemetry::proto::collector::logs::v1::ExportLogsServiceRequest;
 use prost::Message;
+use serde_json::Value as JsonValue;
+
+use super::json_normalizer::normalise_json_value;
 
 /// Supported input formats for OTLP logs
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,7 +77,9 @@ fn parse_protobuf(bytes: &[u8]) -> Result<ExportLogsServiceRequest> {
 
 /// Parse OTLP logs from JSON bytes
 fn parse_json(bytes: &[u8]) -> Result<ExportLogsServiceRequest> {
-    serde_json::from_slice(bytes).context("Failed to parse OTLP JSON message")
+    let value: JsonValue = serde_json::from_slice(bytes)
+        .context("Failed to parse OTLP JSON message into serde_json::Value")?;
+    canonical_json_to_request(value)
 }
 
 /// Parse OTLP logs from JSONL (newline-delimited JSON) bytes
@@ -89,31 +94,36 @@ fn parse_jsonl(bytes: &[u8]) -> Result<ExportLogsServiceRequest> {
     };
 
     for (line_num, line) in text.lines().enumerate() {
-        // Skip empty lines
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
 
-        // Parse each line as an ExportLogsServiceRequest
-        let request: ExportLogsServiceRequest =
-            serde_json::from_str(trimmed).with_context(|| {
-                format!(
-                    "Failed to parse JSONL line {} as OTLP message",
-                    line_num + 1
-                )
-            })?;
+        let value: JsonValue = serde_json::from_str(trimmed).with_context(|| {
+            format!("Failed to parse JSONL line {} as JSON value", line_num + 1)
+        })?;
 
-        // Merge resource_logs into the accumulated result
+        let request = canonical_json_to_request(value).with_context(|| {
+            format!(
+                "Failed to convert JSONL line {} into ExportLogsServiceRequest",
+                line_num + 1
+            )
+        })?;
+
         merged.resource_logs.extend(request.resource_logs);
     }
 
-    // Validate that we parsed at least one log
     if merged.resource_logs.is_empty() {
         return Err(anyhow!("JSONL input contained no valid log records"));
     }
 
     Ok(merged)
+}
+
+fn canonical_json_to_request(mut value: JsonValue) -> Result<ExportLogsServiceRequest> {
+    normalise_json_value(&mut value, None)?;
+    serde_json::from_value(value)
+        .context("Failed to convert canonical OTLP JSON to protobuf struct")
 }
 
 #[cfg(test)]

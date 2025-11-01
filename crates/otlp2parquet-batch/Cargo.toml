@@ -1,0 +1,22 @@
+[package]
+name = "otlp2parquet-batch"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+otlp2parquet-core = { path = "../otlp2parquet-core" }
+otlp2parquet-proto = { path = "../otlp2parquet-proto" }
+
+# Arrow for RecordBatch accumulation and concatenation
+arrow = { workspace = true }
+
+# Batching dependencies
+parking_lot = "0.12"
+
+# Protocol
+prost = { workspace = true }
+
+# Utilities
+anyhow = { workspace = true }

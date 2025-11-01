@@ -139,9 +139,19 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: true
 
       - name: Build Docker image (single platform)
-        run: docker build --platform linux/amd64 -t otlp2parquet:test .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=docker-sanity
+          cache-to: type=gha,scope=docker-sanity,mode=max
 
   # Build Docker images for all platforms (releases only)
   build-docker:

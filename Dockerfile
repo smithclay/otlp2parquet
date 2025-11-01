@@ -41,14 +41,14 @@ COPY --from=builder /build/target/release/otlp2parquet /usr/local/bin/otlp2parqu
 # Environment defaults (can be overridden)
 ENV STORAGE_BACKEND=filesystem
 ENV FILESYSTEM_ROOT=/data
-ENV HTTP_PORT=8080
+ENV HTTP_PORT=4318
 ENV HTTP_HOST=0.0.0.0
 
 # Create data directory
 WORKDIR /data
 
-# Expose HTTP port
-EXPOSE 8080
+# Expose OTLP HTTP port
+EXPOSE 4318
 
 # Run as non-root (distroless provides nonroot user)
 USER nonroot:nonroot

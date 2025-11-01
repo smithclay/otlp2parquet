@@ -1,8 +1,12 @@
 [workspace]
 members = [
     "crates/otlp2parquet-core",
-    "crates/otlp2parquet-runtime",
+    "crates/otlp2parquet-batch",
+    "crates/otlp2parquet-storage",
     "crates/otlp2parquet-proto",
+    "crates/otlp2parquet-cloudflare",
+    "crates/otlp2parquet-lambda",
+    "crates/otlp2parquet-server",
 ]
 resolver = "2"
 
@@ -26,44 +30,39 @@ opt-level = "z"
 [profile.release.package.otlp2parquet-core]
 opt-level = 3
 
-[profile.release.package.otlp2parquet-runtime]
+[profile.release.package.otlp2parquet-batch]
+opt-level = 3
+
+[profile.release.package.otlp2parquet-storage]
+opt-level = 3
+
+[profile.release.package.otlp2parquet-cloudflare]
+opt-level = "z"
+
+[profile.release.package.otlp2parquet-lambda]
+opt-level = 3
+
+[profile.release.package.otlp2parquet-server]
 opt-level = 3
 
 [workspace.dependencies]
 # Arrow/Parquet - MINIMAL features only
-arrow = { version = "53", default-features = false, features = ["ipc"] }
-parquet = { version = "53", default-features = false, features = ["arrow", "snap"] }
+arrow = { version = "54.2", default-features = false, features = ["ipc"] }
+parquet = { version = "54.2", default-features = false }
 
 # OTLP Protocol - minimal
 prost = { version = "0.13", default-features = false, features = ["std"] }
-prost-types = { version = "0.13", default-features = false }
-
-# Platform-specific
-worker = { version = "0.4" }
-lambda_runtime = { version = "0.14" }
-aws_lambda_events = { version = "0.18" }
-
-# OpenDAL - unified storage layer
-opendal = { version = "0.54", default-features = false }
 
 # Core utilities - minimal, no tokio (platforms provide their own runtimes)
 serde = { version = "1", default-features = false, features = ["derive"] }
 serde_json = { version = "1", default-features = false, features = ["std"] }
 anyhow = "1"
 thiserror = "1"
-uuid = { version = "1", default-features = false, features = ["v4", "fast-rng"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 tokio = { version = "1", default-features = false, features = ["rt", "macros"] }
-base64 = "0.22"
-
-# HTTP server (server mode only)
-axum = { version = "0.7", default-features = false, features = ["tokio", "http1", "http2", "json"] }
-tower = { version = "0.4", default-features = false }
-tower-http = { version = "0.5", default-features = false, features = ["trace"] }
-
-# Structured logging (server mode only)
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "json"] }
+blake3 = "1"
+once_cell = "1.19"
+hex = "0.4"
 
 # Build dependencies
 prost-build = "0.13"
@@ -78,25 +77,28 @@ repository.workspace = true
 
 [dependencies]
 otlp2parquet-core = { path = "crates/otlp2parquet-core" }
-otlp2parquet-runtime = { path = "crates/otlp2parquet-runtime" }
+otlp2parquet-batch = { path = "crates/otlp2parquet-batch" }
+otlp2parquet-storage = { path = "crates/otlp2parquet-storage" }
 
-# Platform-specific dependencies (optional)
-worker = { workspace = true, optional = true }
-lambda_runtime = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true }
+# Platform-specific crates (optional)
+otlp2parquet-cloudflare = { path = "crates/otlp2parquet-cloudflare", optional = true }
+otlp2parquet-lambda = { path = "crates/otlp2parquet-lambda", optional = true }
+otlp2parquet-server = { path = "crates/otlp2parquet-server", optional = true }
+
+# Platform dependencies for main.rs entry points
+worker = { version = "0.4", optional = true }
+lambda_runtime = { version = "0.14", optional = true }
+tokio = { workspace = true, optional = true, features = ["rt-multi-thread", "macros"] }
+
+# Utilities
 anyhow = { workspace = true }
 
 [features]
-default = ["server"]
-cloudflare = ["worker", "otlp2parquet-runtime/cloudflare"]
-lambda = ["lambda_runtime", "tokio", "otlp2parquet-runtime/lambda"]
-server = ["tokio", "otlp2parquet-runtime/server"]
-
-# OpenDAL testing features
-opendal-s3 = ["otlp2parquet-runtime/opendal-s3"]
-opendal-fs = ["otlp2parquet-runtime/opendal-fs"]
-opendal-lambda = ["lambda_runtime", "tokio", "otlp2parquet-runtime/opendal-lambda"]
-opendal-server = ["otlp2parquet-runtime/opendal-server"]
+default = []
+cloudflare = ["otlp2parquet-cloudflare", "worker"]
+lambda = ["otlp2parquet-lambda", "lambda_runtime", "tokio"]
+server = ["otlp2parquet-server", "tokio"]
+full = ["server"]
 
 [[bin]]
 name = "otlp2parquet"
