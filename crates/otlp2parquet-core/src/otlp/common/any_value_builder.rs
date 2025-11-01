@@ -28,7 +28,7 @@ struct AnyValueFieldIndexes {
 /// - StringValue, BoolValue, IntValue, DoubleValue, BytesValue: scalar values
 /// - JsonValue: JSON-serialized representation of arrays and maps
 #[inline]
-pub(super) fn append_any_value(
+pub(crate) fn append_any_value(
     builder: &mut StructBuilder,
     any_val: Option<&AnyValue>,
 ) -> Result<()> {
@@ -49,7 +49,7 @@ pub(super) fn append_any_value(
 }
 
 /// Extract string value from an AnyValue, if it's a string variant
-pub(super) fn any_value_string(any_val: &AnyValue) -> Option<&str> {
+pub(crate) fn any_value_string(any_val: &AnyValue) -> Option<&str> {
     match any_val.value.as_ref()? {
         any_value::Value::StringValue(s) => Some(s.as_str()),
         _ => None,
@@ -58,7 +58,7 @@ pub(super) fn any_value_string(any_val: &AnyValue) -> Option<&str> {
 
 /// Convert OTLP AnyValue to serde_json::Value for JSON serialization
 #[inline]
-pub(super) fn any_value_to_json_value(any_val: &AnyValue) -> JsonValue {
+pub(crate) fn any_value_to_json_value(any_val: &AnyValue) -> JsonValue {
     match any_val.value.as_ref() {
         Some(any_value::Value::StringValue(s)) => JsonValue::String(s.clone()),
         Some(any_value::Value::BoolValue(b)) => JsonValue::Bool(*b),

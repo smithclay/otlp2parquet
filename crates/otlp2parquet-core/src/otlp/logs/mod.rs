@@ -1,12 +1,7 @@
-pub mod field_names;
-pub mod field_numbers;
+pub use crate::otlp::common::{field_names, field_numbers, InputFormat};
 
-mod any_value_builder;
-mod builder_helpers;
-mod json_normalizer;
-
-pub mod format;
+mod format;
 pub mod to_arrow;
 
-pub use format::{parse_otlp_request, InputFormat};
+pub use format::parse_otlp_request;
 pub use to_arrow::{ArrowConverter, LogMetadata};

@@ -7,6 +7,5 @@ pub mod common;
 pub mod logs;
 pub mod traces;
 
-pub use logs::field_names;
-pub use logs::field_numbers;
-pub use logs::{parse_otlp_request, ArrowConverter, InputFormat, LogMetadata};
+pub use common::{field_names, field_numbers, InputFormat};
+pub use logs::{parse_otlp_request, ArrowConverter, LogMetadata};
