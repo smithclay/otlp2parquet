@@ -165,8 +165,18 @@ impl SignalProcessor for TraceSignalProcessor {
     type Request = TraceRequest;
     type Metadata = TraceMetadata;
 
-    fn estimate_row_count(_request: &Self::Request) -> usize {
-        0
+    fn estimate_row_count(request: &Self::Request) -> usize {
+        request
+            .resource_spans
+            .iter()
+            .map(|resource_spans| {
+                resource_spans
+                    .scope_spans
+                    .iter()
+                    .map(|scope_spans| scope_spans.spans.len())
+                    .sum::<usize>()
+            })
+            .sum()
     }
 
     fn convert_request(

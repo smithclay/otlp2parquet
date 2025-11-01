@@ -12,11 +12,18 @@ use std::mem;
 use super::field_names::otlp;
 
 // Field name constants for JSON normalization
-const U64_FIELDS: &[&str] = &[otlp::TIME_UNIX_NANO, otlp::OBSERVED_TIME_UNIX_NANO];
+const U64_FIELDS: &[&str] = &[
+    otlp::TIME_UNIX_NANO,
+    otlp::OBSERVED_TIME_UNIX_NANO,
+    otlp::START_TIME_UNIX_NANO,
+    otlp::END_TIME_UNIX_NANO,
+];
 const U32_FIELDS: &[&str] = &[
     otlp::DROPPED_ATTRIBUTES_COUNT,
     otlp::FLAGS,
     otlp::TRACE_FLAGS,
+    otlp::DROPPED_EVENTS_COUNT,
+    otlp::DROPPED_LINKS_COUNT,
 ];
 const I64_FIELDS: &[&str] = &[otlp::INT_VALUE];
 const F64_FIELDS: &[&str] = &[otlp::DOUBLE_VALUE];
@@ -101,9 +108,23 @@ pub(crate) fn normalise_json_value(value: &mut JsonValue, key_hint: Option<&str>
                     .or_insert_with(|| JsonValue::String(String::new()));
             }
 
+            if let Some(otlp::SCOPE_SPANS) = key_hint {
+                map.entry(otlp::SCHEMA_URL.to_string())
+                    .or_insert_with(|| JsonValue::String(String::new()));
+                map.entry(otlp::SPANS.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+            }
+
             if let Some(otlp::RESOURCE_LOGS) = key_hint {
                 map.entry(otlp::SCHEMA_URL.to_string())
                     .or_insert_with(|| JsonValue::String(String::new()));
+            }
+
+            if let Some(otlp::RESOURCE_SPANS) = key_hint {
+                map.entry(otlp::SCHEMA_URL.to_string())
+                    .or_insert_with(|| JsonValue::String(String::new()));
+                map.entry(otlp::SCOPE_SPANS.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
             }
 
             if let Some(otlp::RESOURCE) = key_hint {
@@ -122,6 +143,77 @@ pub(crate) fn normalise_json_value(value: &mut JsonValue, key_hint: Option<&str>
                     .or_insert_with(|| JsonValue::String(String::new()));
                 map.entry(otlp::ATTRIBUTES.to_string())
                     .or_insert_with(|| JsonValue::Array(Vec::new()));
+            }
+
+            if let Some(otlp::SPANS) = key_hint {
+                map.entry(otlp::TRACE_ID.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+                map.entry(otlp::SPAN_ID.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+                map.entry(otlp::PARENT_SPAN_ID.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+                map.entry(otlp::TRACE_STATE.to_string())
+                    .or_insert_with(|| JsonValue::String(String::new()));
+                map.entry(otlp::NAME.to_string())
+                    .or_insert_with(|| JsonValue::String(String::new()));
+                map.entry(otlp::KIND.to_string())
+                    .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0)));
+                map.entry(otlp::START_TIME_UNIX_NANO.to_string())
+                    .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u64)));
+                map.entry(otlp::END_TIME_UNIX_NANO.to_string())
+                    .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u64)));
+                map.entry(otlp::ATTRIBUTES.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+                map.entry(otlp::DROPPED_ATTRIBUTES_COUNT.to_string())
+                    .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u32)));
+                map.entry(otlp::EVENTS.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+                map.entry(otlp::DROPPED_EVENTS_COUNT.to_string())
+                    .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u32)));
+                map.entry(otlp::LINKS.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+                map.entry(otlp::DROPPED_LINKS_COUNT.to_string())
+                    .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u32)));
+                map.entry(otlp::STATUS.to_string()).or_insert_with(|| {
+                    let mut status = serde_json::Map::with_capacity(2);
+                    status.insert(
+                        otlp::CODE.to_string(),
+                        JsonValue::Number(serde_json::Number::from(0)),
+                    );
+                    status.insert(otlp::MESSAGE.to_string(), JsonValue::String(String::new()));
+                    JsonValue::Object(status)
+                });
+            }
+
+            if let Some(otlp::EVENTS) = key_hint {
+                map.entry(otlp::TIME_UNIX_NANO.to_string())
+                    .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u64)));
+                map.entry(otlp::NAME.to_string())
+                    .or_insert_with(|| JsonValue::String(String::new()));
+                map.entry(otlp::ATTRIBUTES.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+                map.entry(otlp::DROPPED_ATTRIBUTES_COUNT.to_string())
+                    .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u32)));
+            }
+
+            if let Some(otlp::LINKS) = key_hint {
+                map.entry(otlp::TRACE_ID.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+                map.entry(otlp::SPAN_ID.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+                map.entry(otlp::TRACE_STATE.to_string())
+                    .or_insert_with(|| JsonValue::String(String::new()));
+                map.entry(otlp::ATTRIBUTES.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+                map.entry(otlp::DROPPED_ATTRIBUTES_COUNT.to_string())
+                    .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u32)));
+            }
+
+            if let Some(otlp::STATUS) = key_hint {
+                map.entry(otlp::CODE.to_string())
+                    .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0)));
+                map.entry(otlp::MESSAGE.to_string())
+                    .or_insert_with(|| JsonValue::String(String::new()));
             }
 
             Ok(())
@@ -189,7 +281,7 @@ fn convert_string_field(key: &str, value: &str) -> Result<Option<JsonValue>> {
     }
 
     // Convert hex-encoded trace/span IDs to byte arrays
-    if matches!(key, k if k == otlp::TRACE_ID || k == otlp::SPAN_ID)
+    if matches!(key, k if k == otlp::TRACE_ID || k == otlp::SPAN_ID || k == otlp::PARENT_SPAN_ID)
         && value.len().is_multiple_of(2)
         && value.chars().all(|c| c.is_ascii_hexdigit())
     {
@@ -202,6 +294,33 @@ fn convert_string_field(key: &str, value: &str) -> Result<Option<JsonValue>> {
         let json_value =
             serde_json::to_value(bytes).context("Failed to encode OTLP id bytes as JSON array")?;
         return Ok(Some(json_value));
+    }
+
+    if key == otlp::KIND {
+        let parsed = match value {
+            "SPAN_KIND_UNSPECIFIED" => 0,
+            "SPAN_KIND_INTERNAL" => 1,
+            "SPAN_KIND_SERVER" => 2,
+            "SPAN_KIND_CLIENT" => 3,
+            "SPAN_KIND_PRODUCER" => 4,
+            "SPAN_KIND_CONSUMER" => 5,
+            _ => return Ok(None),
+        };
+        return Ok(Some(JsonValue::Number(serde_json::Number::from(parsed))));
+    }
+
+    if key == otlp::CODE {
+        let number = match value {
+            "STATUS_CODE_UNSET" => serde_json::Number::from(0),
+            "STATUS_CODE_OK" => serde_json::Number::from(1),
+            "STATUS_CODE_ERROR" => serde_json::Number::from(2),
+            _ => match value.parse::<i32>() {
+                Ok(parsed) => serde_json::Number::from(parsed),
+                Err(_) => return Ok(None),
+            },
+        };
+
+        return Ok(Some(JsonValue::Number(number)));
     }
 
     if key == otlp::ARRAY_VALUE && value.is_empty() {
