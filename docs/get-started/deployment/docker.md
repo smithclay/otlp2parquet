@@ -9,7 +9,7 @@ docker-compose up
 ```
 
 Includes:
-- otlp2parquet HTTP server (:8080)
+- otlp2parquet HTTP server (:4318)
 - MinIO S3-compatible storage (:9000 API, :9001 console)
 - Auto-created `otlp-logs` bucket
 
@@ -59,7 +59,7 @@ kubectl apply -f deploy/docker/kubernetes/
 | `S3_ENDPOINT` | `http://minio:9000` | S3 endpoint (blank for AWS) |
 | `AWS_ACCESS_KEY_ID` | `minioadmin` | Access key |
 | `AWS_SECRET_ACCESS_KEY` | `minioadmin` | Secret key |
-| `HTTP_PORT` | `8080` | HTTP server port |
+| `HTTP_PORT` | `4318` | HTTP server port |
 | `RUST_LOG` | `info` | Log level |
 
 ## Troubleshooting

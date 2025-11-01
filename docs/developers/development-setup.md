@@ -184,7 +184,7 @@ R2_SECRET_ACCESS_KEY=your_secret \
 
 # Docker deployment example
 docker build -t otlp2parquet .
-docker run -p 8080:8080 \
+docker run -p 4318:4318 \
   -e STORAGE_BACKEND=s3 \
   -e S3_BUCKET=my-logs-bucket \
   -e S3_REGION=us-east-1 \

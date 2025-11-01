@@ -48,7 +48,7 @@ services:
       minio-init:
         condition: service_completed_successfully
     ports:
-      - "${HTTP_PORT:-8080}:8080"
+      - "${HTTP_PORT:-4318}:4318"
     environment:
       # Storage (override for cloud: STORAGE_BACKEND=s3 S3_ENDPOINT= S3_REGION=us-east-1)
       STORAGE_BACKEND: ${STORAGE_BACKEND:-s3}
@@ -60,8 +60,8 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-minioadmin}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
 
-      # Server
-      HTTP_PORT: 8080
+      # Server (OTLP HTTP port)
+      HTTP_PORT: 4318
       HTTP_HOST: 0.0.0.0
       RUST_LOG: ${RUST_LOG:-info}
 
@@ -80,6 +80,7 @@ volumes:
 #
 # Local (MinIO):
 #   docker-compose up
+#   OTLP endpoint: http://localhost:4318/v1/logs (OpenTelemetry HTTP)
 #   MinIO console: http://localhost:9001 (minioadmin/minioadmin)
 #
 # AWS S3:

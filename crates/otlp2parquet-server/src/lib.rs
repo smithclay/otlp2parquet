@@ -118,7 +118,7 @@ pub async fn run() -> Result<()> {
     info!("Server mode - full-featured HTTP server with multi-backend storage");
 
     // Get configuration
-    let addr = std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
+    let addr = std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:4318".to_string());
 
     // Initialize storage
     let storage = init_storage()?;

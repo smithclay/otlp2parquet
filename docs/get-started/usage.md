@@ -4,10 +4,10 @@ Once `otlp2parquet` is deployed, you can start sending OpenTelemetry logs and qu
 
 ## Send Logs
 
-Send logs to your deployed `otlp2parquet` instance. The exact endpoint will depend on your deployment method (e.g., `http://localhost:8080/v1/logs` for Docker, your Worker URL for Cloudflare, or your Function URL for AWS Lambda).
+Send logs to your deployed `otlp2parquet` instance. The exact endpoint will depend on your deployment method (e.g., `http://localhost:4318/v1/logs` for Docker, your Worker URL for Cloudflare, or your Function URL for AWS Lambda).
 
 ```bash
-curl -X POST http://localhost:8080/v1/logs \
+curl -X POST http://localhost:4318/v1/logs \
   -H "Content-Type: application/x-protobuf" \
   --data-binary @logs.pb
 ```
