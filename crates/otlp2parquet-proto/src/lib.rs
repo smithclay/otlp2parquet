@@ -48,7 +48,10 @@ pub mod opentelemetry {
         }
         pub mod metrics {
             pub mod v1 {
-                include!(concat!(env!("OUT_DIR"), "/opentelemetry.proto.metrics.v1.rs"));
+                include!(concat!(
+                    env!("OUT_DIR"),
+                    "/opentelemetry.proto.metrics.v1.rs"
+                ));
             }
         }
         pub mod common {

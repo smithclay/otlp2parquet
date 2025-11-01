@@ -331,7 +331,11 @@ async fn handle_metrics_request(
 
         // Write Parquet synchronously (WASM-compatible)
         let parquet_bytes = wasm_parquet::write_batches_to_parquet(&[batch]).map_err(|e| {
-            console_error!("Failed to serialize {} metrics Parquet: {:?}", metric_type, e);
+            console_error!(
+                "Failed to serialize {} metrics Parquet: {:?}",
+                metric_type,
+                e
+            );
             worker::Error::RustError(format!("Parquet serialization error: {}", e))
         })?;
 

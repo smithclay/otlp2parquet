@@ -278,7 +278,10 @@ async fn process_metrics(
 }
 
 fn build_not_implemented_response(signal_type: &str) -> Response {
-    warn!("Received OTLP {} request but ingestion is not implemented yet", signal_type);
+    warn!(
+        "Received OTLP {} request but ingestion is not implemented yet",
+        signal_type
+    );
     (
         StatusCode::NOT_IMPLEMENTED,
         Json(json!({

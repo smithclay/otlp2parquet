@@ -5,9 +5,8 @@
 
 use anyhow::{Context, Result};
 use arrow::array::{
-    Array, BooleanBuilder, Float64Builder, GenericListArray, Int32Builder, ListBuilder,
-    MapBuilder, OffsetSizeTrait, RecordBatch, StringBuilder, TimestampNanosecondBuilder,
-    UInt64Builder,
+    Array, BooleanBuilder, Float64Builder, GenericListArray, Int32Builder, ListBuilder, MapBuilder,
+    OffsetSizeTrait, RecordBatch, StringBuilder, TimestampNanosecondBuilder, UInt64Builder,
 };
 use arrow::datatypes::{DataType, Field};
 use otlp2parquet_proto::opentelemetry::proto::{
@@ -22,8 +21,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::otlp::common::{
-    any_value_builder::any_value_string, builder_helpers::map_field_names,
-    field_names::semconv,
+    any_value_builder::any_value_string, builder_helpers::map_field_names, field_names::semconv,
 };
 use crate::schema::metrics::*;
 
@@ -219,12 +217,7 @@ impl ArrowConverter {
             }
             Data::ExponentialHistogram(exp_histogram) => {
                 for point in &exp_histogram.data_points {
-                    exp_histogram_builder.add_data_point(
-                        metric,
-                        point,
-                        resource_ctx,
-                        scope_ctx,
-                    )?;
+                    exp_histogram_builder.add_data_point(metric, point, resource_ctx, scope_ctx)?;
                 }
             }
             Data::Summary(summary) => {
@@ -377,7 +370,9 @@ impl BaseColumnsBuilder {
         // Resource attributes
         for (key, value) in &resource_ctx.attributes {
             self.resource_attributes_builder.keys().append_value(key);
-            self.resource_attributes_builder.values().append_value(value);
+            self.resource_attributes_builder
+                .values()
+                .append_value(value);
         }
         self.resource_attributes_builder.append(true)?;
 
@@ -433,8 +428,13 @@ impl GaugeBuilder {
         scope_ctx: &ScopeContext,
     ) -> Result<()> {
         let timestamp = clamp_nanos(point.time_unix_nano);
-        self.base
-            .add_common_fields(metric, timestamp, &point.attributes, resource_ctx, scope_ctx)?;
+        self.base.add_common_fields(
+            metric,
+            timestamp,
+            &point.attributes,
+            resource_ctx,
+            scope_ctx,
+        )?;
 
         // Value
         let value = extract_number_value(point)?;
@@ -495,8 +495,13 @@ impl SumBuilder {
         scope_ctx: &ScopeContext,
     ) -> Result<()> {
         let timestamp = clamp_nanos(point.time_unix_nano);
-        self.base
-            .add_common_fields(metric, timestamp, &point.attributes, resource_ctx, scope_ctx)?;
+        self.base.add_common_fields(
+            metric,
+            timestamp,
+            &point.attributes,
+            resource_ctx,
+            scope_ctx,
+        )?;
 
         let value = extract_number_value(point)?;
         self.value_builder.append_value(value);
@@ -565,8 +570,13 @@ impl HistogramBuilder {
         scope_ctx: &ScopeContext,
     ) -> Result<()> {
         let timestamp = clamp_nanos(point.time_unix_nano);
-        self.base
-            .add_common_fields(metric, timestamp, &point.attributes, resource_ctx, scope_ctx)?;
+        self.base.add_common_fields(
+            metric,
+            timestamp,
+            &point.attributes,
+            resource_ctx,
+            scope_ctx,
+        )?;
 
         self.count_builder.append_value(point.count);
         self.sum_builder.append_value(point.sum.unwrap_or(0.0));
@@ -677,8 +687,13 @@ impl ExponentialHistogramBuilder {
         scope_ctx: &ScopeContext,
     ) -> Result<()> {
         let timestamp = clamp_nanos(point.time_unix_nano);
-        self.base
-            .add_common_fields(metric, timestamp, &point.attributes, resource_ctx, scope_ctx)?;
+        self.base.add_common_fields(
+            metric,
+            timestamp,
+            &point.attributes,
+            resource_ctx,
+            scope_ctx,
+        )?;
 
         self.count_builder.append_value(point.count);
         self.sum_builder.append_value(point.sum.unwrap_or(0.0));
@@ -797,8 +812,13 @@ impl SummaryBuilder {
         scope_ctx: &ScopeContext,
     ) -> Result<()> {
         let timestamp = clamp_nanos(point.time_unix_nano);
-        self.base
-            .add_common_fields(metric, timestamp, &point.attributes, resource_ctx, scope_ctx)?;
+        self.base.add_common_fields(
+            metric,
+            timestamp,
+            &point.attributes,
+            resource_ctx,
+            scope_ctx,
+        )?;
 
         self.count_builder.append_value(point.count);
         self.sum_builder.append_value(point.sum);
@@ -1150,7 +1170,9 @@ mod tests {
             }],
         };
 
-        let (batches, metadata) = converter.convert(request).expect("Failed to convert multiple metrics");
+        let (batches, metadata) = converter
+            .convert(request)
+            .expect("Failed to convert multiple metrics");
         assert_eq!(batches.len(), 3); // gauge, sum, histogram
         assert_eq!(metadata.gauge_count, 1);
         assert_eq!(metadata.sum_count, 1);

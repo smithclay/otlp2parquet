@@ -164,9 +164,7 @@ pub fn otel_metrics_exponential_histogram_schema() -> Schema {
 /// Returns a cached `Arc<Schema>` for exponential histogram metrics
 pub fn otel_metrics_exponential_histogram_schema_arc() -> Arc<Schema> {
     static SCHEMA: OnceLock<Arc<Schema>> = OnceLock::new();
-    Arc::clone(SCHEMA.get_or_init(|| {
-        Arc::new(build_exponential_histogram_schema())
-    }))
+    Arc::clone(SCHEMA.get_or_init(|| Arc::new(build_exponential_histogram_schema())))
 }
 
 fn build_exponential_histogram_schema() -> Schema {
