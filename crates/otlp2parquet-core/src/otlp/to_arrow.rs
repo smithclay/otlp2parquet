@@ -6,7 +6,7 @@
 use anyhow::{Context, Result};
 use arrow::array::{
     FixedSizeBinaryBuilder, Int32Builder, MapBuilder, RecordBatch, StringBuilder, StructBuilder,
-    TimestampNanosecondBuilder, UInt32Builder,
+    TimestampNanosecondBuilder, TimestampSecondBuilder, UInt32Builder,
 };
 use otlp2parquet_proto::opentelemetry::proto::{
     collector::logs::v1::ExportLogsServiceRequest, common::v1::AnyValue,
@@ -33,6 +33,7 @@ pub struct LogMetadata {
 pub struct ArrowConverter {
     // Column builders
     timestamp_builder: TimestampNanosecondBuilder,
+    timestamp_time_builder: TimestampSecondBuilder,
     observed_timestamp_builder: TimestampNanosecondBuilder,
     trace_id_builder: FixedSizeBinaryBuilder,
     span_id_builder: FixedSizeBinaryBuilder,
@@ -43,8 +44,11 @@ pub struct ArrowConverter {
     service_name_builder: StringBuilder,
     service_namespace_builder: StringBuilder,
     service_instance_id_builder: StringBuilder,
+    resource_schema_url_builder: StringBuilder,
     scope_name_builder: StringBuilder,
     scope_version_builder: StringBuilder,
+    scope_attributes_builder: MapBuilder<StringBuilder, StructBuilder>,
+    scope_schema_url_builder: StringBuilder,
     resource_attributes_builder: MapBuilder<StringBuilder, StructBuilder>,
     log_attributes_builder: MapBuilder<StringBuilder, StructBuilder>,
 
@@ -62,9 +66,12 @@ impl ArrowConverter {
             timestamp_builder: TimestampNanosecondBuilder::new()
                 .with_timezone("UTC")
                 .with_data_type(schema.field(0).data_type().clone()),
-            observed_timestamp_builder: TimestampNanosecondBuilder::new()
+            timestamp_time_builder: TimestampSecondBuilder::new()
                 .with_timezone("UTC")
                 .with_data_type(schema.field(1).data_type().clone()),
+            observed_timestamp_builder: TimestampNanosecondBuilder::new()
+                .with_timezone("UTC")
+                .with_data_type(schema.field(2).data_type().clone()),
             trace_id_builder: FixedSizeBinaryBuilder::new(TRACE_ID_SIZE),
             span_id_builder: FixedSizeBinaryBuilder::new(SPAN_ID_SIZE),
             trace_flags_builder: UInt32Builder::new(),
@@ -74,8 +81,15 @@ impl ArrowConverter {
             service_name_builder: StringBuilder::new(),
             service_namespace_builder: StringBuilder::new(),
             service_instance_id_builder: StringBuilder::new(),
+            resource_schema_url_builder: StringBuilder::new(),
             scope_name_builder: StringBuilder::new(),
             scope_version_builder: StringBuilder::new(),
+            scope_attributes_builder: MapBuilder::new(
+                Some(map_field_names()),
+                StringBuilder::new(),
+                new_any_value_struct_builder(),
+            ),
+            scope_schema_url_builder: StringBuilder::new(),
             resource_attributes_builder: MapBuilder::new(
                 Some(map_field_names()),
                 StringBuilder::new(),
@@ -117,6 +131,13 @@ impl ArrowConverter {
         F: FnMut(RecordBatch, LogMetadata) -> Result<()>,
     {
         for resource_logs in &request.resource_logs {
+            // Extract resource schema URL
+            let resource_schema_url = if resource_logs.schema_url.is_empty() {
+                None
+            } else {
+                Some(resource_logs.schema_url.as_str())
+            };
+
             // Extract resource attributes
             let mut resource_attrs: Vec<(&str, Option<&AnyValue>)> =
                 if let Some(resource) = &resource_logs.resource {
@@ -166,6 +187,14 @@ impl ArrowConverter {
             }
 
             for scope_logs in &resource_logs.scope_logs {
+                // Extract scope schema URL
+                let scope_schema_url = if scope_logs.schema_url.is_empty() {
+                    None
+                } else {
+                    Some(scope_logs.schema_url.as_str())
+                };
+
+                // Extract scope metadata
                 let scope_name = scope_logs
                     .scope
                     .as_ref()
@@ -179,9 +208,24 @@ impl ArrowConverter {
                     }
                 });
 
+                // Extract scope attributes
+                let scope_attrs: Vec<(&str, Option<&AnyValue>)> = scope_logs
+                    .scope
+                    .as_ref()
+                    .map(|s| {
+                        s.attributes
+                            .iter()
+                            .map(|attr| (attr.key.as_str(), attr.value.as_ref()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
                 for log_record in &scope_logs.log_records {
                     let timestamp = log_record.time_unix_nano as i64;
                     self.timestamp_builder.append_value(timestamp);
+                    // TimestampTime is timestamp rounded to seconds
+                    let timestamp_seconds = timestamp / 1_000_000_000;
+                    self.timestamp_time_builder.append_value(timestamp_seconds);
                     self.observed_timestamp_builder
                         .append_value(log_record.observed_time_unix_nano as i64);
 
@@ -228,12 +272,29 @@ impl ArrowConverter {
                     } else {
                         self.service_instance_id_builder.append_null();
                     }
+                    if let Some(url) = resource_schema_url {
+                        self.resource_schema_url_builder.append_value(url);
+                    } else {
+                        self.resource_schema_url_builder.append_null();
+                    }
 
                     self.scope_name_builder.append_value(scope_name);
                     if let Some(ver) = scope_version {
                         self.scope_version_builder.append_value(ver);
                     } else {
                         self.scope_version_builder.append_null();
+                    }
+                    // Append scope attributes
+                    for &(key, value) in &scope_attrs {
+                        self.scope_attributes_builder.keys().append_value(key);
+                        append_any_value(self.scope_attributes_builder.values(), value)?;
+                    }
+                    self.scope_attributes_builder.append(true)?;
+
+                    if let Some(url) = scope_schema_url {
+                        self.scope_schema_url_builder.append_value(url);
+                    } else {
+                        self.scope_schema_url_builder.append_null();
                     }
 
                     for &(key, value) in &resource_attrs {
@@ -285,6 +346,7 @@ impl ArrowConverter {
             schema,
             vec![
                 Arc::new(self.timestamp_builder.finish()),
+                Arc::new(self.timestamp_time_builder.finish()),
                 Arc::new(self.observed_timestamp_builder.finish()),
                 Arc::new(self.trace_id_builder.finish()),
                 Arc::new(self.span_id_builder.finish()),
@@ -295,8 +357,11 @@ impl ArrowConverter {
                 Arc::new(self.service_name_builder.finish()),
                 Arc::new(self.service_namespace_builder.finish()),
                 Arc::new(self.service_instance_id_builder.finish()),
+                Arc::new(self.resource_schema_url_builder.finish()),
                 Arc::new(self.scope_name_builder.finish()),
                 Arc::new(self.scope_version_builder.finish()),
+                Arc::new(self.scope_attributes_builder.finish()),
+                Arc::new(self.scope_schema_url_builder.finish()),
                 Arc::new(self.resource_attributes_builder.finish()),
                 Arc::new(self.log_attributes_builder.finish()),
             ],

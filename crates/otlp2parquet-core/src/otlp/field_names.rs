@@ -102,6 +102,8 @@ pub mod arrow {
     // Timestamp columns
     /// Log timestamp (corresponds to time_unix_nano)
     pub const TIMESTAMP: &str = "Timestamp";
+    /// Timestamp rounded to second (for partitioning and efficient queries)
+    pub const TIMESTAMP_TIME: &str = "TimestampTime";
     /// Observer timestamp (corresponds to observed_time_unix_nano)
     pub const OBSERVED_TIMESTAMP: &str = "ObservedTimestamp";
 
@@ -135,11 +137,19 @@ pub mod arrow {
     /// Service instance ID (extracted from resource attributes)
     pub const SERVICE_INSTANCE_ID: &str = "ServiceInstanceId";
 
+    // Resource metadata columns
+    /// Resource schema URL for versioning
+    pub const RESOURCE_SCHEMA_URL: &str = "ResourceSchemaUrl";
+
     // Scope columns
     /// Instrumentation scope name
     pub const SCOPE_NAME: &str = "ScopeName";
     /// Instrumentation scope version
     pub const SCOPE_VERSION: &str = "ScopeVersion";
+    /// Instrumentation scope attributes map
+    pub const SCOPE_ATTRIBUTES: &str = "ScopeAttributes";
+    /// Scope schema URL for versioning
+    pub const SCOPE_SCHEMA_URL: &str = "ScopeSchemaUrl";
 
     // AnyValue struct field names (PascalCase)
     /// Type discriminator field in AnyValue struct

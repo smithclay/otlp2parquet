@@ -33,6 +33,11 @@ fn build_schema() -> Schema {
             false,
         ),
         Field::new(
+            field::TIMESTAMP_TIME,
+            DataType::Timestamp(TimeUnit::Second, Some("UTC".into())),
+            false,
+        ),
+        Field::new(
             field::OBSERVED_TIMESTAMP,
             DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())),
             false,
@@ -50,9 +55,29 @@ fn build_schema() -> Schema {
         Field::new(field::SERVICE_NAME, DataType::Utf8, false),
         Field::new(field::SERVICE_NAMESPACE, DataType::Utf8, true),
         Field::new(field::SERVICE_INSTANCE_ID, DataType::Utf8, true),
+        Field::new(field::RESOURCE_SCHEMA_URL, DataType::Utf8, true),
         // Scope
         Field::new(field::SCOPE_NAME, DataType::Utf8, false),
         Field::new(field::SCOPE_VERSION, DataType::Utf8, true),
+        Field::new(
+            field::SCOPE_ATTRIBUTES,
+            DataType::Map(
+                Arc::new(Field::new(
+                    field::ENTRIES,
+                    DataType::Struct(
+                        vec![
+                            Field::new(field::KEY, DataType::Utf8, false),
+                            any_value_field(field::VALUE, true),
+                        ]
+                        .into(),
+                    ),
+                    false,
+                )),
+                false,
+            ),
+            false,
+        ),
+        Field::new(field::SCOPE_SCHEMA_URL, DataType::Utf8, true),
         // Remaining attributes as Map<String, AnyValue>
         Field::new(
             field::RESOURCE_ATTRIBUTES,
@@ -138,17 +163,23 @@ mod tests {
     #[test]
     fn test_schema_creation() {
         let schema = otel_logs_schema();
-        assert_eq!(schema.fields().len(), 15);
+        assert_eq!(schema.fields().len(), 19);
 
         // Verify timestamp fields
         assert_eq!(schema.field(0).name(), field::TIMESTAMP);
-        assert_eq!(schema.field(1).name(), field::OBSERVED_TIMESTAMP);
+        assert_eq!(schema.field(1).name(), field::TIMESTAMP_TIME);
+        assert_eq!(schema.field(2).name(), field::OBSERVED_TIMESTAMP);
 
         // Verify trace fields
-        assert_eq!(schema.field(2).name(), field::TRACE_ID);
-        assert_eq!(schema.field(3).name(), field::SPAN_ID);
+        assert_eq!(schema.field(3).name(), field::TRACE_ID);
+        assert_eq!(schema.field(4).name(), field::SPAN_ID);
 
         // Verify service fields
-        assert_eq!(schema.field(8).name(), field::SERVICE_NAME);
+        assert_eq!(schema.field(9).name(), field::SERVICE_NAME);
+
+        // Verify new schema URL fields
+        assert_eq!(schema.field(12).name(), field::RESOURCE_SCHEMA_URL);
+        assert_eq!(schema.field(16).name(), field::SCOPE_SCHEMA_URL);
+        assert_eq!(schema.field(15).name(), field::SCOPE_ATTRIBUTES);
     }
 }
