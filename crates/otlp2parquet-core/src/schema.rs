@@ -2,10 +2,16 @@
 //
 // This schema matches the ClickHouse OTel exporter format with PascalCase naming.
 // Common resource attributes are extracted to dedicated columns.
+//
+// Note: This schema uses PascalCase field names for ClickHouse compatibility,
+// diverging from the OTLP standard which uses snake_case. The conversion happens
+// during the OTLP → Arrow transformation. See CLAUDE.md for rationale.
 
 use arrow::datatypes::{DataType, Field, Fields, Schema, TimeUnit};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
+
+use crate::otlp::field_names::{arrow as field, semconv};
 
 /// Returns the Arrow schema for OpenTelemetry logs compatible with ClickHouse
 pub fn otel_logs_schema() -> Schema {
@@ -22,41 +28,41 @@ fn build_schema() -> Schema {
     let fields = vec![
         // Timestamps - nanosecond precision, UTC
         Field::new(
-            "Timestamp",
+            field::TIMESTAMP,
             DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())),
             false,
         ),
         Field::new(
-            "ObservedTimestamp",
+            field::OBSERVED_TIMESTAMP,
             DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())),
             false,
         ),
         // Trace context
-        Field::new("TraceId", DataType::FixedSizeBinary(16), false),
-        Field::new("SpanId", DataType::FixedSizeBinary(8), false),
-        Field::new("TraceFlags", DataType::UInt32, false),
+        Field::new(field::TRACE_ID, DataType::FixedSizeBinary(16), false),
+        Field::new(field::SPAN_ID, DataType::FixedSizeBinary(8), false),
+        Field::new(field::TRACE_FLAGS, DataType::UInt32, false),
         // Severity
-        Field::new("SeverityText", DataType::Utf8, false),
-        Field::new("SeverityNumber", DataType::Int32, false),
+        Field::new(field::SEVERITY_TEXT, DataType::Utf8, false),
+        Field::new(field::SEVERITY_NUMBER, DataType::Int32, false),
         // Body as structured AnyValue
-        any_value_field("Body", true),
+        any_value_field(field::BODY, true),
         // Resource attributes - extracted common fields
-        Field::new("ServiceName", DataType::Utf8, false),
-        Field::new("ServiceNamespace", DataType::Utf8, true),
-        Field::new("ServiceInstanceId", DataType::Utf8, true),
+        Field::new(field::SERVICE_NAME, DataType::Utf8, false),
+        Field::new(field::SERVICE_NAMESPACE, DataType::Utf8, true),
+        Field::new(field::SERVICE_INSTANCE_ID, DataType::Utf8, true),
         // Scope
-        Field::new("ScopeName", DataType::Utf8, false),
-        Field::new("ScopeVersion", DataType::Utf8, true),
+        Field::new(field::SCOPE_NAME, DataType::Utf8, false),
+        Field::new(field::SCOPE_VERSION, DataType::Utf8, true),
         // Remaining attributes as Map<String, AnyValue>
         Field::new(
-            "ResourceAttributes",
+            field::RESOURCE_ATTRIBUTES,
             DataType::Map(
                 Arc::new(Field::new(
-                    "entries",
+                    field::ENTRIES,
                     DataType::Struct(
                         vec![
-                            Field::new("key", DataType::Utf8, false),
-                            any_value_field("value", true),
+                            Field::new(field::KEY, DataType::Utf8, false),
+                            any_value_field(field::VALUE, true),
                         ]
                         .into(),
                     ),
@@ -67,14 +73,14 @@ fn build_schema() -> Schema {
             false,
         ),
         Field::new(
-            "LogAttributes",
+            field::LOG_ATTRIBUTES,
             DataType::Map(
                 Arc::new(Field::new(
-                    "entries",
+                    field::ENTRIES,
                     DataType::Struct(
                         vec![
-                            Field::new("key", DataType::Utf8, false),
-                            any_value_field("value", true),
+                            Field::new(field::KEY, DataType::Utf8, false),
+                            any_value_field(field::VALUE, true),
                         ]
                         .into(),
                     ),
@@ -95,19 +101,28 @@ fn build_schema() -> Schema {
     Schema::new_with_metadata(fields, metadata)
 }
 
-/// Common resource attribute keys that are extracted to dedicated columns
-pub const EXTRACTED_RESOURCE_ATTRS: &[&str] =
-    &["service.name", "service.namespace", "service.instance.id"];
+/// Common resource attribute keys that are extracted to dedicated columns.
+///
+/// These semantic convention attributes are extracted from the resource attributes
+/// map and promoted to dedicated columns for better query performance and
+/// ClickHouse compatibility.
+///
+/// Reference: https://opentelemetry.io/docs/specs/semconv/resource/
+pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
+    semconv::SERVICE_NAME,
+    semconv::SERVICE_NAMESPACE,
+    semconv::SERVICE_INSTANCE_ID,
+];
 
 pub(crate) fn any_value_fields() -> Fields {
     vec![
-        Field::new("Type", DataType::Utf8, false),
-        Field::new("StringValue", DataType::Utf8, true),
-        Field::new("BoolValue", DataType::Boolean, true),
-        Field::new("IntValue", DataType::Int64, true),
-        Field::new("DoubleValue", DataType::Float64, true),
-        Field::new("BytesValue", DataType::Binary, true),
-        Field::new("JsonValue", DataType::LargeUtf8, true),
+        Field::new(field::TYPE, DataType::Utf8, false),
+        Field::new(field::STRING_VALUE, DataType::Utf8, true),
+        Field::new(field::BOOL_VALUE, DataType::Boolean, true),
+        Field::new(field::INT_VALUE, DataType::Int64, true),
+        Field::new(field::DOUBLE_VALUE, DataType::Float64, true),
+        Field::new(field::BYTES_VALUE, DataType::Binary, true),
+        Field::new(field::JSON_VALUE, DataType::LargeUtf8, true),
     ]
     .into()
 }
@@ -126,14 +141,14 @@ mod tests {
         assert_eq!(schema.fields().len(), 15);
 
         // Verify timestamp fields
-        assert_eq!(schema.field(0).name(), "Timestamp");
-        assert_eq!(schema.field(1).name(), "ObservedTimestamp");
+        assert_eq!(schema.field(0).name(), field::TIMESTAMP);
+        assert_eq!(schema.field(1).name(), field::OBSERVED_TIMESTAMP);
 
         // Verify trace fields
-        assert_eq!(schema.field(2).name(), "TraceId");
-        assert_eq!(schema.field(3).name(), "SpanId");
+        assert_eq!(schema.field(2).name(), field::TRACE_ID);
+        assert_eq!(schema.field(3).name(), field::SPAN_ID);
 
         // Verify service fields
-        assert_eq!(schema.field(8).name(), "ServiceName");
+        assert_eq!(schema.field(8).name(), field::SERVICE_NAME);
     }
 }

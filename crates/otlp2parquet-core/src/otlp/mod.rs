@@ -6,6 +6,10 @@
 pub mod format;
 pub mod to_arrow;
 
+// Constants
+pub mod field_names;
+pub mod field_numbers;
+
 // Submodules
 mod any_value_builder;
 mod builder_helpers;

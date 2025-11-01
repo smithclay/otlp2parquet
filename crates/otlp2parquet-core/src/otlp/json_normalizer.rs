@@ -9,19 +9,25 @@ use serde_json::Value as JsonValue;
 use std::borrow::Cow;
 use std::mem;
 
+use super::field_names::otlp;
+
 // Field name constants for JSON normalization
-const U64_FIELDS: &[&str] = &["time_unix_nano", "observed_time_unix_nano"];
-const U32_FIELDS: &[&str] = &["dropped_attributes_count", "flags", "trace_flags"];
-const I64_FIELDS: &[&str] = &["int_value"];
-const F64_FIELDS: &[&str] = &["double_value"];
+const U64_FIELDS: &[&str] = &[otlp::TIME_UNIX_NANO, otlp::OBSERVED_TIME_UNIX_NANO];
+const U32_FIELDS: &[&str] = &[
+    otlp::DROPPED_ATTRIBUTES_COUNT,
+    otlp::FLAGS,
+    otlp::TRACE_FLAGS,
+];
+const I64_FIELDS: &[&str] = &[otlp::INT_VALUE];
+const F64_FIELDS: &[&str] = &[otlp::DOUBLE_VALUE];
 const ANYVALUE_VARIANTS: &[&str] = &[
-    "string_value",
-    "bool_value",
-    "int_value",
-    "double_value",
-    "array_value",
-    "kvlist_value",
-    "bytes_value",
+    otlp::STRING_VALUE,
+    otlp::BOOL_VALUE,
+    otlp::INT_VALUE,
+    otlp::DOUBLE_VALUE,
+    otlp::ARRAY_VALUE,
+    otlp::KVLIST_VALUE,
+    otlp::BYTES_VALUE,
 ];
 
 /// Normalize canonical OTLP JSON to prost-compatible format
@@ -69,52 +75,52 @@ pub(crate) fn normalise_json_value(value: &mut JsonValue, key_hint: Option<&str>
             }
 
             // Fill in missing required fields based on context
-            if let Some("log_records") = key_hint {
-                map.entry("dropped_attributes_count".to_string())
+            if let Some(otlp::LOG_RECORDS) = key_hint {
+                map.entry(otlp::DROPPED_ATTRIBUTES_COUNT.to_string())
                     .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u32)));
-                map.entry("flags".to_string())
+                map.entry(otlp::FLAGS.to_string())
                     .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u32)));
-                map.entry("observed_time_unix_nano".to_string())
+                map.entry(otlp::OBSERVED_TIME_UNIX_NANO.to_string())
                     .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u64)));
-                map.entry("time_unix_nano".to_string())
+                map.entry(otlp::TIME_UNIX_NANO.to_string())
                     .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u64)));
-                map.entry("severity_number".to_string())
+                map.entry(otlp::SEVERITY_NUMBER.to_string())
                     .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0i32)));
-                map.entry("severity_text".to_string())
+                map.entry(otlp::SEVERITY_TEXT.to_string())
                     .or_insert_with(|| JsonValue::String(String::new()));
-                map.entry("attributes".to_string())
+                map.entry(otlp::ATTRIBUTES.to_string())
                     .or_insert_with(|| JsonValue::Array(Vec::new()));
-                map.entry("trace_id".to_string())
+                map.entry(otlp::TRACE_ID.to_string())
                     .or_insert_with(|| JsonValue::Array(Vec::new()));
-                map.entry("span_id".to_string())
+                map.entry(otlp::SPAN_ID.to_string())
                     .or_insert_with(|| JsonValue::Array(Vec::new()));
             }
 
-            if let Some("scope_logs") = key_hint {
-                map.entry("schema_url".to_string())
+            if let Some(otlp::SCOPE_LOGS) = key_hint {
+                map.entry(otlp::SCHEMA_URL.to_string())
                     .or_insert_with(|| JsonValue::String(String::new()));
             }
 
-            if let Some("resource_logs") = key_hint {
-                map.entry("schema_url".to_string())
+            if let Some(otlp::RESOURCE_LOGS) = key_hint {
+                map.entry(otlp::SCHEMA_URL.to_string())
                     .or_insert_with(|| JsonValue::String(String::new()));
             }
 
-            if let Some("resource") = key_hint {
-                map.entry("dropped_attributes_count".to_string())
+            if let Some(otlp::RESOURCE) = key_hint {
+                map.entry(otlp::DROPPED_ATTRIBUTES_COUNT.to_string())
                     .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u32)));
-                map.entry("attributes".to_string())
+                map.entry(otlp::ATTRIBUTES.to_string())
                     .or_insert_with(|| JsonValue::Array(Vec::new()));
             }
 
-            if let Some("scope") = key_hint {
-                map.entry("dropped_attributes_count".to_string())
+            if let Some(otlp::SCOPE) = key_hint {
+                map.entry(otlp::DROPPED_ATTRIBUTES_COUNT.to_string())
                     .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u32)));
-                map.entry("name".to_string())
+                map.entry(otlp::NAME.to_string())
                     .or_insert_with(|| JsonValue::String(String::new()));
-                map.entry("version".to_string())
+                map.entry(otlp::VERSION.to_string())
                     .or_insert_with(|| JsonValue::String(String::new()));
-                map.entry("attributes".to_string())
+                map.entry(otlp::ATTRIBUTES.to_string())
                     .or_insert_with(|| JsonValue::Array(Vec::new()));
             }
 
@@ -183,7 +189,7 @@ fn convert_string_field(key: &str, value: &str) -> Result<Option<JsonValue>> {
     }
 
     // Convert hex-encoded trace/span IDs to byte arrays
-    if matches!(key, "trace_id" | "span_id")
+    if matches!(key, k if k == otlp::TRACE_ID || k == otlp::SPAN_ID)
         && value.len() % 2 == 0
         && value.chars().all(|c| c.is_ascii_hexdigit())
     {
@@ -198,7 +204,7 @@ fn convert_string_field(key: &str, value: &str) -> Result<Option<JsonValue>> {
         return Ok(Some(json_value));
     }
 
-    if key == "array_value" && value.is_empty() {
+    if key == otlp::ARRAY_VALUE && value.is_empty() {
         // handled via recursive structure, no special casing required
         return Ok(None);
     }
