@@ -157,6 +157,8 @@ ORDER BY Timestamp DESC LIMIT 10;
 
 ## Troubleshooting
 
+For detailed configuration options, see the [Configuration Guide](configuration.md).
+
 ### OTLP Protobuf Parse Errors
 
 Ensure you're sending valid OTLP v1.3.2 format:
@@ -169,14 +171,40 @@ otel-cli logs --protocol http/protobuf --dry-run
 
 **Cloudflare Workers:**
 - Verify R2 bucket binding in `wrangler.toml`
+- Check environment variables: `OTLP2PARQUET_R2_BUCKET`, `OTLP2PARQUET_R2_ACCOUNT_ID`, `OTLP2PARQUET_R2_ACCESS_KEY_ID`
+- Ensure secret is set: `wrangler secret put OTLP2PARQUET_R2_SECRET_ACCESS_KEY`
 - Check bucket permissions
 
 **AWS Lambda:**
 - Verify IAM role has `s3:PutObject` permission
-- Check `AWS_REGION` and `BUCKET_NAME` environment variables
+- Check environment variables: `OTLP2PARQUET_S3_BUCKET`, `OTLP2PARQUET_S3_REGION`
+- Lambda automatically uses S3 backend (validated at startup)
 
 **Server Mode (Docker/Local):**
-- **Filesystem:** Verify `STORAGE_PATH` directory exists and is writable
+- **Filesystem:** Verify `OTLP2PARQUET_STORAGE_PATH` directory exists and is writable
 - **S3:** Verify AWS credentials and S3 bucket permissions
+  - Set: `OTLP2PARQUET_STORAGE_BACKEND=s3`
+  - Set: `OTLP2PARQUET_S3_BUCKET` and `OTLP2PARQUET_S3_REGION`
 - **R2:** Verify R2 credentials and bucket permissions
+  - Set: `OTLP2PARQUET_STORAGE_BACKEND=r2`
+  - Set: `OTLP2PARQUET_R2_*` variables
 - Check `/health` and `/ready` endpoints for diagnostics
+
+### Configuration Issues
+
+**Check active configuration:**
+```bash
+# Server mode - check startup logs
+docker-compose logs otlp2parquet | grep -E "(storage|batch|payload)"
+
+# Lambda - check CloudWatch logs
+sam logs --tail
+
+# Cloudflare Workers - check logs
+wrangler tail
+```
+
+**Common issues:**
+- Environment variable names must use `OTLP2PARQUET_` prefix
+- Storage backend must match platform (S3 for Lambda, R2 for Cloudflare)
+- Required fields must be set (bucket name, region, credentials)
