@@ -13,12 +13,12 @@ use otlp2parquet_batch::{
 use otlp2parquet_core::otlp;
 use serde_json::json;
 use std::sync::Arc;
+use std::time::Duration;
 use worker::*;
 
 static STORAGE: OnceCell<Arc<otlp2parquet_storage::opendal_storage::OpenDalStorage>> =
     OnceCell::new();
 static BATCHER: OnceCell<Option<Arc<BatchManager<LogSignalProcessor>>>> = OnceCell::new();
-static MAX_PAYLOAD_BYTES: OnceCell<usize> = OnceCell::new();
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum SignalKind {
@@ -95,33 +95,33 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
         existing.clone()
     } else {
         let bucket = env
-            .var("R2_BUCKET")
+            .var("OTLP2PARQUET_R2_BUCKET")
             .map_err(|e| {
-                console_error!("R2_BUCKET environment variable not set: {:?}", e);
+                console_error!("OTLP2PARQUET_R2_BUCKET environment variable not set: {:?}", e);
                 e
             })?
             .to_string();
 
         let account_id = env
-            .var("R2_ACCOUNT_ID")
+            .var("OTLP2PARQUET_R2_ACCOUNT_ID")
             .map_err(|e| {
-                console_error!("R2_ACCOUNT_ID environment variable not set: {:?}", e);
+                console_error!("OTLP2PARQUET_R2_ACCOUNT_ID environment variable not set: {:?}", e);
                 e
             })?
             .to_string();
 
         let access_key_id = env
-            .var("R2_ACCESS_KEY_ID")
+            .var("OTLP2PARQUET_R2_ACCESS_KEY_ID")
             .map_err(|e| {
-                console_error!("R2_ACCESS_KEY_ID environment variable not set: {:?}", e);
+                console_error!("OTLP2PARQUET_R2_ACCESS_KEY_ID environment variable not set: {:?}", e);
                 e
             })?
             .to_string();
 
         let secret_access_key = env
-            .secret("R2_SECRET_ACCESS_KEY")
+            .secret("OTLP2PARQUET_R2_SECRET_ACCESS_KEY")
             .map_err(|e| {
-                console_error!("R2_SECRET_ACCESS_KEY secret not set: {:?}", e);
+                console_error!("OTLP2PARQUET_R2_SECRET_ACCESS_KEY secret not set: {:?}", e);
                 e
             })?
             .to_string();
@@ -145,15 +145,33 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
 
     let batcher = BATCHER
         .get_or_init(|| {
-            let cfg = BatchConfig::from_env(100_000, 64 * 1024 * 1024, 5);
-            if cfg.max_rows == 0 || cfg.max_bytes == 0 {
-                console_log!(
-                    "Cloudflare batching disabled (max_rows={} max_bytes={})",
-                    cfg.max_rows,
-                    cfg.max_bytes
-                );
+            // Use platform defaults for Cloudflare Workers
+            let max_rows = std::env::var("OTLP2PARQUET_BATCH_MAX_ROWS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(100_000);
+            let max_bytes = std::env::var("OTLP2PARQUET_BATCH_MAX_BYTES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(64 * 1024 * 1024);
+            let max_age_secs = std::env::var("OTLP2PARQUET_BATCH_MAX_AGE_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(5);
+            let enabled = std::env::var("OTLP2PARQUET_BATCHING_ENABLED")
+                .ok()
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(true);
+
+            if !enabled {
+                console_log!("Cloudflare batching disabled by configuration");
                 None
             } else {
+                let cfg = BatchConfig {
+                    max_rows,
+                    max_bytes,
+                    max_age: Duration::from_secs(max_age_secs),
+                };
                 console_log!(
                     "Cloudflare batching enabled (max_rows={} max_bytes={} max_age={}s)",
                     cfg.max_rows,
@@ -165,8 +183,10 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
         })
         .clone();
 
-    let max_payload_bytes =
-        *MAX_PAYLOAD_BYTES.get_or_init(|| max_payload_bytes_from_env(1024 * 1024));
+    let max_payload_bytes = std::env::var("OTLP2PARQUET_MAX_PAYLOAD_BYTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1024 * 1024);
     let passthrough: PassthroughBatcher<LogSignalProcessor> = PassthroughBatcher::default();
 
     let content_type_header = req.headers().get("content-type").ok().flatten();
@@ -374,10 +394,3 @@ async fn handle_metrics_request(
     Response::from_json(&response_body)
 }
 
-/// Platform-specific helper: Read max payload bytes from environment
-fn max_payload_bytes_from_env(default: usize) -> usize {
-    std::env::var("MAX_PAYLOAD_BYTES")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(default)
-}

@@ -2,6 +2,7 @@
 members = [
     "crates/otlp2parquet-core",
     "crates/otlp2parquet-batch",
+    "crates/otlp2parquet-config",
     "crates/otlp2parquet-storage",
     "crates/otlp2parquet-proto",
     "crates/otlp2parquet-cloudflare",
@@ -56,8 +57,9 @@ prost = { version = "0.13", default-features = false, features = ["std"] }
 # Core utilities - minimal, no tokio (platforms provide their own runtimes)
 serde = { version = "1", default-features = false, features = ["derive"] }
 serde_json = { version = "1", default-features = false, features = ["std"] }
+toml = { version = "0.8", default-features = false, features = ["parse"] }
 anyhow = "1"
-thiserror = "1"
+thiserror = "2.0"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 tokio = { version = "1", default-features = false, features = ["rt", "macros"] }
 blake3 = "1"

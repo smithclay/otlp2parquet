@@ -8,8 +8,10 @@
 use anyhow::Result;
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use otlp2parquet_batch::{BatchConfig, BatchManager, PassthroughBatcher};
+use otlp2parquet_config::{RuntimeConfig, StorageBackend};
 use otlp2parquet_storage::ParquetWriter;
 use std::sync::Arc;
+use std::time::Duration;
 
 mod handlers;
 mod response;
@@ -95,9 +97,20 @@ pub(crate) struct LambdaState {
 pub async fn run() -> Result<(), Error> {
     println!("Lambda runtime - using lambda_runtime's tokio + OpenDAL S3");
 
-    // Get configuration from environment
-    let bucket = std::env::var("LOGS_BUCKET").unwrap_or_else(|_| "otlp-logs".to_string());
-    let region = std::env::var("AWS_REGION").unwrap_or_else(|_| "us-east-1".to_string());
+    // Load configuration
+    let config = RuntimeConfig::load()
+        .map_err(|e| lambda_runtime::Error::from(format!("Failed to load configuration: {}", e)))?;
+
+    // Validate storage backend is S3
+    if config.storage.backend != StorageBackend::S3 {
+        return Err(lambda_runtime::Error::from(format!(
+            "Lambda requires S3 storage backend, got: {}",
+            config.storage.backend
+        )));
+    }
+
+    let s3 = config.storage.s3.as_ref()
+        .ok_or_else(|| lambda_runtime::Error::from("S3 configuration required for Lambda"))?;
 
     // Initialize OpenDAL S3 storage
     // OpenDAL automatically discovers AWS credentials from:
@@ -106,18 +119,24 @@ pub async fn run() -> Result<(), Error> {
     // - AWS credentials file
     let storage = Arc::new(
         otlp2parquet_storage::opendal_storage::OpenDalStorage::new_s3(
-            &bucket, &region, None, None, None,
+            &s3.bucket,
+            &s3.region,
+            s3.endpoint.as_deref(),
+            None,
+            None,
         )
         .map_err(|e| lambda_runtime::Error::from(format!("Failed to initialize storage: {}", e)))?,
     );
     let parquet_writer = Arc::new(ParquetWriter::new(storage.operator().clone()));
 
-    let batch_config = BatchConfig::from_env(200_000, 128 * 1024 * 1024, 10);
-    let batcher = if batch_config.max_rows == 0 || batch_config.max_bytes == 0 {
-        println!(
-            "Lambda batching disabled (max_rows={}, max_bytes={})",
-            batch_config.max_rows, batch_config.max_bytes
-        );
+    let batch_config = BatchConfig {
+        max_rows: config.batch.max_rows,
+        max_bytes: config.batch.max_bytes,
+        max_age: Duration::from_secs(config.batch.max_age_secs),
+    };
+
+    let batcher = if !config.batch.enabled {
+        println!("Lambda batching disabled by configuration");
         None
     } else {
         println!(
@@ -129,7 +148,7 @@ pub async fn run() -> Result<(), Error> {
         Some(Arc::new(BatchManager::new(batch_config)))
     };
 
-    let max_payload_bytes = max_payload_bytes_from_env(6 * 1024 * 1024);
+    let max_payload_bytes = config.request.max_payload_bytes;
     println!("Lambda payload cap set to {} bytes", max_payload_bytes);
 
     let state = Arc::new(LambdaState {
@@ -144,12 +163,4 @@ pub async fn run() -> Result<(), Error> {
         async move { handle_request(event, state).await }
     }))
     .await
-}
-
-/// Platform-specific helper: Read max payload bytes from environment
-fn max_payload_bytes_from_env(default: usize) -> usize {
-    std::env::var("MAX_PAYLOAD_BYTES")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(default)
 }

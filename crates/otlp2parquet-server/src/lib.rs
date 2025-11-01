@@ -21,10 +21,12 @@ use axum::{
     Json, Router,
 };
 use otlp2parquet_batch::{BatchConfig, BatchManager, PassthroughBatcher};
+use otlp2parquet_config::RuntimeConfig;
 use otlp2parquet_storage::opendal_storage::OpenDalStorage;
 use otlp2parquet_storage::ParquetWriter;
 use serde_json::json;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::signal;
 use tracing::{error, info};
 
@@ -32,7 +34,7 @@ mod handlers;
 mod init;
 
 use handlers::{handle_logs, handle_metrics, handle_traces, health_check, ready_check};
-use init::{init_storage, init_tracing, max_payload_bytes_from_env};
+use init::{init_storage, init_tracing};
 
 /// Application state shared across all requests
 #[derive(Clone)]
@@ -112,38 +114,45 @@ async fn shutdown_signal() {
 
 /// Entry point for server mode
 pub async fn run() -> Result<()> {
-    // Initialize tracing
-    init_tracing();
+    // Load configuration
+    let config = RuntimeConfig::load()
+        .context("Failed to load configuration")?;
+
+    // Initialize tracing with config
+    init_tracing(&config);
 
     info!("Server mode - full-featured HTTP server with multi-backend storage");
 
-    // Get configuration
-    let addr = std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:4318".to_string());
+    // Get listen address from config
+    let addr = config.server.as_ref()
+        .expect("server config required")
+        .listen_addr.clone();
 
     // Initialize storage
-    let storage = init_storage()?;
+    let storage = init_storage(&config)?;
     let parquet_writer = Arc::new(ParquetWriter::new(storage.operator().clone()));
 
     // Configure batching
-    let batch_config = BatchConfig::from_env(200_000, 128 * 1024 * 1024, 10);
-    let batcher = if batch_config.max_rows == 0 || batch_config.max_bytes == 0 {
-        info!(
-            "Batching disabled (max_rows={} max_bytes={})",
-            batch_config.max_rows, batch_config.max_bytes
-        );
-        None
-    } else {
-        let cfg = batch_config.clone();
-        info!(
-            "Batching enabled (max_rows={} max_bytes={} max_age={}s)",
-            cfg.max_rows,
-            cfg.max_bytes,
-            cfg.max_age.as_secs()
-        );
-        Some(Arc::new(BatchManager::new(cfg)))
+    let batch_config = BatchConfig {
+        max_rows: config.batch.max_rows,
+        max_bytes: config.batch.max_bytes,
+        max_age: Duration::from_secs(config.batch.max_age_secs),
     };
 
-    let max_payload_bytes = max_payload_bytes_from_env(8 * 1024 * 1024);
+    let batcher = if !config.batch.enabled {
+        info!("Batching disabled by configuration");
+        None
+    } else {
+        info!(
+            "Batching enabled (max_rows={} max_bytes={} max_age={}s)",
+            batch_config.max_rows,
+            batch_config.max_bytes,
+            batch_config.max_age.as_secs()
+        );
+        Some(Arc::new(BatchManager::new(batch_config)))
+    };
+
+    let max_payload_bytes = config.request.max_payload_bytes;
     info!("Max payload size set to {} bytes", max_payload_bytes);
 
     // Create app state
@@ -174,7 +183,7 @@ pub async fn run() -> Result<()> {
     info!("  POST http://{}/v1/logs    - OTLP log ingestion", addr);
     info!("  POST http://{}/v1/metrics - OTLP metrics ingestion", addr);
     info!(
-        "  POST http://{}/v1/traces  - OTLP trace ingestion (not yet implemented)",
+        "  POST http://{}/v1/traces  - OTLP trace ingestion",
         addr
     );
     info!("  GET  http://{}/health     - Health check", addr);
