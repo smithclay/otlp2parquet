@@ -32,6 +32,12 @@ jobs:
       - name: Build MkDocs site
         run: mkdocs build
 
+      - name: Install protobuf compiler
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "32.0"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:

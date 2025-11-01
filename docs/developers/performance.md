@@ -1,6 +1,6 @@
 # Performance Audit - OTLP to Parquet Pipeline
 
-Comprehensive benchmarking and profiling infrastructure for measuring and optimizing the OTLP→Arrow→Parquet conversion pipeline.
+This document outlines the comprehensive benchmarking and profiling infrastructure used for measuring and optimizing the OTLP→Arrow→Parquet conversion pipeline.
 
 ## Quick Start
 
