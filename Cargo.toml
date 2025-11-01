@@ -98,7 +98,7 @@ dhat = { version = "0.3", optional = true }
 
 [dev-dependencies]
 # Benchmarking infrastructure
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.5", default-features = false, features = ["html_reports"] }
 otlp2parquet-proto = { path = "crates/otlp2parquet-proto" }
 flate2 = "1.0"
 serde_json = { workspace = true }
