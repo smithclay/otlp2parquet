@@ -24,6 +24,7 @@ static MAX_PAYLOAD_BYTES: OnceCell<usize> = OnceCell::new();
 enum SignalKind {
     Logs,
     Traces,
+    Metrics,
 }
 
 /// WASM-specific Parquet writer helper
@@ -86,6 +87,7 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
     let signal = match path.as_str() {
         "/v1/logs" => SignalKind::Logs,
         "/v1/traces" => SignalKind::Traces,
+        "/v1/metrics" => SignalKind::Metrics,
         _ => return Response::error("Not found", 404),
     };
 
@@ -188,6 +190,12 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
         return Ok(response);
     }
 
+    // Handle metrics separately
+    if matches!(signal, SignalKind::Metrics) {
+        return handle_metrics_request(&body_bytes, format, content_type, &storage).await;
+    }
+
+    // Process logs
     let request = otlp::parse_otlp_request(&body_bytes, format).map_err(|e| {
         console_error!(
             "Failed to parse OTLP logs (format: {:?}, content-type: {:?}): {:?}",
@@ -269,6 +277,97 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
         "status": "ok",
         "records_processed": metadata.record_count,
         "flush_count": uploaded_paths.len(),
+        "partitions": uploaded_paths,
+    });
+
+    Response::from_json(&response_body)
+}
+
+/// Handle metrics request (separate from logs due to multiple batches per type)
+async fn handle_metrics_request(
+    body_bytes: &[u8],
+    format: otlp2parquet_core::InputFormat,
+    content_type: Option<&str>,
+    storage: &Arc<otlp2parquet_storage::opendal_storage::OpenDalStorage>,
+) -> Result<Response> {
+    // Parse OTLP metrics request
+    let request = otlp::metrics::parse_otlp_request(body_bytes, format).map_err(|e| {
+        console_error!(
+            "Failed to parse OTLP metrics (format: {:?}, content-type: {:?}): {:?}",
+            format,
+            content_type,
+            e
+        );
+        worker::Error::RustError(format!("Processing error: {}", e))
+    })?;
+
+    // Convert to Arrow (returns multiple batches, one per metric type)
+    let converter = otlp::metrics::ArrowConverter::new();
+    let (batches_by_type, metadata) = converter.convert(request).map_err(|e| {
+        console_error!("Failed to convert OTLP metrics to Arrow: {:?}", e);
+        worker::Error::RustError(format!("Encoding error: {}", e))
+    })?;
+
+    if batches_by_type.is_empty() {
+        let response = Response::from_json(&json!({
+            "status": "ok",
+            "message": "No metrics data points to process",
+        }))?;
+        return Ok(response);
+    }
+
+    // Count total data points across all metric types
+    let total_data_points = metadata.gauge_count
+        + metadata.sum_count
+        + metadata.histogram_count
+        + metadata.exponential_histogram_count
+        + metadata.summary_count;
+
+    // Write each metric type batch to its own Parquet file
+    let mut uploaded_paths = Vec::new();
+    for (metric_type, batch) in batches_by_type {
+        let service_name = "default"; // TODO: Extract from metadata
+        let timestamp_nanos = 0; // TODO: Extract first timestamp from batch
+
+        // Write Parquet synchronously (WASM-compatible)
+        let parquet_bytes = wasm_parquet::write_batches_to_parquet(&[batch]).map_err(|e| {
+            console_error!("Failed to serialize {} metrics Parquet: {:?}", metric_type, e);
+            worker::Error::RustError(format!("Parquet serialization error: {}", e))
+        })?;
+
+        // Compute Blake3 hash
+        let hash_bytes = blake3::hash(&parquet_bytes);
+        let hash_hex = hex::encode(hash_bytes.as_bytes());
+
+        // Generate partition path with metric type subdirectory
+        let partition_path = otlp2parquet_storage::partition::generate_partition_path_with_signal(
+            "metrics",
+            service_name,
+            timestamp_nanos,
+            &hash_hex,
+            Some(&metric_type),
+        );
+
+        // Upload to R2
+        storage
+            .write(&partition_path, parquet_bytes)
+            .await
+            .map_err(|e| {
+                console_error!("Failed to write {} metrics to R2: {:?}", metric_type, e);
+                worker::Error::RustError(format!("Storage error: {}", e))
+            })?;
+
+        uploaded_paths.push(partition_path);
+    }
+
+    let response_body = json!({
+        "status": "ok",
+        "data_points_processed": total_data_points,
+        "gauge_count": metadata.gauge_count,
+        "sum_count": metadata.sum_count,
+        "histogram_count": metadata.histogram_count,
+        "exponential_histogram_count": metadata.exponential_histogram_count,
+        "summary_count": metadata.summary_count,
         "partitions": uploaded_paths,
     });
 
