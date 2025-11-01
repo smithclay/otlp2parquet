@@ -18,6 +18,7 @@ WORKDIR /build
 # Copy manifests
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY benches ./benches
 
 # Build dependencies first (better caching)
 RUN mkdir src && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs
