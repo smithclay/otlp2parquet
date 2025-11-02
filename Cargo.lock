@@ -1812,6 +1812,7 @@ dependencies = [
  "criterion",
  "dhat",
  "flate2",
+ "opendal",
  "otlp2parquet-batch",
  "otlp2parquet-core",
  "otlp2parquet-proto",

@@ -15,7 +15,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 authors = ["otlp2parquet Contributors"]
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 repository = "https://github.com/smithclay/otlp2parquet"
 
 [profile.release]
@@ -99,6 +99,9 @@ otlp2parquet-proto = { path = "crates/otlp2parquet-proto" }
 flate2 = "1.0"
 serde_json = { workspace = true }
 prost = { workspace = true }
+# Integration tests
+opendal = { version = "0.54", default-features = false, features = ["services-memory"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [features]
 default = []
