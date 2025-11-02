@@ -81,16 +81,10 @@ repository.workspace = true
 otlp2parquet-core = { path = "crates/otlp2parquet-core" }
 otlp2parquet-batch = { path = "crates/otlp2parquet-batch" }
 otlp2parquet-storage = { path = "crates/otlp2parquet-storage" }
+otlp2parquet-server = { path = "crates/otlp2parquet-server" }
 
-# Platform-specific crates (optional)
-otlp2parquet-cloudflare = { path = "crates/otlp2parquet-cloudflare", optional = true }
-otlp2parquet-lambda = { path = "crates/otlp2parquet-lambda", optional = true }
-otlp2parquet-server = { path = "crates/otlp2parquet-server", optional = true }
-
-# Platform dependencies for main.rs entry points
-worker = { version = "0.4", optional = true }
-lambda_runtime = { version = "0.14", optional = true }
-tokio = { workspace = true, optional = true, features = ["rt-multi-thread", "macros"] }
+# Runtime
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 # Utilities
 anyhow = { workspace = true }
@@ -108,10 +102,6 @@ prost = { workspace = true }
 
 [features]
 default = []
-cloudflare = ["otlp2parquet-cloudflare", "worker"]
-lambda = ["otlp2parquet-lambda", "lambda_runtime", "tokio"]
-server = ["otlp2parquet-server", "tokio"]
-full = ["server"]
 dhat-heap = ["dep:dhat"]
 
 [[bin]]

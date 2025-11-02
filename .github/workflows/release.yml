@@ -59,7 +59,7 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }} --features lambda
+        run: cargo build --release --target ${{ matrix.target }} -p otlp2parquet-lambda
 
       - name: Strip binary
         run: strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
@@ -112,11 +112,11 @@ jobs:
         run: echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Build WASM
-        run: cargo build --release --target wasm32-unknown-unknown --no-default-features --features cloudflare
+        run: cd crates/otlp2parquet-cloudflare && cargo install -q worker-build && worker-build --release
 
       - name: Optimize WASM
         run: |
-          wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int -o optimized.wasm target/wasm32-unknown-unknown/release/otlp2parquet.wasm
+          wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int -o optimized.wasm crates/otlp2parquet-cloudflare/build/index_bg.wasm
           gzip -9 -k optimized.wasm
           SIZE=$(stat -c%s optimized.wasm.gz)
           SIZE_MB=$(echo "scale=2; $SIZE / 1024 / 1024" | bc)

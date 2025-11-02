@@ -13,11 +13,11 @@ help: ## Show this help message
 .PHONY: check
 check: ## Run cargo check on all feature combinations
 	@echo "==> Checking server..."
-	@cargo check --no-default-features --features server
+	@cargo check
 	@echo "==> Checking lambda..."
-	@cargo check --no-default-features --features lambda
+	@cargo check -p otlp2parquet-lambda
 	@echo "==> Checking cloudflare..."
-	@cargo check --no-default-features --features cloudflare --target wasm32-unknown-unknown
+	@cargo check -p otlp2parquet-cloudflare --target wasm32-unknown-unknown
 
 .PHONY: fmt
 fmt: ## Format all Rust code
@@ -30,24 +30,24 @@ fmt-check: ## Check Rust code formatting
 .PHONY: clippy
 clippy: ## Run clippy on all feature combinations
 	@echo "==> Clippy server..."
-	@cargo clippy --all-targets --no-default-features --features server -- -D warnings
+	@cargo clippy --all-targets -- -D warnings
 	@echo "==> Clippy lambda..."
-	@cargo clippy --all-targets --no-default-features --features lambda -- -D warnings
+	@cargo clippy -p otlp2parquet-lambda --all-targets -- -D warnings
 	@echo "==> Clippy cloudflare..."
-	@cargo clippy --all-targets --no-default-features --features cloudflare --target wasm32-unknown-unknown -- -D warnings
+	@cargo clippy -p otlp2parquet-cloudflare --all-targets --target wasm32-unknown-unknown -- -D warnings
 
 .PHONY: test
 test: ## Run tests for all testable feature combinations
 	@echo "==> Testing server..."
-	@cargo test --no-default-features --features server
+	@cargo test
 	@echo "==> Testing lambda..."
-	@cargo test --no-default-features --features lambda
+	@cargo test -p otlp2parquet-lambda
 	@echo "==> Testing core (no features)..."
 	@cargo test -p otlp2parquet-core
 
 .PHONY: test-verbose
 test-verbose: ## Run tests with verbose output
-	@cargo test --no-default-features --features server -- --nocapture
+	@cargo test -- --nocapture
 
 #
 # Build Commands by Feature
@@ -56,54 +56,44 @@ test-verbose: ## Run tests with verbose output
 .PHONY: build
 build: ## Build all feature combinations (debug mode)
 	@echo "==> Building server..."
-	@cargo build --no-default-features --features server
+	@cargo build
 	@echo "==> Building lambda..."
-	@cargo build --no-default-features --features lambda
+	@cargo build -p otlp2parquet-lambda
 	@echo "==> Building cloudflare..."
-	@cargo build --no-default-features --features cloudflare --target wasm32-unknown-unknown
+	@cargo build -p otlp2parquet-cloudflare --target wasm32-unknown-unknown
 
 .PHONY: build-release
 build-release: ## Build all feature combinations (release mode)
 	@echo "==> Building server (release)..."
-	@cargo build --release --no-default-features --features server
+	@cargo build --release
 	@echo "==> Building lambda (release)..."
-	@cargo build --release --no-default-features --features lambda
+	@cargo build --release -p otlp2parquet-lambda
 	@echo "==> Building cloudflare (release)..."
-	@cargo build --release --no-default-features --features cloudflare --target wasm32-unknown-unknown
+	@cargo build --release -p otlp2parquet-cloudflare --target wasm32-unknown-unknown
 
 .PHONY: build-server
 build-server: ## Build server binary only (default mode)
-	@cargo build --release --no-default-features --features server
+	@cargo build --release
 
 .PHONY: build-lambda
 build-lambda: ## Build Lambda binary only
-	@cargo build --release --no-default-features --features lambda
+	@cargo build --release -p otlp2parquet-lambda
 
 .PHONY: build-cloudflare
-build-cloudflare: ## Build Cloudflare Workers WASM binary (optimized for wrangler)
+build-cloudflare: ## Build Cloudflare Workers with worker-build
 	@echo "==> Building WASM for Cloudflare Workers..."
-	@cargo build --release --no-default-features --features cloudflare --target wasm32-unknown-unknown
-	@echo "==> Optimizing WASM..."
-	@if ! command -v wasm-opt >/dev/null 2>&1; then \
-		echo "ERROR: wasm-opt not found. Install binaryen:"; \
-		echo "  macOS: brew install binaryen"; \
-		echo "  Linux: apt install binaryen"; \
-		exit 1; \
-	fi
-	@mkdir -p build/worker
-	@wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext \
-	        -o build/worker/otlp2parquet.wasm $(WASM_BINARY)
-	@echo "==> WASM ready for wrangler at: build/worker/otlp2parquet.wasm"
-	@SIZE=$$(stat -f%z build/worker/otlp2parquet.wasm 2>/dev/null || stat -c%s build/worker/otlp2parquet.wasm 2>/dev/null); \
-	python3 -c "import sys; size=int(sys.argv[1]); print(f\"==> Optimized size: {size/1024:.1f} KB ({size/1024/1024:.3f} MB)\")" $$SIZE
+	@cd crates/otlp2parquet-cloudflare && cargo install -q worker-build && worker-build --release
+	@echo "==> WASM ready at: crates/otlp2parquet-cloudflare/build/index_bg.wasm"
+	@SIZE=$$(stat -f%z crates/otlp2parquet-cloudflare/build/index_bg.wasm 2>/dev/null || stat -c%s crates/otlp2parquet-cloudflare/build/index_bg.wasm 2>/dev/null); \
+	python3 -c "import sys; size=int(sys.argv[1]); print(f\"==> WASM size: {size/1024:.1f} KB ({size/1024/1024:.3f} MB)\")" $$SIZE
 
 #
 # WASM-Specific Commands
 #
 
-WASM_BINARY := target/wasm32-unknown-unknown/release/otlp2parquet.wasm
-WASM_OPTIMIZED := target/wasm32-unknown-unknown/release/otlp2parquet-optimized.wasm
-WASM_COMPRESSED := target/wasm32-unknown-unknown/release/otlp2parquet-optimized.wasm.gz
+WASM_BINARY := crates/otlp2parquet-cloudflare/build/index_bg.wasm
+WASM_OPTIMIZED := crates/otlp2parquet-cloudflare/build/index_bg_optimized.wasm
+WASM_COMPRESSED := crates/otlp2parquet-cloudflare/build/index_bg_optimized.wasm.gz
 
 .PHONY: wasm
 wasm: build-cloudflare ## Build WASM binary for Cloudflare Workers
@@ -192,11 +182,11 @@ dev: check test ## Quick development check (fast)
 
 .PHONY: doc
 doc: ## Build documentation
-	@cargo doc --no-deps --features server,lambda
+	@cargo doc --no-deps --workspace
 
 .PHONY: doc-open
 doc-open: ## Build and open documentation in browser
-	@cargo doc --no-deps --features server,lambda --open
+	@cargo doc --no-deps --workspace --open
 
 #
 # Utility Commands
@@ -247,19 +237,19 @@ audit: ## Run security audit on dependencies
 .PHONY: bench
 bench: ## Run all benchmarks with Criterion
 	@echo "==> Running benchmarks..."
-	@cargo bench --no-default-features --features server
+	@cargo bench
 	@echo "==> Benchmark results: target/criterion/report/index.html"
 
 .PHONY: bench-baseline
 bench-baseline: ## Save benchmark baseline for comparison
 	@echo "==> Saving benchmark baseline..."
-	@cargo bench --no-default-features --features server -- --save-baseline base
+	@cargo bench -- --save-baseline base
 	@echo "==> Baseline saved as 'base'"
 
 .PHONY: bench-compare
 bench-compare: ## Run benchmarks and compare against baseline
 	@echo "==> Running benchmarks and comparing to baseline..."
-	@cargo bench --no-default-features --features server -- --baseline base
+	@cargo bench -- --baseline base
 	@echo "==> Comparison results: target/criterion/report/index.html"
 
 .PHONY: flamegraph
@@ -269,7 +259,7 @@ flamegraph: ## Generate CPU flamegraph for e2e_pipeline benchmark
 		echo "Installing cargo-flamegraph..."; \
 		cargo install flamegraph; \
 	fi
-	@cargo flamegraph --bench e2e_pipeline --no-default-features --features server -- --bench
+	@cargo flamegraph --bench e2e_pipeline -- --bench
 	@echo "==> Flamegraph saved to: flamegraph.svg"
 
 .PHONY: bloat
@@ -279,7 +269,7 @@ bloat: ## Analyze binary size with cargo-bloat
 		echo "Installing cargo-bloat..."; \
 		cargo install cargo-bloat; \
 	fi
-	@cargo bloat --release --no-default-features --features server -n 20 | tee bloat.txt
+	@cargo bloat --release -n 20 | tee bloat.txt
 	@echo "==> Results saved to: bloat.txt"
 
 .PHONY: llvm-lines
@@ -289,7 +279,7 @@ llvm-lines: ## Analyze LLVM IR line counts with cargo-llvm-lines
 		echo "Installing cargo-llvm-lines..."; \
 		cargo install cargo-llvm-lines; \
 	fi
-	@cargo llvm-lines --release --no-default-features --features server | head -50 | tee llvm_lines.txt
+	@cargo llvm-lines --release | head -50 | tee llvm_lines.txt
 	@echo "==> Results saved to: llvm_lines.txt"
 
 .PHONY: profile-all

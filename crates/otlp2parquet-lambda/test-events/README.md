@@ -1,4 +1,4 @@
-# Lambda Event Files
+# Lambda Test Events
 
 These event files contain base64-encoded OTLP payloads for testing the Lambda function locally using `sam local invoke`.
 
@@ -13,29 +13,18 @@ These event files contain base64-encoded OTLP payloads for testing the Lambda fu
 ### Build the Lambda function first
 
 ```bash
-# From the repository root
-cargo lambda build --release --arm64 --features lambda
-mkdir -p .aws-sam/build/OtlpToParquetFunction
-cp target/lambda/otlp2parquet/bootstrap .aws-sam/build/OtlpToParquetFunction/
+# From the lambda crate directory
+cd crates/otlp2parquet-lambda
+sam build --beta-features
 ```
-
-**Note**: We use `cargo lambda build` directly instead of `sam build` because SAM doesn't correctly pass the `Features` property to cargo-lambda.
 
 ### Create local-env.json
 
-Create a `local-env.json` file in the repository root with the correct environment variable names:
+Copy the example file and customize as needed:
 
-```json
-{
-  "OtlpToParquetFunction": {
-    "RUST_LOG": "debug,otlp2parquet=trace",
-    "OTLP2PARQUET_S3_BUCKET": "otlp-logs",
-    "OTLP2PARQUET_S3_REGION": "us-east-1",
-    "OTLP2PARQUET_BATCHING_ENABLED": "false",
-    "AWS_ACCESS_KEY_ID": "minioadmin",
-    "AWS_SECRET_ACCESS_KEY": "minioadmin"
-  }
-}
+```bash
+# From crates/otlp2parquet-lambda
+cp local-env.json.example local-env.json
 ```
 
 **Important**: Set `OTLP2PARQUET_BATCHING_ENABLED: "false"` to avoid data loss. See the main documentation for details.
@@ -43,19 +32,22 @@ Create a `local-env.json` file in the repository root with the correct environme
 ### Test with sam local invoke
 
 ```bash
-# From the repository root - Test logs
+# From crates/otlp2parquet-lambda - Test logs
 sam local invoke OtlpToParquetFunction \
-  -e docs/get-started/deployment/events/logs-protobuf.json \
+  -e test-events/logs-protobuf.json \
+  --docker-network otlp2parquet_default \
   --env-vars local-env.json
 
 # Test traces
 sam local invoke OtlpToParquetFunction \
-  -e docs/get-started/deployment/events/traces-protobuf.json \
+  -e test-events/traces-protobuf.json \
+  --docker-network otlp2parquet_default \
   --env-vars local-env.json
 
 # Test metrics
 sam local invoke OtlpToParquetFunction \
-  -e docs/get-started/deployment/events/metrics-gauge-protobuf.json \
+  -e test-events/metrics-gauge-protobuf.json \
+  --docker-network otlp2parquet_default \
   --env-vars local-env.json
 ```
 
@@ -66,7 +58,7 @@ To regenerate events from testdata (if testdata files change):
 ```bash
 # From the repository root
 # Create logs event
-cat > docs/get-started/deployment/events/logs-protobuf.json <<EOF
+cat > crates/otlp2parquet-lambda/test-events/logs-protobuf.json <<EOF
 {
   "version": "2.0",
   "routeKey": "ANY /{proxy+}",
@@ -82,3 +74,4 @@ EOF
 **Important**:
 - Use `tr -d '\n'` to remove newlines from base64 output for proper JSON formatting
 - Run all commands from the repository root directory
+- Update paths for `traces-protobuf.json` and `metrics-gauge-protobuf.json` similarly

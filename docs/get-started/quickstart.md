@@ -18,13 +18,14 @@ For more details, see the [Docker Deployment Guide](deployment/docker.md).
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/smithclay/otlp2parquet)
 
-Or: `wrangler deploy`
+Or: `cd crates/otlp2parquet-cloudflare && wrangler deploy`
 
 For more details, see the [Cloudflare Workers Deployment Guide](deployment/cloudflare.md).
 
 ### AWS Lambda (Serverless)
 
 ```bash
+cd crates/otlp2parquet-lambda
 sam deploy --guided
 ```
 

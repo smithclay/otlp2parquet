@@ -39,13 +39,12 @@ jobs:
       matrix:
         include:
           - feature-name: "server"
-            features: "--no-default-features --features server"
             target: ""
           - feature-name: "lambda"
-            features: "--no-default-features --features lambda"
+            package: "otlp2parquet-lambda"
             target: ""
           - feature-name: "cloudflare"
-            features: "--no-default-features --features cloudflare"
+            package: "otlp2parquet-cloudflare"
             target: "wasm32-unknown-unknown"
     steps:
       - uses: actions/checkout@v5
@@ -65,7 +64,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: '.'
       - name: Run clippy
-        run: cargo clippy --all-targets ${{ matrix.features }} ${{ matrix.target && format('--target {0}', matrix.target) || '' }} -- -D warnings
+        run: cargo clippy --all-targets ${{ matrix.package && format('-p {0}', matrix.package) || matrix.features }} ${{ matrix.target && format('--target {0}', matrix.target) || '' }} -- -D warnings
 
   # Run tests
   test:
@@ -75,9 +74,8 @@ jobs:
       matrix:
         include:
           - feature-name: "server"
-            features: "--no-default-features --features server"
           - feature-name: "lambda"
-            features: "--no-default-features --features lambda"
+            package: "otlp2parquet-lambda"
           # Note: Cloudflare tests skipped - WASM target has limited test support
           # and tests are primarily in otlp2parquet-core which is platform-agnostic
     steps:
@@ -95,7 +93,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: '.'
       - name: Run tests
-        run: cargo test ${{ matrix.features }}
+        run: cargo test ${{ matrix.package && format('-p {0}', matrix.package) || matrix.features }}
 
   # Build for different feature combinations
   build:
@@ -105,13 +103,12 @@ jobs:
       matrix:
         include:
           - feature-name: "server"
-            features: "--no-default-features --features server"
             target: ""
           - feature-name: "lambda"
-            features: "--no-default-features --features lambda"
+            package: "otlp2parquet-lambda"
             target: ""
           - feature-name: "cloudflare"
-            features: "--no-default-features --features cloudflare"
+            package: "otlp2parquet-cloudflare"
             target: "wasm32-unknown-unknown"
     steps:
       - uses: actions/checkout@v5
@@ -130,7 +127,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: '.'
       - name: Build with features "${{ matrix.feature-name }}"
-        run: cargo build --release ${{ matrix.features }} ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+        run: cargo build --release ${{ matrix.package && format('-p {0}', matrix.package) || matrix.features }} ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
 
   # Check WASM build size for Cloudflare Workers
   # Target: <3MB compressed (currently ~1006KB with OpenDAL)
@@ -169,17 +166,17 @@ jobs:
       - name: Add wasm-opt to PATH
         run: echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Build WASM (Cloudflare Workers)
-        run: cargo build --release --target wasm32-unknown-unknown --no-default-features --features cloudflare
+        run: cd crates/otlp2parquet-cloudflare && cargo install -q worker-build && worker-build --release
       - name: Optimize WASM
         run: |
           # Show original size
-          ORIGINAL_SIZE=$(stat -c%s target/wasm32-unknown-unknown/release/otlp2parquet.wasm)
+          ORIGINAL_SIZE=$(stat -c%s crates/otlp2parquet-cloudflare/build/index_bg.wasm)
           ORIGINAL_KB=$(echo "scale=1; $ORIGINAL_SIZE / 1024" | bc)
           ORIGINAL_MB=$(echo "scale=3; $ORIGINAL_SIZE / 1024 / 1024" | bc)
           echo "Original WASM size: ${ORIGINAL_SIZE} bytes (${ORIGINAL_KB} KB, ${ORIGINAL_MB} MB)"
 
           # Optimize with wasm-opt
-          wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int -o optimized.wasm target/wasm32-unknown-unknown/release/otlp2parquet.wasm
+          wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int -o optimized.wasm crates/otlp2parquet-cloudflare/build/index_bg.wasm
           OPTIMIZED_SIZE=$(stat -c%s optimized.wasm)
           OPTIMIZED_KB=$(echo "scale=1; $OPTIMIZED_SIZE / 1024" | bc)
           OPTIMIZED_MB=$(echo "scale=3; $OPTIMIZED_SIZE / 1024 / 1024" | bc)
@@ -243,6 +240,6 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: '.'
       - name: Check documentation
-        run: cargo doc --features server,lambda --no-deps
+        run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: -D warnings

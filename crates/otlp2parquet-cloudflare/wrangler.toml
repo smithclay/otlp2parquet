@@ -2,7 +2,7 @@
 # Deploy with: wrangler deploy
 
 name = "otlp2parquet"
-main = "crates/otlp2parquet-cloudflare/build/index.js"
+main = "build/index.js"
 compatibility_date = "2025-01-15"
 
 # Worker compute settings
@@ -19,12 +19,7 @@ preview_bucket_name = "otlp-logs-preview"  # Optional: separate bucket for dev
 
 # Build configuration
 [build]
-command = "cd crates/otlp2parquet-cloudflare && cargo install -q worker-build && worker-build --release"
-
-# Limits (Cloudflare Workers Free tier)
-# - 100,000 requests/day
-# - 10ms CPU time per request
-# - 1MB WASM after compression (we're at ~1MB compressed)
+command = "cargo install -q worker-build && worker-build --release"
 
 [limits]
 cpu_ms = 2000  # 2 seconds for local testing

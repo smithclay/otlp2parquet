@@ -73,19 +73,17 @@ make ci
 **Cloudflare Workers (WASM):**
 
 ```bash
-# Build with minimal features
-cargo build --release \
-  --target wasm32-unknown-unknown \
-  --no-default-features \
-  --features cloudflare
+# Build using worker-build (recommended)
+make build-cloudflare
 
-# Optimize
-wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
-  -o optimized.wasm target/wasm32-unknown-unknown/release/otlp2parquet.wasm
+# The build output is at: crates/otlp2parquet-cloudflare/build/index_bg.wasm
+# wrangler.toml is configured to use this output automatically
 
-# Compress and check size (must be <3MB)
-gzip -9 optimized.wasm
-l s -lh optimized.wasm.gz
+# To check the WASM size
+make wasm-size
+
+# For full build + optimization + size analysis
+make wasm-full
 ```
 
 **AWS Lambda:**
@@ -95,14 +93,14 @@ l s -lh optimized.wasm.gz
 cargo install cargo-lambda
 
 # Build
-cargo build --release --no-default-features --features lambda
+cargo build --release -p otlp2parquet-lambda
 ```
 
 **Server Mode (Default - Docker/Kubernetes/Development):**
 
 ```bash
 # Build
-cargo build --release --no-default-features --features server
+cargo build --release
 
 # Run with filesystem storage (default)
 ./target/release/otlp2parquet

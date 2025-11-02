@@ -11,12 +11,17 @@ otlp2parquet-batch = { path = "../otlp2parquet-batch" }
 otlp2parquet-config = { path = "../otlp2parquet-config" }
 otlp2parquet-storage = { path = "../otlp2parquet-storage", features = ["services-s3"] }
 
-# AWS Lambda runtime
+# AWS Lambda runtime (provides tokio runtime)
 lambda_runtime = "0.14"
 aws_lambda_events = "0.18"
+tokio = { workspace = true, features = ["macros"] }
 
 # Utilities
 base64 = "0.22"
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+
+[[bin]]
+name = "otlp2parquet"
+path = "src/main.rs"
