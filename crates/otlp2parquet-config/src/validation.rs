@@ -73,6 +73,10 @@ fn validate_request_config(config: &RequestConfig) -> Result<()> {
 }
 
 fn validate_storage_config(config: &StorageConfig) -> Result<()> {
+    if config.parquet_row_group_size == 0 {
+        bail!("storage.parquet_row_group_size must be greater than 0");
+    }
+
     match config.backend {
         StorageBackend::Fs => {
             let fs = config
@@ -166,6 +170,7 @@ mod tests {
         // Valid S3 config
         let s3_config = StorageConfig {
             backend: StorageBackend::S3,
+            parquet_row_group_size: default_parquet_row_group_size(),
             fs: None,
             s3: Some(S3Config {
                 bucket: "test-bucket".to_string(),
@@ -179,6 +184,7 @@ mod tests {
         // Invalid S3 config (missing bucket)
         let invalid_s3 = StorageConfig {
             backend: StorageBackend::S3,
+            parquet_row_group_size: default_parquet_row_group_size(),
             fs: None,
             s3: Some(S3Config {
                 bucket: String::new(),

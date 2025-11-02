@@ -9,7 +9,7 @@ use anyhow::Result;
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use otlp2parquet_batch::PassthroughBatcher;
 use otlp2parquet_config::{RuntimeConfig, StorageBackend};
-use otlp2parquet_storage::ParquetWriter;
+use otlp2parquet_storage::{set_parquet_row_group_size, ParquetWriter};
 use std::sync::Arc;
 
 mod handlers;
@@ -112,6 +112,8 @@ pub async fn run() -> Result<(), Error> {
         .s3
         .as_ref()
         .ok_or_else(|| lambda_runtime::Error::from("S3 configuration required for Lambda"))?;
+
+    set_parquet_row_group_size(config.storage.parquet_row_group_size);
 
     // Initialize OpenDAL S3 storage
     // OpenDAL automatically discovers AWS credentials from:

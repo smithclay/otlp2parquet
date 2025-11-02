@@ -23,7 +23,7 @@ use axum::{
 use otlp2parquet_batch::{BatchConfig, BatchManager, PassthroughBatcher};
 use otlp2parquet_config::RuntimeConfig;
 use otlp2parquet_storage::opendal_storage::OpenDalStorage;
-use otlp2parquet_storage::ParquetWriter;
+use otlp2parquet_storage::{set_parquet_row_group_size, ParquetWriter};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
@@ -119,6 +119,9 @@ pub async fn run() -> Result<()> {
 
     // Initialize tracing with config
     init_tracing(&config);
+
+    // Configure Parquet writer properties before first use
+    set_parquet_row_group_size(config.storage.parquet_row_group_size);
 
     info!("Server mode - full-featured HTTP server with multi-backend storage");
 
