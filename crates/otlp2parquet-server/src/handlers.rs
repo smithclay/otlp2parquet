@@ -114,7 +114,7 @@ async fn handle_signal(
 
     match signal {
         SignalKind::Logs => process_logs(state, format, body).await,
-        SignalKind::Traces => Ok(build_not_implemented_response("traces")),
+        SignalKind::Traces => process_traces(state, format, body).await,
         SignalKind::Metrics => process_metrics(state, format, body).await,
     }
 }
@@ -187,6 +187,72 @@ async fn process_logs(
         "records_processed": metadata.record_count,
         "flush_count": uploaded_paths.len(),
         "partitions": uploaded_paths,
+    }));
+
+    Ok((StatusCode::OK, response).into_response())
+}
+
+async fn process_traces(
+    state: &AppState,
+    format: InputFormat,
+    body: axum::body::Bytes,
+) -> Result<Response, AppError> {
+    let start = Instant::now();
+    counter!("otlp.ingest.requests", 1, "signal" => "traces");
+    histogram!("otlp.ingest.bytes", body.len() as f64, "signal" => "traces");
+
+    // Parse OTLP traces request
+    let request = otlp::traces::parse_otlp_trace_request(&body, format)
+        .map_err(|e| e.context("Failed to parse OTLP traces request payload"))?;
+
+    // Convert to Arrow
+    let (batches, metadata) = otlp::traces::TraceArrowConverter::convert(&request)
+        .map_err(|e| e.context("Failed to convert OTLP traces to Arrow"))?;
+
+    if batches.is_empty() || metadata.span_count == 0 {
+        return Ok((
+            StatusCode::OK,
+            Json(json!({
+                "status": "ok",
+                "message": "No trace spans to process",
+            })),
+        )
+            .into_response());
+    }
+
+    counter!("otlp.ingest.records", metadata.span_count as u64, "signal" => "traces");
+
+    // Write trace batch to Parquet
+    let service_name = metadata.service_name.as_ref();
+    let (partition_path, _hash) = state
+        .parquet_writer
+        .write_batches_with_signal(
+            &batches,
+            service_name,
+            metadata.first_timestamp_nanos,
+            "traces",
+            None, // No subdirectory for traces (unlike metrics)
+        )
+        .await
+        .map_err(|e| e.context("Failed to write traces Parquet to storage"))?;
+
+    counter!("otlp.traces.flushes", 1);
+    histogram!("otlp.batch.rows", metadata.span_count as f64, "signal" => "traces");
+    info!(
+        "Committed traces batch path={} service={} spans={}",
+        partition_path, service_name, metadata.span_count
+    );
+
+    histogram!(
+        "otlp.ingest.latency_ms",
+        start.elapsed().as_secs_f64() * 1000.0,
+        "signal" => "traces"
+    );
+
+    let response = Json(json!({
+        "status": "ok",
+        "spans_processed": metadata.span_count,
+        "partitions": vec![partition_path],
     }));
 
     Ok((StatusCode::OK, response).into_response())
@@ -275,18 +341,4 @@ async fn process_metrics(
     }));
 
     Ok((StatusCode::OK, response).into_response())
-}
-
-fn build_not_implemented_response(signal_type: &str) -> Response {
-    warn!(
-        "Received OTLP {} request but ingestion is not implemented yet",
-        signal_type
-    );
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({
-            "error": format!("OTLP {} ingestion not implemented yet", signal_type),
-        })),
-    )
-        .into_response()
 }
