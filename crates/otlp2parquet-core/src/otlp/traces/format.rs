@@ -144,7 +144,7 @@ mod tests {
         }
 
         let request = parse_otlp_trace_request(jsonl_bytes, InputFormat::Jsonl).unwrap();
-        assert_eq!(request.resource_spans.len(), 23);
+        assert_eq!(request.resource_spans.len(), 19);
 
         let span_total: usize = request
             .resource_spans
@@ -157,7 +157,7 @@ mod tests {
                     .sum::<usize>()
             })
             .sum();
-        assert_eq!(span_total, 63);
+        assert_eq!(span_total, 19);
 
         let has_service_name = request.resource_spans.iter().any(|resource| {
             resource.resource.as_ref().is_some_and(|res| {

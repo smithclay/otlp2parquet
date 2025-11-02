@@ -1,0 +1,32 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "test-service"
+            }
+          }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {},
+          "logRecords": [
+            {
+              "timeUnixNano": "1705327800000000000",
+              "severityNumber": "INVALID_SEVERITY_VALUE",
+              "severityText": "INFO",
+              "body": {
+                "stringValue": "Test log message"
+              },
+              "attributes": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

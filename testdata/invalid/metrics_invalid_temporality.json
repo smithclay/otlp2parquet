@@ -1,0 +1,41 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "test-service"
+            }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {
+            "name": "test-instrumentation"
+          },
+          "metrics": [
+            {
+              "name": "test.sum",
+              "description": "Test sum metric",
+              "unit": "1",
+              "sum": {
+                "dataPoints": [
+                  {
+                    "timeUnixNano": "1705327800000000000",
+                    "asDouble": 42.5,
+                    "attributes": []
+                  }
+                ],
+                "aggregationTemporality": "INVALID_TEMPORALITY_VALUE",
+                "isMonotonic": true
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
