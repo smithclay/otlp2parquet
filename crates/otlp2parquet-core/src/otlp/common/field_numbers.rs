@@ -4,8 +4,8 @@
 //! protobuf messages. They are primarily used for validation, error messages, and
 //! low-level protobuf parsing.
 //!
-//! Reference: https://github.com/open-telemetry/opentelemetry-proto
-//! Inspired by: https://github.com/open-telemetry/otel-arrow/tree/main/rust
+//! Reference: <https://github.com/open-telemetry/opentelemetry-proto>
+//! Inspired by: <https://github.com/open-telemetry/otel-arrow/tree/main/rust>
 
 /// Protobuf wire type constants
 pub mod wire_types {

@@ -10,7 +10,7 @@
 //! - OTLP spec uses snake_case (e.g., "time_unix_nano")
 //! - ClickHouse OTel exporter uses PascalCase (e.g., "Timestamp")
 //!
-//! Reference: https://github.com/ClickHouse/ClickHouse/tree/master/src/Storages/ObjectStorage/DataLakes
+//! Reference: <https://github.com/ClickHouse/ClickHouse/tree/master/src/Storages/ObjectStorage/DataLakes>
 
 /// OTLP protobuf field names (snake_case as per OpenTelemetry specification)
 ///
@@ -350,7 +350,7 @@ pub mod arrow {
 /// for common resource properties. We extract some of these to dedicated columns
 /// for better query performance and ClickHouse compatibility.
 ///
-/// Reference: https://opentelemetry.io/docs/specs/semconv/resource/
+/// Reference: <https://opentelemetry.io/docs/specs/semconv/resource/>
 pub mod semconv {
     // Service identification
     /// Logical name of the service (e.g., "checkout-service")

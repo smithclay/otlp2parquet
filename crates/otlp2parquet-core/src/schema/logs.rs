@@ -132,7 +132,7 @@ fn build_schema() -> Schema {
 /// map and promoted to dedicated columns for better query performance and
 /// ClickHouse compatibility.
 ///
-/// Reference: https://opentelemetry.io/docs/specs/semconv/resource/
+/// Reference: <https://opentelemetry.io/docs/specs/semconv/resource/>
 pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
     semconv::SERVICE_NAME,
     semconv::SERVICE_NAMESPACE,

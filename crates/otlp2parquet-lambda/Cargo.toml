@@ -23,5 +23,5 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 
 [[bin]]
-name = "otlp2parquet"
+name = "bootstrap"
 path = "src/main.rs"
