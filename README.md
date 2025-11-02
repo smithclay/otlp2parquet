@@ -24,6 +24,8 @@ The current schema, like the [duckdb-otlp extension](https://github.com/smithcla
 | OTLP Metrics | ✅ | ✅ | ✅ |
 | OTLP Traces | ✅ | ✅ | ✅ |
 | OTLP Profiles | ❌ | ❌ | ❌ |
+| **Advanced Features** | | | |
+| In-Memory Batching | ✅ | ❌ | ❌ |
 
 
 ## Quick Start

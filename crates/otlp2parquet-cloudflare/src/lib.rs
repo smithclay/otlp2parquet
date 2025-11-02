@@ -7,18 +7,14 @@
 // Entry point is #[event(fetch)] macro, not main()
 
 use once_cell::sync::OnceCell;
-use otlp2parquet_batch::{
-    BatchConfig, BatchManager, CompletedBatch, LogSignalProcessor, PassthroughBatcher,
-};
+use otlp2parquet_batch::{LogSignalProcessor, PassthroughBatcher};
 use otlp2parquet_core::otlp;
 use serde_json::json;
 use std::sync::Arc;
-use std::time::Duration;
 use worker::*;
 
 static STORAGE: OnceCell<Arc<otlp2parquet_storage::opendal_storage::OpenDalStorage>> =
     OnceCell::new();
-static BATCHER: OnceCell<Option<Arc<BatchManager<LogSignalProcessor>>>> = OnceCell::new();
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum SignalKind {
@@ -101,56 +97,60 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
     let storage = if let Some(existing) = STORAGE.get() {
         existing.clone()
     } else {
+        // Generic S3-compatible storage configuration
+        // Supports R2 (production), MinIO (local dev), or any S3-compatible endpoint
         let bucket = env
-            .var("OTLP2PARQUET_R2_BUCKET")
+            .var("OTLP2PARQUET_S3_BUCKET")
             .map_err(|e| {
                 console_error!(
-                    "OTLP2PARQUET_R2_BUCKET environment variable not set: {:?}",
+                    "OTLP2PARQUET_S3_BUCKET environment variable not set: {:?}",
                     e
                 );
                 e
             })?
             .to_string();
 
-        let account_id = env
-            .var("OTLP2PARQUET_R2_ACCOUNT_ID")
-            .map_err(|e| {
-                console_error!(
-                    "OTLP2PARQUET_R2_ACCOUNT_ID environment variable not set: {:?}",
-                    e
-                );
-                e
-            })?
-            .to_string();
+        let region = env
+            .var("OTLP2PARQUET_S3_REGION")
+            .ok()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "auto".to_string());
+
+        // Optional: custom S3 endpoint (for MinIO, R2, etc.)
+        // If not set, OpenDAL uses AWS S3 defaults
+        let endpoint = env
+            .var("OTLP2PARQUET_S3_ENDPOINT")
+            .ok()
+            .map(|v| v.to_string());
 
         let access_key_id = env
-            .var("OTLP2PARQUET_R2_ACCESS_KEY_ID")
-            .map_err(|e| {
-                console_error!(
-                    "OTLP2PARQUET_R2_ACCESS_KEY_ID environment variable not set: {:?}",
-                    e
-                );
-                e
-            })?
-            .to_string();
+            .var("OTLP2PARQUET_S3_ACCESS_KEY_ID")
+            .ok()
+            .map(|v| v.to_string());
 
         let secret_access_key = env
-            .secret("OTLP2PARQUET_R2_SECRET_ACCESS_KEY")
-            .map_err(|e| {
-                console_error!("OTLP2PARQUET_R2_SECRET_ACCESS_KEY secret not set: {:?}", e);
-                e
-            })?
-            .to_string();
+            .secret("OTLP2PARQUET_S3_SECRET_ACCESS_KEY")
+            .or_else(|_| env.var("OTLP2PARQUET_S3_SECRET_ACCESS_KEY"))
+            .ok()
+            .map(|v| v.to_string());
+
+        console_log!(
+            "Initializing S3-compatible storage: bucket={}, region={}, endpoint={:?}",
+            bucket,
+            region,
+            endpoint.as_deref().unwrap_or("default")
+        );
 
         let instance = Arc::new(
-            otlp2parquet_storage::opendal_storage::OpenDalStorage::new_r2(
+            otlp2parquet_storage::opendal_storage::OpenDalStorage::new_s3(
                 &bucket,
-                &account_id,
-                &access_key_id,
-                &secret_access_key,
+                &region,
+                endpoint.as_deref(),
+                access_key_id.as_deref(),
+                secret_access_key.as_deref(),
             )
             .map_err(|e| {
-                console_error!("Failed to initialize OpenDAL R2 storage: {:?}", e);
+                console_error!("Failed to initialize OpenDAL S3 storage: {:?}", e);
                 worker::Error::RustError(format!("Storage initialization error: {}", e))
             })?,
         );
@@ -159,51 +159,10 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
         instance
     };
 
-    let batcher = BATCHER
-        .get_or_init(|| {
-            // Use platform defaults for Cloudflare Workers
-            let max_rows = std::env::var("OTLP2PARQUET_BATCH_MAX_ROWS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(100_000);
-            let max_bytes = std::env::var("OTLP2PARQUET_BATCH_MAX_BYTES")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(64 * 1024 * 1024);
-            let max_age_secs = std::env::var("OTLP2PARQUET_BATCH_MAX_AGE_SECS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(5);
-            let enabled = std::env::var("OTLP2PARQUET_BATCHING_ENABLED")
-                .ok()
-                .map(|v| v == "true" || v == "1")
-                .unwrap_or(true);
-
-            if !enabled {
-                console_log!("Cloudflare batching disabled by configuration");
-                None
-            } else {
-                let cfg = BatchConfig {
-                    max_rows,
-                    max_bytes,
-                    max_age: Duration::from_secs(max_age_secs),
-                };
-                console_log!(
-                    "Cloudflare batching enabled (max_rows={} max_bytes={} max_age={}s)",
-                    cfg.max_rows,
-                    cfg.max_bytes,
-                    cfg.max_age.as_secs()
-                );
-                Some(Arc::new(BatchManager::new(cfg)))
-            }
-        })
-        .clone();
-
-    let max_payload_bytes = std::env::var("OTLP2PARQUET_MAX_PAYLOAD_BYTES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(1024 * 1024);
+    // Cloudflare Workers: Always use passthrough (no batching)
+    // Batching requires time-based operations which aren't supported in WASM
     let passthrough: PassthroughBatcher<LogSignalProcessor> = PassthroughBatcher::default();
+    let max_payload_bytes = 1024 * 1024; // 1MB max payload
 
     let content_type_header = req.headers().get("content-type").ok().flatten();
     let content_type = content_type_header.as_deref();
@@ -242,39 +201,14 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
         worker::Error::RustError(format!("Processing error: {}", e))
     })?;
 
-    let mut uploads: Vec<CompletedBatch<otlp::LogMetadata>> = Vec::new();
-    let metadata: otlp::LogMetadata = if let Some(manager) = batcher.as_ref() {
-        match manager.drain_expired() {
-            Ok(mut expired) => uploads.append(&mut expired),
-            Err(err) => {
-                console_error!("Failed to flush expired batches: {:?}", err);
-                return Response::error("Internal batching failure", 500);
-            }
-        }
+    // Convert directly to Arrow (no batching)
+    let batch = passthrough.ingest(&request).map_err(|err| {
+        console_error!("Failed to convert OTLP to Arrow: {:?}", err);
+        worker::Error::RustError(format!("Encoding error: {}", err))
+    })?;
 
-        match manager.ingest(&request, body_bytes.len()) {
-            Ok((mut ready, meta)) => {
-                uploads.append(&mut ready);
-                meta
-            }
-            Err(err) => {
-                console_error!("Batch enqueue failed: {:?}", err);
-                return Response::error("Internal batching failure", 500);
-            }
-        }
-    } else {
-        match passthrough.ingest(&request) {
-            Ok(batch) => {
-                let meta: otlp::LogMetadata = batch.metadata.clone();
-                uploads.push(batch);
-                meta
-            }
-            Err(err) => {
-                console_error!("Failed to convert OTLP to Arrow: {:?}", err);
-                return Response::error("Internal encoding failure", 500);
-            }
-        }
-    };
+    let metadata = batch.metadata.clone();
+    let uploads = vec![batch];
 
     let mut uploaded_paths = Vec::new();
     for batch in uploads {

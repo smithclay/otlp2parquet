@@ -26,19 +26,31 @@ command = "cd crates/otlp2parquet-cloudflare && cargo install -q worker-build &&
 # - 10ms CPU time per request
 # - 1MB WASM after compression (we're at ~1MB compressed)
 
-# Environment variables (optional - for advanced config)
+[limits]
+cpu_ms = 2000  # 2 seconds for local testing
+
+# Environment variables for S3-compatible storage
+# These work with R2, MinIO, AWS S3, or any S3-compatible service
 [vars]
-OTLP2PARQUET_R2_BUCKET = "otlp-logs-preview"
-OTLP2PARQUET_R2_ACCOUNT_ID = "test"
-OTLP2PARQUET_R2_ACCESS_KEY_ID = "test"
-OTLP2PARQUET_R2_SECRET_ACCESS_KEY = "test"  # For local testing only
-# LOG_LEVEL = "info"
-# MAX_BATCH_SIZE = "1000"
+# S3 bucket name
+OTLP2PARQUET_S3_BUCKET = "otlp-logs"
+
+# S3 region (use "auto" for R2, "us-east-1" for MinIO)
+OTLP2PARQUET_S3_REGION = "us-east-1"
+
+# S3 endpoint (optional - leave commented for AWS S3)
+# For local MinIO: http://localhost:9000
+# For Cloudflare R2: https://[account_id].r2.cloudflarestorage.com
+OTLP2PARQUET_S3_ENDPOINT = "http://localhost:9000"
+
+# S3 credentials (for local testing - use secrets in production)
+OTLP2PARQUET_S3_ACCESS_KEY_ID = "minioadmin"
+OTLP2PARQUET_S3_SECRET_ACCESS_KEY = "minioadmin"
 
 # Secrets (set with: wrangler secret put SECRET_NAME)
-# These should NOT be in this file, use wrangler CLI:
-# wrangler secret put R2_ACCESS_KEY_ID
-# wrangler secret put R2_SECRET_ACCESS_KEY
+# For production, use secrets instead of vars for credentials:
+# wrangler secret put OTLP2PARQUET_S3_ACCESS_KEY_ID
+# wrangler secret put OTLP2PARQUET_S3_SECRET_ACCESS_KEY
 
 # Development settings
 [env.dev]
