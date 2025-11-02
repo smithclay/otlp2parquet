@@ -33,67 +33,6 @@ uvx pre-commit install
 
 `otlp2parquet` employs aggressive size optimization, especially for Cloudflare Workers (WASM) deployments. This is reflected in the `Cargo.toml` configuration:
 
-### `Cargo.toml` - Aggressive Size Optimization
-
-```toml
-[workspace]
-members = ["crates/*"]
-
-[profile.release]
-opt-level = "z"           # Optimize for size
-lto = true                # Link-time optimization
-codegen-units = 1         # Better optimization
-strip = true              # Strip symbols
-panic = "abort"           # Smaller panic handler
-
-[profile.release.package."*"]
-opt-level = "z"
-
-[dependencies]
-# Arrow/Parquet - MINIMAL features only
-arrow = { version = "53", default-features = false, features = [
-    "ipc"                 # Arrow IPC format (smaller than full)
-] }
-parquet = { version = "53", default-features = false, features = [
-    "arrow",              # Arrow integration
-    "snap",               # Snappy only (smallest compressor)
-] }
-
-# OTLP Protocol - minimal
-prost = { version = "0.13", default-features = false, features = ["std"] }
-
-# Platform-specific (behind features)
-worker = { version = "0.4", optional = true }
-aws-lambda-runtime = { version = "0.13", optional = true }
-
-# Core utilities - minimal
-tokio = { version = "1", default-features = false, features = ["rt", "macros"] }
-serde = { version = "1", default-features = false, features = ["derive"] }
-anyhow = "1"
-uuid = { version = "1", default-features = false, features = ["v4", "fast-rng"] }
-
-[features]
-default = []
-cloudflare = ["worker"]
-lambda = ["aws-lambda-runtime"]
-
-[build-dependencies]
-prost-build = "0.13"
-```
-
-### OpenDAL Dependency Configuration
-
-```toml
-# Cargo.toml - workspace dependencies
-opendal = { version = "0.54", default-features = false }
-
-# Platform-specific features (crates/otlp2parquet-runtime/Cargo.toml)
-[features]
-cloudflare = ["worker", "opendal/services-s3"]
-lambda = ["lambda_runtime", "opendal/services-s3"]
-server = ["opendal/services-fs", "opendal/services-s3", "axum", "tracing"]
-```
-
 ## Building
 
 ### Using Makefile (Recommended)

@@ -97,7 +97,10 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
         let bucket = env
             .var("OTLP2PARQUET_R2_BUCKET")
             .map_err(|e| {
-                console_error!("OTLP2PARQUET_R2_BUCKET environment variable not set: {:?}", e);
+                console_error!(
+                    "OTLP2PARQUET_R2_BUCKET environment variable not set: {:?}",
+                    e
+                );
                 e
             })?
             .to_string();
@@ -105,7 +108,10 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
         let account_id = env
             .var("OTLP2PARQUET_R2_ACCOUNT_ID")
             .map_err(|e| {
-                console_error!("OTLP2PARQUET_R2_ACCOUNT_ID environment variable not set: {:?}", e);
+                console_error!(
+                    "OTLP2PARQUET_R2_ACCOUNT_ID environment variable not set: {:?}",
+                    e
+                );
                 e
             })?
             .to_string();
@@ -113,7 +119,10 @@ pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> R
         let access_key_id = env
             .var("OTLP2PARQUET_R2_ACCESS_KEY_ID")
             .map_err(|e| {
-                console_error!("OTLP2PARQUET_R2_ACCESS_KEY_ID environment variable not set: {:?}", e);
+                console_error!(
+                    "OTLP2PARQUET_R2_ACCESS_KEY_ID environment variable not set: {:?}",
+                    e
+                );
                 e
             })?
             .to_string();
@@ -397,4 +406,3 @@ async fn handle_metrics_request(
 
     Response::from_json(&response_body)
 }
-

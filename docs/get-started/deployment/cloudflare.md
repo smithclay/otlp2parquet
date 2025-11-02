@@ -1,338 +1,161 @@
 # Cloudflare Workers Deployment Guide
 
-Deploy `otlp2parquet` to Cloudflare Workers with R2 storage. Perfect for edge compute with global distribution.
+This guide provides a focused workflow for developing, testing, and deploying `otlp2parquet` to Cloudflare Workers with R2 storage.
 
 ## Prerequisites
 
-1. **Cloudflare Account** (free tier works!)
-2. **Node.js** 18+ and npm
-3. **Wrangler CLI**
+1.  **Cloudflare Account**: A free tier account is sufficient to get started.
+2.  **Node.js and Wrangler**: The command-line tool for Cloudflare Workers.
+3.  **Rust Toolchain**: Including the `wasm32-unknown-unknown` target and `wasm-opt` for optimization.
 
 ```bash
-# Install Wrangler globally
+# Install Wrangler CLI
 npm install -g wrangler
 
-# Or use with npx (no installation needed)
-npx wrangler --version
+# Add WASM target for Rust
+rustup target add wasm32-unknown-unknown
+
+# Install wasm-opt (macOS example)
+brew install binaryen
 ```
 
-## Quick Start (Deploy Button) ⚡
+## 1. Local Development & Testing
 
-**The easiest way to deploy:**
+`wrangler dev` allows you to run your Worker locally, with hot-reloading and access to a preview R2 bucket.
+
+### Development Workflow
+
+1.  **Login to Cloudflare**:
+
+    ```bash
+    wrangler login
+    ```
+
+2.  **Create a Preview R2 Bucket**:
+
+    ```bash
+    # This bucket is used by `wrangler dev` for local testing.
+    wrangler r2 bucket create otlp-logs-preview
+    ```
+
+3.  **Start the Local Server**:
+
+    ```bash
+    # This command starts a local server that simulates the Cloudflare environment.
+    wrangler dev
+    ```
+
+    Your Worker is now available at `http://localhost:8787`.
+
+4.  **Test Locally**:
+
+    Send a test request to your local Worker.
+
+    ```bash
+    curl -X POST http://localhost:8787/v1/logs \
+      -H "Content-Type: application/x-protobuf" \
+      --data-binary @testdata/logs.pb
+    ```
+
+5.  **Verify Output**:
+
+    Check the contents of your preview R2 bucket.
+
+    ```bash
+    wrangler r2 object list otlp-logs-preview
+    ```
+
+## 2. Deployment to Cloudflare
+
+Once you've tested locally, you can deploy your Worker to the Cloudflare global network.
+
+### Option A: Quick Start (Deploy Button)
+
+The easiest way to deploy is to use the deploy button, which forks the repository and handles the initial setup automatically.
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/smithclay/otlp2parquet)
 
-This will:
-1. Fork the repository to your GitHub account
-2. Prompt you to connect your Cloudflare account
-3. Create an R2 bucket for log storage
-4. Deploy the Worker automatically
+### Option B: Manual Deployment
 
-## Manual Deployment
+1.  **Create a Production R2 Bucket**:
 
-### 1. Clone the Repository
+    ```bash
+    wrangler r2 bucket create otlp-logs
+    ```
 
-```bash
-git clone https://github.com/smithclay/otlp2parquet.git
-cd otlp2parquet
-```
+2.  **Configure `wrangler.toml`**:
 
-### 2. Login to Cloudflare
+    Update your `wrangler.toml` file to link to your R2 bucket.
 
-```bash
-wrangler login
-```
+    ```toml
+    # wrangler.toml
+    [[r2_buckets]]
+    binding = "LOGS_BUCKET"
+    bucket_name = "otlp-logs"
+    preview_bucket_name = "otlp-logs-preview"
+    ```
 
-This opens a browser window to authenticate.
+3.  **Build the WASM Binary**:
 
-### 3. Create R2 Bucket
+    ```bash
+    # This command builds, optimizes, and compresses the WASM binary.
+    make build-cloudflare
+    ```
 
-```bash
-# Create production bucket
-wrangler r2 bucket create otlp-logs
+4.  **Deploy**:
 
-# Optional: Create preview/dev bucket
-wrangler r2 bucket create otlp-logs-preview
-```
+    ```bash
+    # Deploy to your production environment.
+    wrangler deploy
+    ```
 
-### 4. Update wrangler.toml
+    After deployment, Wrangler will output the public URL for your Worker.
 
-Edit `wrangler.toml` to set your bucket name:
+## 3. Configuration
 
-```toml
-[[r2_buckets]]
-binding = "LOGS_BUCKET"
-bucket_name = "otlp-logs"  # Change to your bucket name
-preview_bucket_name = "otlp-logs-preview"
-```
-
-### 5. Build WASM Binary
-
-```bash
-# Install Rust toolchain if not already installed
-rustup target add wasm32-unknown-unknown
-
-# Install wasm-opt (for size optimization)
-# macOS
-brew install binaryen
-
-# Linux
-wget https://github.com/WebAssembly/binaryen/releases/latest/download/binaryen-*-x86_64-linux.tar.gz
-tar xzf binaryen-*-x86_64-linux.tar.gz
-sudo cp binaryen-*/bin/wasm-opt /usr/local/bin/
-
-# Build optimized WASM
-make build-cloudflare
-```
-
-### 6. Deploy to Cloudflare
-
-```bash
-# Deploy to production
-wrangler deploy
-
-# Deploy to specific environment
-wrangler deploy --env staging
-wrangler deploy --env production
-```
-
-You'll see output like:
-
-```
-✨ Successfully published your Worker!
-🌍 https://otlp2parquet.your-subdomain.workers.dev
-```
-
-## Test Your Deployment
-
-```bash
-# Get your Worker URL from wrangler output
-WORKER_URL="https://otlp2parquet.your-subdomain.workers.dev"
-
-# Send a test OTLP log payload
-curl -X POST "${WORKER_URL}/v1/logs" \
-  -H "Content-Type: application/x-protobuf" \
-  --data-binary @test-payload.pb
-
-# Check R2 bucket for Parquet files
-wrangler r2 object list otlp-logs
-```
-
-## Local Development
-
-```bash
-# Run Worker locally with Miniflare
-wrangler dev
-
-# Worker will be available at http://localhost:8787
-# Uses preview R2 bucket (otlp-logs-preview)
-
-# Test locally
-curl -X POST http://localhost:8787/v1/logs \
-  -H "Content-Type: application/x-protobuf" \
-  --data-binary @test-payload.pb
-```
-
-## Configuration
-
-For complete configuration options, see the [Configuration Guide](../configuration.md).
-
-### Runtime Configuration
-
-Cloudflare Workers automatically uses these settings:
-- **Storage Backend**: R2 (required for Workers)
-- **Batch Defaults**: 100,000 rows, 64 MB, 5 seconds max age
-- **Max Payload**: 1 MB (optimized for Workers free tier)
+Configuration for your Worker is managed in `wrangler.toml`.
 
 ### Environment Variables
 
-Set environment variables in `wrangler.toml`:
+Set non-sensitive configuration, such as batching parameters, in the `[vars]` section.
 
 ```toml
+# wrangler.toml
 [vars]
-OTLP2PARQUET_R2_BUCKET = "otlp-logs"
-OTLP2PARQUET_R2_ACCOUNT_ID = "your_account_id"
-OTLP2PARQUET_R2_ACCESS_KEY_ID = "your_access_key"
 OTLP2PARQUET_BATCH_MAX_ROWS = "100000"
-OTLP2PARQUET_BATCH_MAX_BYTES = "67108864"  # 64 MB
 OTLP2PARQUET_BATCHING_ENABLED = "true"
 ```
 
-### Secrets (for sensitive data)
+### Secrets
 
-Store sensitive values like R2 secret keys using Cloudflare Secrets:
+Use `wrangler secret` to store sensitive credentials like R2 access keys. **Do not** store secrets in `wrangler.toml`.
 
 ```bash
-# Set R2 secret access key (recommended - not in wrangler.toml!)
+# This will prompt you to enter the secret value securely.
 wrangler secret put OTLP2PARQUET_R2_SECRET_ACCESS_KEY
-# Prompts for value
-
-# List secrets
-wrangler secret list
-
-# Delete secret
-wrangler secret delete OTLP2PARQUET_R2_SECRET_ACCESS_KEY
 ```
 
-### Custom Domain
+### Environments
 
-```toml
-# In wrangler.toml
-[env.production]
-route = "logs.example.com/*"
-workers_dev = false
-```
+You can define different environments (e.g., `staging`, `production`) in `wrangler.toml` to deploy different versions of your Worker with separate configurations.
 
-Then configure DNS in Cloudflare dashboard:
-1. Go to DNS settings
-2. Add CNAME record: `logs` → `your-subdomain.workers.dev`
-
-## Multiple Environments
-
-The included `wrangler.toml` supports three environments:
-
-### Development
 ```bash
-wrangler dev
-# Uses otlp-logs-dev bucket
-```
-
-### Staging
-```bash
+# Deploy to a specific environment
 wrangler deploy --env staging
-# Deploys to: otlp2parquet-staging.workers.dev
-# Uses otlp-logs-staging bucket
 ```
 
-### Production
-```bash
-wrangler deploy --env production
-# Deploys to your custom domain or otlp2parquet.workers.dev
-# Uses otlp-logs-production bucket
-```
-
-## Monitoring
+## 4. Monitoring & Troubleshooting
 
 ### View Logs
 
-```bash
-# Stream logs in real-time
-wrangler tail
-
-# Filter logs
-wrangler tail --format pretty
-wrangler tail --status error
-```
-
-### Cloudflare Dashboard
-
-1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com/)
-2. Navigate to Workers & Pages
-3. Click your Worker name
-4. View analytics, metrics, and logs
-
-## Limits (Free Tier)
-
-| Metric | Free Tier | Paid ($5/mo) |
-|--------|-----------|--------------|
-| Requests/day | 100,000 | 10M+ |
-| CPU time | 10ms/req | 30s/req |
-| R2 Storage | 10 GB | Unlimited* |
-| R2 Reads | 1M/mo | Unlimited* |
-| R2 Writes | 1M/mo | Unlimited* |
-
-*Paid tier charges per operation after free tier
-
-## CI/CD with GitHub Actions
-
-Create `.github/workflows/deploy-cloudflare.yml`:
-
-```yaml
-name: Deploy to Cloudflare
-
-on:
-  push:
-    branches: [main]
-    tags: ['v*']
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Build WASM
-        run: make build-cloudflare
-
-      - name: Deploy to Cloudflare
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-```
-
-Get API token from: https://dash.cloudflare.com/profile/api-tokens
-
-## Troubleshooting
-
-### Build fails - WASM too large
+Stream logs from your deployed Worker in real-time.
 
 ```bash
-# Check WASM size
-make wasm-size
-
-# If over 3MB, review dependencies:
-make wasm-profile
-
-# Look for large dependencies and optimize
-```
-
-### R2 bucket access denied
-
-```bash
-# Verify bucket exists
-wrangler r2 bucket list
-
-# Check wrangler.toml binding name matches code
-# Binding: "LOGS_BUCKET" in wrangler.toml
-# Code: env.LOGS_BUCKET.put()
-```
-
-### Worker not receiving requests
-
-```bash
-# Check routes
-wrangler deployments list
-
-# Test with curl
-curl -v https://your-worker.workers.dev/v1/logs
-
-# Check Worker logs
+# Tail logs from your worker
 wrangler tail
 ```
 
-## Cost Estimation
+### Common Issues
 
-**Free tier (sufficient for testing):**
-- 100,000 requests/day
-- ~3 requests/second sustained
-- 10 GB R2 storage
-- 1M R2 operations/month
-
-**Paid tier ($5/month + usage):**
-- $0.50 per million requests (after 10M)
-- R2 storage: $0.015/GB/month
-- R2 operations: Free up to limits, then $0.36 per million
-
-**Example costs for 1M logs/day:**
-- Requests: ~$0.50/day ($15/month)
-- R2 storage (100GB Parquet): $1.50/month
-- R2 writes: Free (within limits)
-
-**Total: ~$20-25/month for 1M logs/day**
-
-## Next Steps
-
-- [Configure custom domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)
-- [Set up analytics](https://developers.cloudflare.com/workers/observability/analytics/)
-- [Enable rate limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)
+*   **Build fails - WASM too large**: The WASM binary must be under 3MB (compressed). Use `make wasm-profile` to analyze binary size and identify large dependencies.
+*   **R2 Bucket Access Denied**: Ensure the `binding` name in `wrangler.toml` matches the one used in the code (`env.LOGS_BUCKET`). Also, verify that your API token has the necessary R2 permissions.

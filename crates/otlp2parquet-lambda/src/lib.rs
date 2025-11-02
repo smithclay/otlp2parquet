@@ -109,7 +109,10 @@ pub async fn run() -> Result<(), Error> {
         )));
     }
 
-    let s3 = config.storage.s3.as_ref()
+    let s3 = config
+        .storage
+        .s3
+        .as_ref()
         .ok_or_else(|| lambda_runtime::Error::from("S3 configuration required for Lambda"))?;
 
     // Initialize OpenDAL S3 storage

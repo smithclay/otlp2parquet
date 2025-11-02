@@ -42,6 +42,7 @@ build/
 coverage/
 *.profraw
 *.profdata
+local-env.json
 
 # Kubernetes secrets (use secret.yaml.example as template)
 **/secret.yaml
