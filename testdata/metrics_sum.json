@@ -5,11 +5,15 @@
         "attributes": [
           {
             "key": "service.name",
-            "value": { "stringValue": "api-gateway" }
+            "value": {
+              "stringValue": "api-gateway"
+            }
           },
           {
             "key": "service.version",
-            "value": { "stringValue": "2.1.0" }
+            "value": {
+              "stringValue": "2.1.0"
+            }
           }
         ]
       },
@@ -19,71 +23,88 @@
             "name": "http-instrumentation",
             "version": "1.2.0"
           },
-          "schemaUrl": "",
           "metrics": [
             {
               "name": "http.requests.total",
               "description": "Total number of HTTP requests",
               "unit": "1",
               "sum": {
-                "aggregationTemporality": 2,
-                "isMonotonic": true,
                 "dataPoints": [
                   {
+                    "timeUnixNano": "1705327800000000000",
+                    "asInt": "15234",
                     "attributes": [
                       {
                         "key": "http.method",
-                        "value": { "stringValue": "GET" }
+                        "value": {
+                          "stringValue": "GET"
+                        }
                       },
                       {
                         "key": "http.status_code",
-                        "value": { "intValue": "200" }
+                        "value": {
+                          "intValue": "200"
+                        }
                       },
                       {
                         "key": "http.route",
-                        "value": { "stringValue": "/api/users" }
+                        "value": {
+                          "stringValue": "/api/users"
+                        }
                       }
-                    ],
-                    "timeUnixNano": "1705327800000000000",
-                    "asInt": "15234"
+                    ]
                   },
                   {
+                    "timeUnixNano": "1705327800000000000",
+                    "asInt": "3421",
                     "attributes": [
                       {
                         "key": "http.method",
-                        "value": { "stringValue": "POST" }
+                        "value": {
+                          "stringValue": "POST"
+                        }
                       },
                       {
                         "key": "http.status_code",
-                        "value": { "intValue": "201" }
+                        "value": {
+                          "intValue": "201"
+                        }
                       },
                       {
                         "key": "http.route",
-                        "value": { "stringValue": "/api/users" }
+                        "value": {
+                          "stringValue": "/api/users"
+                        }
                       }
-                    ],
-                    "timeUnixNano": "1705327800000000000",
-                    "asInt": "3421"
+                    ]
                   },
                   {
+                    "timeUnixNano": "1705327800000000000",
+                    "asInt": "152",
                     "attributes": [
                       {
                         "key": "http.method",
-                        "value": { "stringValue": "GET" }
+                        "value": {
+                          "stringValue": "GET"
+                        }
                       },
                       {
                         "key": "http.status_code",
-                        "value": { "intValue": "404" }
+                        "value": {
+                          "intValue": "404"
+                        }
                       },
                       {
                         "key": "http.route",
-                        "value": { "stringValue": "/api/users" }
+                        "value": {
+                          "stringValue": "/api/users"
+                        }
                       }
-                    ],
-                    "timeUnixNano": "1705327800000000000",
-                    "asInt": "152"
+                    ]
                   }
-                ]
+                ],
+                "aggregationTemporality": "AGGREGATION_TEMPORALITY_CUMULATIVE",
+                "isMonotonic": true
               }
             },
             {
@@ -91,26 +112,27 @@
               "description": "Total bytes received in requests",
               "unit": "bytes",
               "sum": {
-                "aggregationTemporality": 2,
-                "isMonotonic": true,
                 "dataPoints": [
                   {
+                    "timeUnixNano": "1705327800000000000",
+                    "asInt": "45892134",
                     "attributes": [
                       {
                         "key": "http.route",
-                        "value": { "stringValue": "/api/users" }
+                        "value": {
+                          "stringValue": "/api/users"
+                        }
                       }
-                    ],
-                    "timeUnixNano": "1705327800000000000",
-                    "asInt": "45892134"
+                    ]
                   }
-                ]
+                ],
+                "aggregationTemporality": "AGGREGATION_TEMPORALITY_CUMULATIVE",
+                "isMonotonic": true
               }
             }
           ]
         }
-      ],
-      "schemaUrl": ""
+      ]
     }
   ]
 }

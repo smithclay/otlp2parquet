@@ -5,11 +5,15 @@
         "attributes": [
           {
             "key": "service.name",
-            "value": { "stringValue": "payment-service" }
+            "value": {
+              "stringValue": "payment-service"
+            }
           },
           {
             "key": "service.version",
-            "value": { "stringValue": "3.2.1" }
+            "value": {
+              "stringValue": "3.2.1"
+            }
           }
         ]
       },
@@ -19,24 +23,26 @@
             "name": "payment-instrumentation",
             "version": "1.0.0"
           },
-          "schemaUrl": "",
           "metrics": [
             {
               "name": "payment.processing.duration",
               "description": "Duration of payment processing operations",
               "unit": "ms",
               "exponentialHistogram": {
-                "aggregationTemporality": 2,
                 "dataPoints": [
                   {
                     "attributes": [
                       {
                         "key": "payment.method",
-                        "value": { "stringValue": "credit_card" }
+                        "value": {
+                          "stringValue": "credit_card"
+                        }
                       },
                       {
                         "key": "payment.provider",
-                        "value": { "stringValue": "stripe" }
+                        "value": {
+                          "stringValue": "stripe"
+                        }
                       }
                     ],
                     "timeUnixNano": "1705327800000000000",
@@ -46,12 +52,16 @@
                     "zeroCount": "5",
                     "positive": {
                       "offset": 2,
-                      "bucketCounts": ["234", "567", "892", "645", "178", "22"]
+                      "bucketCounts": [
+                        "234",
+                        "567",
+                        "892",
+                        "645",
+                        "178",
+                        "22"
+                      ]
                     },
-                    "negative": {
-                      "offset": 0,
-                      "bucketCounts": []
-                    },
+                    "negative": {},
                     "min": 12.3,
                     "max": 1234.5
                   },
@@ -59,11 +69,15 @@
                     "attributes": [
                       {
                         "key": "payment.method",
-                        "value": { "stringValue": "paypal" }
+                        "value": {
+                          "stringValue": "paypal"
+                        }
                       },
                       {
                         "key": "payment.provider",
-                        "value": { "stringValue": "paypal" }
+                        "value": {
+                          "stringValue": "paypal"
+                        }
                       }
                     ],
                     "timeUnixNano": "1705327800000000000",
@@ -73,22 +87,26 @@
                     "zeroCount": "3",
                     "positive": {
                       "offset": 1,
-                      "bucketCounts": ["156", "432", "721", "412", "98", "12"]
+                      "bucketCounts": [
+                        "156",
+                        "432",
+                        "721",
+                        "412",
+                        "98",
+                        "12"
+                      ]
                     },
-                    "negative": {
-                      "offset": 0,
-                      "bucketCounts": []
-                    },
+                    "negative": {},
                     "min": 8.7,
                     "max": 892.3
                   }
-                ]
+                ],
+                "aggregationTemporality": "AGGREGATION_TEMPORALITY_CUMULATIVE"
               }
             }
           ]
         }
-      ],
-      "schemaUrl": ""
+      ]
     }
   ]
 }

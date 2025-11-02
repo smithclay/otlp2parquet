@@ -1,138 +1,139 @@
 {
-   "resourceLogs":[
-      {
-         "resource":{
-            "attributes":[
-               {
-                  "key":"log_name",
-                  "value":{
-                     "stringValue":"otel_envoy_access_log"
-                  }
-               },
-               {
-                  "key":"zone_name",
-                  "value":{
-                     "stringValue":""
-                  }
-               },
-               {
-                  "key":"cluster_name",
-                  "value":{
-                     "stringValue":""
-                  }
-               },
-               {
-                  "key":"node_name",
-                  "value":{
-                     "stringValue":""
-                  }
-               },
-               {
-                  "key":"service.name",
-                  "value":{
-                     "stringValue":"frontend-proxy"
-                  }
-               },
-               {
-                  "key":"host.name",
-                  "value":{
-                     "stringValue":"docker-desktop"
-                  }
-               },
-               {
-                  "key":"os.type",
-                  "value":{
-                     "stringValue":"linux"
-                  }
-               }
-            ]
-         },
-         "scopeLogs":[
-            {
-               "scope":{
-
-               },
-               "logRecords":[
-                  {
-                     "timeUnixNano":"1760741572254301000",
-                     "body":{
-                        "stringValue":"[2025-10-17T22:52:52.254Z] \"GET /api/products/LS4PSXUNUM HTTP/1.1\" 200 - via_upstream - \"-\" 0 535 2 2 \"-\" \"python-requests/2.32.5\" \"e55db68a-be46-9bb9-bb04-e431841e5b1d\" \"frontend-proxy:8080\" \"172.18.0.25:8080\" frontend 172.18.0.27:53142 172.18.0.27:8080 172.18.0.26:33266 - -\n"
-                     },
-                     "attributes":[
-                        {
-                           "key":"destination.address",
-                           "value":{
-                              "stringValue":"172.18.0.25"
-                           }
-                        },
-                        {
-                           "key":"event.name",
-                           "value":{
-                              "stringValue":"proxy.access"
-                           }
-                        },
-                        {
-                           "key":"server.address",
-                           "value":{
-                              "stringValue":"172.18.0.27:8080"
-                           }
-                        },
-                        {
-                           "key":"source.address",
-                           "value":{
-                              "stringValue":"172.18.0.26"
-                           }
-                        },
-                        {
-                           "key":"upstream.cluster",
-                           "value":{
-                              "stringValue":"frontend"
-                           }
-                        },
-                        {
-                           "key":"upstream.host",
-                           "value":{
-                              "stringValue":"172.18.0.25:8080"
-                           }
-                        },
-                        {
-                           "key":"user_agent.original",
-                           "value":{
-                              "stringValue":"python-requests/2.32.5"
-                           }
-                        },
-                        {
-                           "key":"url.full",
-                           "value":{
-                              "stringValue":"http://frontend-proxy:8080/api/products/LS4PSXUNUM"
-                           }
-                        },
-                        {
-                           "key":"url.path",
-                           "value":{
-                              "stringValue":"/api/products/LS4PSXUNUM"
-                           }
-                        },
-                        {
-                           "key":"url.query",
-                           "value":{
-                              "stringValue":"-"
-                           }
-                        },
-                        {
-                           "key":"url.template",
-                           "value":{
-                              "stringValue":"-"
-                           }
-                        }
-                     ],
-                     "traceId":"49b49d2f55d5ee1ee32a47d8e7b62e31",
-                     "spanId":"c2e019438a7b7208"
-                  }
-               ]
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "log_name",
+            "value": {
+              "stringValue": "otel_envoy_access_log"
             }
-         ],
-         "schemaUrl":"https://opentelemetry.io/schemas/1.6.1"
-      }
-   ]
+          },
+          {
+            "key": "zone_name",
+            "value": {
+              "stringValue": ""
+            }
+          },
+          {
+            "key": "cluster_name",
+            "value": {
+              "stringValue": ""
+            }
+          },
+          {
+            "key": "node_name",
+            "value": {
+              "stringValue": ""
+            }
+          },
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "frontend-proxy"
+            }
+          },
+          {
+            "key": "host.name",
+            "value": {
+              "stringValue": "docker-desktop"
+            }
+          },
+          {
+            "key": "os.type",
+            "value": {
+              "stringValue": "linux"
+            }
+          }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {},
+          "logRecords": [
+            {
+              "timeUnixNano": "1760741572254301000",
+              "severityNumber": "SEVERITY_NUMBER_INFO",
+              "severityText": "INFO",
+              "body": {
+                "stringValue": "[2025-10-17T22:52:52.254Z] \"GET /api/products/LS4PSXUNUM HTTP/1.1\" 200 - via_upstream - \"-\" 0 535 2 2 \"-\" \"python-requests/2.32.5\" \"e55db68a-be46-9bb9-bb04-e431841e5b1d\" \"frontend-proxy:8080\" \"172.18.0.25:8080\" frontend 172.18.0.27:53142 172.18.0.27:8080 172.18.0.26:33266 - -\n"
+              },
+              "attributes": [
+                {
+                  "key": "destination.address",
+                  "value": {
+                    "stringValue": "172.18.0.25"
+                  }
+                },
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "proxy.access"
+                  }
+                },
+                {
+                  "key": "server.address",
+                  "value": {
+                    "stringValue": "172.18.0.27:8080"
+                  }
+                },
+                {
+                  "key": "source.address",
+                  "value": {
+                    "stringValue": "172.18.0.26"
+                  }
+                },
+                {
+                  "key": "upstream.cluster",
+                  "value": {
+                    "stringValue": "frontend"
+                  }
+                },
+                {
+                  "key": "upstream.host",
+                  "value": {
+                    "stringValue": "172.18.0.25:8080"
+                  }
+                },
+                {
+                  "key": "user_agent.original",
+                  "value": {
+                    "stringValue": "python-requests/2.32.5"
+                  }
+                },
+                {
+                  "key": "url.full",
+                  "value": {
+                    "stringValue": "http://frontend-proxy:8080/api/products/LS4PSXUNUM"
+                  }
+                },
+                {
+                  "key": "url.path",
+                  "value": {
+                    "stringValue": "/api/products/LS4PSXUNUM"
+                  }
+                },
+                {
+                  "key": "url.query",
+                  "value": {
+                    "stringValue": "-"
+                  }
+                },
+                {
+                  "key": "url.template",
+                  "value": {
+                    "stringValue": "-"
+                  }
+                }
+              ],
+              "flags": 1,
+              "traceId": "nXmxo38xgBzRGmcG+0DWvQ==",
+              "spanId": "V1JoRpA7sT4="
+            }
+          ]
+        }
+      ],
+      "schemaUrl": "https://opentelemetry.io/schemas/1.6.1"
+    }
+  ]
 }

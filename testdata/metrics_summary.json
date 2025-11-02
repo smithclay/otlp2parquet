@@ -5,11 +5,15 @@
         "attributes": [
           {
             "key": "service.name",
-            "value": { "stringValue": "analytics-service" }
+            "value": {
+              "stringValue": "analytics-service"
+            }
           },
           {
             "key": "service.version",
-            "value": { "stringValue": "1.5.2" }
+            "value": {
+              "stringValue": "1.5.2"
+            }
           }
         ]
       },
@@ -19,7 +23,6 @@
             "name": "analytics-instrumentation",
             "version": "2.0.0"
           },
-          "schemaUrl": "",
           "metrics": [
             {
               "name": "request.size",
@@ -28,22 +31,11 @@
               "summary": {
                 "dataPoints": [
                   {
-                    "attributes": [
-                      {
-                        "key": "endpoint",
-                        "value": { "stringValue": "/api/analytics" }
-                      },
-                      {
-                        "key": "method",
-                        "value": { "stringValue": "POST" }
-                      }
-                    ],
                     "timeUnixNano": "1705327800000000000",
                     "count": "8534",
                     "sum": 45892134.0,
                     "quantileValues": [
                       {
-                        "quantile": 0.0,
                         "value": 128.0
                       },
                       {
@@ -66,25 +58,28 @@
                         "quantile": 1.0,
                         "value": 98234.0
                       }
-                    ]
-                  },
-                  {
+                    ],
                     "attributes": [
                       {
                         "key": "endpoint",
-                        "value": { "stringValue": "/api/data" }
+                        "value": {
+                          "stringValue": "/api/analytics"
+                        }
                       },
                       {
                         "key": "method",
-                        "value": { "stringValue": "GET" }
+                        "value": {
+                          "stringValue": "POST"
+                        }
                       }
-                    ],
+                    ]
+                  },
+                  {
                     "timeUnixNano": "1705327800000000000",
                     "count": "12934",
                     "sum": 12345678.0,
                     "quantileValues": [
                       {
-                        "quantile": 0.0,
                         "value": 64.0
                       },
                       {
@@ -107,6 +102,20 @@
                         "quantile": 1.0,
                         "value": 15234.0
                       }
+                    ],
+                    "attributes": [
+                      {
+                        "key": "endpoint",
+                        "value": {
+                          "stringValue": "/api/data"
+                        }
+                      },
+                      {
+                        "key": "method",
+                        "value": {
+                          "stringValue": "GET"
+                        }
+                      }
                     ]
                   }
                 ]
@@ -114,8 +123,7 @@
             }
           ]
         }
-      ],
-      "schemaUrl": ""
+      ]
     }
   ]
 }

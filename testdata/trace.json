@@ -61,11 +61,11 @@
           },
           "spans": [
             {
-              "traceId": "37adfe54f124254e60ca1f8ff885cdef",
-              "spanId": "424f002f2c97e740",
-              "parentSpanId": "6a249d254b312f04",
+              "traceId": "nXmxo38xgBzRGmcG+0DWvQ==",
+              "spanId": "3lYkOenBuCM=",
+              "parentSpanId": "V1JoRpA7sT4=",
               "name": "router frontend egress",
-              "kind": 3,
+              "kind": "SPAN_KIND_CLIENT",
               "startTimeUnixNano": "1760738064624462000",
               "endTimeUnixNano": "1760738064628483000",
               "attributes": [
@@ -121,11 +121,11 @@
               "status": {}
             },
             {
-              "traceId": "37adfe54f124254e60ca1f8ff885cdef",
-              "spanId": "6a249d254b312f04",
-              "parentSpanId": "c8e10a0f16219529",
+              "traceId": "nXmxo38xgBzRGmcG+0DWvQ==",
+              "spanId": "V1JoRpA7sT4=",
+              "parentSpanId": "qWCJvKcfPRo=",
               "name": "ingress",
-              "kind": 2,
+              "kind": "SPAN_KIND_SERVER",
               "startTimeUnixNano": "1760738064624180000",
               "endTimeUnixNano": "1760738064628508000",
               "attributes": [
