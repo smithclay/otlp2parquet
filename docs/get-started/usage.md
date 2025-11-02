@@ -6,6 +6,30 @@ This guide covers two methods for sending data:
 1.  **Directly via HTTP**: Useful for quick tests and low-volume scenarios.
 2.  **Via the OpenTelemetry Collector**: The recommended method for production, especially for serverless deployments.
 
+> **Tip:** You can bootstrap sample traffic by running the [OpenTelemetry Demo](https://github.com/open-telemetry/opentelemetry-demo) via Docker Compose and pointing its collector at `http://otlp2parquet:4318`. Drop a file like the example below into the demo repo (e.g., `compose.extras.otlp2parquet.yaml`) and include it when you run `docker compose`.
+
+```yaml
+# compose.extras.otlp2parquet.yaml
+services:
+  otlp2parquet:
+    image: ghcr.io/smithclay/otlp2parquet:latest
+    environment:
+      OTLP2PARQUET_STORAGE_BACKEND: fs
+      OTLP2PARQUET_STORAGE_FS_PATH: /data
+    volumes:
+      - ./otlp2parquet-data:/data
+    ports:
+      - "4318:4318"
+
+  otelcol:
+    environment:
+      # Instruct the demo collector to forward to otlp2parquet over OTLP/HTTP.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otlp2parquet:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+```
+
+> Run the demo with `docker compose -f docker-compose.yaml -f compose.extras.otlp2parquet.yaml up` (add `--profile demo` or other profiles as needed). The collector will now mirror its traffic into `otlp2parquet`, and Parquet files will appear in the `./otlp2parquet-data` folder.
+
 ## Sending Data Directly
 
 You can send OTLP data directly to the appropriate endpoint for each signal type using a tool like `curl`. The examples below use the default Docker endpoint (`http://localhost:4318`). Replace this with your specific Lambda or Cloudflare Worker URL when deployed.
