@@ -115,8 +115,7 @@ async fn shutdown_signal() {
 /// Entry point for server mode
 pub async fn run() -> Result<()> {
     // Load configuration
-    let config = RuntimeConfig::load()
-        .context("Failed to load configuration")?;
+    let config = RuntimeConfig::load().context("Failed to load configuration")?;
 
     // Initialize tracing with config
     init_tracing(&config);
@@ -124,9 +123,12 @@ pub async fn run() -> Result<()> {
     info!("Server mode - full-featured HTTP server with multi-backend storage");
 
     // Get listen address from config
-    let addr = config.server.as_ref()
+    let addr = config
+        .server
+        .as_ref()
         .expect("server config required")
-        .listen_addr.clone();
+        .listen_addr
+        .clone();
 
     // Initialize storage
     let storage = init_storage(&config)?;
@@ -182,10 +184,7 @@ pub async fn run() -> Result<()> {
     info!("Routes:");
     info!("  POST http://{}/v1/logs    - OTLP log ingestion", addr);
     info!("  POST http://{}/v1/metrics - OTLP metrics ingestion", addr);
-    info!(
-        "  POST http://{}/v1/traces  - OTLP trace ingestion",
-        addr
-    );
+    info!("  POST http://{}/v1/traces  - OTLP trace ingestion", addr);
     info!("  GET  http://{}/health     - Health check", addr);
     info!("  GET  http://{}/ready      - Readiness check", addr);
     info!("Press Ctrl+C or send SIGTERM to stop");

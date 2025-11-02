@@ -31,7 +31,10 @@ Globals:
     Environment:
       Variables:
         RUST_LOG: info
-        STORAGE_BACKEND: s3
+        # WARNING: Batching on Lambda can cause data loss!
+        # Lambda invocations are stateless - unflushed batches are lost when invocation ends.
+        # Only enable if you have high-volume sustained traffic (200K rows, 128MB, or 10s threshold).
+        OTLP2PARQUET_BATCHING_ENABLED: "false"
 
 Resources:
   # Lambda function
@@ -41,17 +44,29 @@ Resources:
       BuildMethod: rust-cargolambda
       BuildProperties:
         Binary: otlp2parquet
+        Features: lambda
     Properties:
       CodeUri: .
       Handler: bootstrap  # Required for custom runtime
       Description: Ingests OTLP logs and writes Parquet to S3
       Environment:
         Variables:
-          S3_BUCKET: !Ref LogsBucket
-          S3_REGION: !Ref AWS::Region
+          OTLP2PARQUET_S3_BUCKET: !Ref LogsBucket
+          OTLP2PARQUET_S3_REGION: !Ref AWS::Region
+          # NOTE: For local testing with sam local invoke:
+          # Edit .aws-sam/build/template.yaml to add OTLP2PARQUET_S3_ENDPOINT, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+          # See docs/get-started/deployment/aws-lambda.md for details
       Policies:
         - S3CrudPolicy:
             BucketName: !Ref LogsBucket
+      # HTTP API events for local testing with SAM
+      Events:
+        CatchAll:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+            PayloadFormatVersion: "2.0"
       # Function URL for HTTP access (no auth - configure as needed)
       FunctionUrlConfig:
         AuthType: NONE  # Change to AWS_IAM for authenticated access

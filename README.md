@@ -15,14 +15,18 @@ The current schema, like the [duckdb-otlp extension](https://github.com/smithcla
 
 | Feature / Platform | Docker (Server) | Cloudflare Workers | AWS Lambda |
 | :----------------- | :----------------- | :----------------- | :--------- |
-| OTLP Logs Ingestion | ✅ | ✅ | ✅ |
-| OTLP Metrics Ingestion | ✅ | ✅ | ✅ |
-| OTLP Traces Ingestion | ✅ | ✅ | ✅ |
-| Parquet Conversion | ✅ | ✅ | ✅ |
-| ClickHouse Schema | ✅ | ✅ | ✅ |
-| OpenDAL Storage | ✅ (Multi-backend) | ✅ (R2) | ✅ (S3) |
-| Output Formats | Filesystem, S3, R2, GCS, Azure | R2 | S3 |
-| Binary Size Optimized | N/A (Native) | ✅ (<3MB WASM) | ✅ (Native) |
+| **OTLP Protocol Support** | | | |
+| OTLP/HTTP-JSON | ✅ | ✅ | ✅ |
+| OTLP/HTTP-Protobuf | ✅ | ✅ | ✅ |
+| OTLP/gRPC | ❌ | ❌ | ❌ |
+| **Signal Support** | | | |
+| OTLP Logs | ✅ | ✅ | ✅ |
+| OTLP Metrics | ✅ | ✅ | ✅ |
+| OTLP Traces | ✅ | ✅ | ✅ |
+| OTLP Profiles | ❌ | ❌ | ❌ |
+| **Advanced Features** | | | |
+| In-Memory Batching | ✅ | ❌ | ❌ |
+
 
 ## Quick Start
 

@@ -1,499 +1,251 @@
 # AWS Lambda Deployment Guide
 
-Deploy `otlp2parquet` to AWS Lambda with S3 storage. Serverless, event-driven, and fully managed.
-
-Uses AWS SAM (Serverless Application Model) - the official AWS tool for Lambda deployment.
+This guide provides a focused workflow for developing, testing, and deploying the `otlp2parquet` function to AWS Lambda using the AWS SAM CLI.
 
 ## Prerequisites
 
-1. **AWS Account** with appropriate permissions
-2. **AWS CLI** configured (`aws configure`)
-3. **AWS SAM CLI** - Official Lambda deployment tool
-4. **cargo-lambda** - Builds Rust binaries for Lambda
-
-## Installation
-
-### AWS SAM CLI
+1.  **AWS Account** with appropriate permissions.
+2.  **AWS CLI** configured (`aws configure`).
+3.  **AWS SAM CLI**: The official tool for Lambda deployment.
+4.  **Docker Desktop**: Required for local testing.
+5.  **Rust Toolchain**: Including `cargo-lambda`.
 
 ```bash
-# macOS
+# Install cargo-lambda
+cargo install cargo-lambda
+
+# Install AWS SAM CLI (macOS example)
 brew install aws-sam-cli
-
-# Linux/Windows
-pip install aws-sam-cli
-
-# Verify installation
-sam --version
 ```
 
-### cargo-lambda
+## 1. Build the Lambda Function
+
+Before testing or deploying, you need to build the Lambda function binary with the `lambda` feature enabled.
 
 ```bash
-# Install cargo-lambda for Rust builds
-pip install cargo-lambda
+# Build for Lambda using cargo-lambda directly
+cargo lambda build --release --arm64 --features lambda
 
-# Or with Homebrew
-brew tap cargo-lambda/cargo-lambda
-brew install cargo-lambda
+# Copy the binary to SAM's build directory
+mkdir -p .aws-sam/build/OtlpToParquetFunction
+cp target/lambda/otlp2parquet/bootstrap .aws-sam/build/OtlpToParquetFunction/
 
-# Verify installation
-cargo lambda --version
+# The bootstrap binary is now ready at:
+# .aws-sam/build/OtlpToParquetFunction/bootstrap
 ```
 
-## Quick Start (Guided Deployment)
+**Why not `sam build`?** SAM's Rust support via `cargo-lambda` is currently a beta feature and doesn't correctly pass the `Features` property to cargo-lambda. Building with `cargo lambda` directly ensures the `lambda` feature flag is included.
 
-### 1. Clone Repository
+## 2. Local Development & Testing
+
+This workflow uses `sam sync` for hot-reloading, providing the fastest and most realistic local development experience.
+
+### Setup: Three-Terminal Workflow
+
+**Terminal 1 - Start Local S3 (MinIO):**
 
 ```bash
-git clone https://github.com/smithclay/otlp2parquet.git
-cd otlp2parquet
+# Start a local S3-compatible storage container.
+docker-compose up minio minio-init
 ```
 
-### 2. Deploy with SAM (Interactive)
+**Terminal 2 - Start Local Lambda Endpoint:**
 
 ```bash
-# Deploy with guided prompts
+# Start the SAM local API, connecting it to the Docker network.
+sam local start-api \
+  --warm-containers EAGER \
+  --docker-network otlp2parquet_default \
+  --env-vars local-env.json
+
+# Your function is now available at http://localhost:3000
+```
+
+*Note: Create `local-env.json` as described in the Configuration section below.*
+
+**Terminal 3 - Watch for Changes:**
+
+```bash
+# This command watches for code changes and automatically rebuilds the function.
+sam sync --watch --stack-name otlp2parquet-dev
+```
+
+### Development Loop
+
+1.  **Edit Code**: Make changes to the Rust source code in your editor.
+2.  **Auto-Rebuild**: `sam sync --watch` detects the changes and automatically rebuilds the Lambda function.
+3.  **Test**: Send a test request to the local endpoint.
+
+    ```bash
+    curl -X POST http://localhost:3000/v1/logs \
+      --data-binary @testdata/logs.pb \
+      -H "Content-Type: application/x-protobuf"
+    ```
+
+4.  **Verify**: Check the local MinIO bucket for the output Parquet file.
+
+    ```bash
+    aws s3 ls s3://otlp-logs/logs/ --recursive \
+      --endpoint-url http://localhost:9000
+    ```
+
+This setup provides instant feedback in a realistic, production-like environment.
+
+### Testing with Event Files
+
+For testing with binary protobuf data, use `sam local invoke` with pre-built event files:
+
+```bash
+# Build first (if not already built)
+cargo lambda build --release --arm64 --features lambda
+mkdir -p .aws-sam/build/OtlpToParquetFunction
+cp target/lambda/otlp2parquet/bootstrap .aws-sam/build/OtlpToParquetFunction/
+
+# IMPORTANT: SAM local invoke requires environment variables in template.yaml
+# The --env-vars flag doesn't work reliably with sam local invoke.
+# You must update .aws-sam/build/template.yaml with actual values:
+#   OTLP2PARQUET_S3_BUCKET: otlp-logs
+#   OTLP2PARQUET_S3_REGION: us-east-1
+#   OTLP2PARQUET_S3_ENDPOINT: http://minio:9000
+#   AWS_ACCESS_KEY_ID: minioadmin
+#   AWS_SECRET_ACCESS_KEY: minioadmin
+
+# Test with logs (with MinIO)
+sam local invoke OtlpToParquetFunction \
+  -e docs/get-started/deployment/events/logs-protobuf.json \
+  --docker-network otlp2parquet_default
+
+# Test with traces
+sam local invoke OtlpToParquetFunction \
+  -e docs/get-started/deployment/events/traces-protobuf.json \
+  --docker-network otlp2parquet_default
+
+# Test with metrics
+sam local invoke OtlpToParquetFunction \
+  -e docs/get-started/deployment/events/metrics-gauge-protobuf.json \
+  --docker-network otlp2parquet_default
+```
+
+**Why event files?** `sam local start-api` has known issues with binary data (protobuf). Using `sam local invoke` with base64-encoded event files is more reliable for testing binary payloads.
+
+**Important Notes:**
+- The `--docker-network` flag is required for the Lambda container to reach MinIO
+- SAM local invoke doesn't support CloudFormation references (like `!Ref LogsBucket`) in the template
+- You must manually edit `.aws-sam/build/template.yaml` to replace CloudFormation references with actual values for local testing
+
+## 3. Deploy to AWS
+
+Once you have tested your changes locally, you can deploy the function to your AWS account.
+
+### Initial Deployment
+
+Use the guided deployment process for the first time to configure your stack.
+
+```bash
+# This command will prompt you for configuration parameters.
 sam deploy --guided
 ```
 
-You'll be prompted for:
+You will be prompted for:
 
-```
-Stack Name [otlp2parquet]:
-AWS Region [us-east-1]:
-Parameter BucketName [otlp-logs]:           # S3 bucket for Parquet files
-Parameter LogRetentionDays [7]:             # CloudWatch log retention
-Confirm changes before deploy [Y/n]:
-Allow SAM CLI IAM role creation [Y/n]: Y
-Disable rollback [y/N]: N
-Save arguments to configuration file [Y/n]: Y
-```
+*   **Stack Name**: A unique name for your CloudFormation stack (e.g., `otlp2parquet-prod`).
+*   **AWS Region**: The AWS region to deploy to.
+*   **BucketName**: The name of the S3 bucket where Parquet files will be stored.
 
-### 3. Get Your Endpoint
+After deployment, SAM will output the public **FunctionUrl** for your new Lambda endpoint.
 
-After deployment completes, SAM outputs your Function URL:
+### Subsequent Deployments
 
-```
-CloudFormation outputs from deployed stack
---------------------------------------------------------------------
-Outputs
---------------------------------------------------------------------
-Key                 FunctionUrl
-Description         OTLP HTTP endpoint URL
-Value               https://abc123xyz.lambda-url.us-east-1.on.aws/
---------------------------------------------------------------------
-```
-
-### 4. Test Your Deployment
+After the initial setup, deployments are much simpler.
 
 ```bash
-# Get Function URL from SAM output
-FUNCTION_URL="https://abc123xyz.lambda-url.us-east-1.on.aws"
-
-# Send test OTLP log payload
-curl -X POST "${FUNCTION_URL}/v1/logs" \
-  -H "Content-Type: application/x-protobuf" \
-  --data-binary @test-payload.pb
-
-# Check S3 bucket for Parquet files
-aws s3 ls s3://otlp-logs/logs/ --recursive
-```
-
-## Subsequent Deployments
-
-After the initial guided deployment, you can deploy quickly:
-
-```bash
-# Deploy using saved configuration
+# Deploy using the saved configuration from the first run.
 sam deploy
 
-# Or with specific environment
-sam deploy --config-env production
+# Deploy to a specific environment (e.g., staging, production).
+sam deploy --config-env staging
 ```
 
-## Build and Test Locally
+## 4. Configuration
 
-### Build Lambda Binary
+### Deployment Parameters
 
-```bash
-# Build for Lambda (ARM64/Graviton2)
-cargo lambda build --release --features lambda --arm64
-
-# Binary will be at: target/lambda/otlp2parquet/bootstrap
-```
-
-### Test Locally
-
-```bash
-# Start Lambda runtime locally
-sam local start-api
-
-# API will be available at http://localhost:3000
-
-# Test with curl
-curl -X POST http://localhost:3000/v1/logs \
-  -H "Content-Type: application/x-protobuf" \
-  --data-binary @test-payload.pb
-```
-
-### Invoke Function Locally
-
-```bash
-# Create test event
-cat > event.json <<EOF
-{
-  "headers": {
-    "content-type": "application/x-protobuf"
-  },
-  "body": "base64-encoded-protobuf-data",
-  "isBase64Encoded": true
-}
-EOF
-
-# Invoke function
-sam local invoke OtlpToParquetFunction -e event.json
-```
-
-## Configuration
-
-For complete configuration options, see the [Configuration Guide](../configuration.md).
-
-### SAM Template Parameters
-
-Edit `samconfig.toml` to customize deployment parameters:
+Deployment settings are stored in `samconfig.toml`. You can create profiles for different environments (e.g., `staging`, `production`).
 
 ```toml
+# samconfig.toml
 [default.deploy.parameters]
 stack_name = "otlp2parquet"
 region = "us-east-1"
-parameter_overrides = [
-    "BucketName=my-otlp-logs",       # S3 bucket name
-    "LogRetentionDays=30"            # CloudWatch logs retention
-]
-```
-
-### Runtime Configuration
-
-Lambda automatically uses these settings:
-- **Storage Backend**: S3 (required, validated at startup)
-- **Batch Defaults**: 200,000 rows, 128 MB, 10 seconds max age
-- **Max Payload**: 6 MB (optimized for Lambda)
-
-You can override these via environment variables in the SAM template or after deployment:
-
-```yaml
-# In template.yaml
-Globals:
-  Function:
-    Environment:
-      Variables:
-        OTLP2PARQUET_BATCH_MAX_ROWS: "100000"
-        OTLP2PARQUET_BATCH_MAX_BYTES: "67108864"  # 64 MB
-        OTLP2PARQUET_BATCHING_ENABLED: "true"
-```
-
-Or update after deployment:
-
-```bash
-aws lambda update-function-configuration \
-  --function-name otlp2parquet-OtlpToParquetFunction \
-  --environment "Variables={OTLP2PARQUET_BATCH_MAX_ROWS=100000}"
-```
-
-### Environment-Specific Deployments
-
-```bash
-# Deploy to staging
-sam deploy --config-env staging
-
-# Deploy to production
-sam deploy --config-env production
-```
-
-Configure environments in `samconfig.toml`:
-
-```toml
-[staging.deploy.parameters]
-stack_name = "otlp2parquet-staging"
-parameter_overrides = [
-    "BucketName=otlp-logs-staging",
-    "LogRetentionDays=7"
-]
 
 [production.deploy.parameters]
 stack_name = "otlp2parquet-prod"
 parameter_overrides = [
-    "BucketName=otlp-logs-prod",
-    "LogRetentionDays=30"
+    "BucketName=my-prod-logs-bucket"
 ]
 ```
 
-## Monitoring
+### Local Environment Variables
 
-### View Logs
+For local testing, create a `local-env.json` file to configure the function.
+
+```json
+// local-env.json
+{
+  "OtlpToParquetFunction": {
+    "RUST_LOG": "debug,otlp2parquet=trace",
+    "OTLP2PARQUET_S3_BUCKET": "otlp-logs",
+    "OTLP2PARQUET_S3_REGION": "us-east-1",
+    "OTLP2PARQUET_S3_ENDPOINT": "http://minio:9000",
+    "OTLP2PARQUET_BATCHING_ENABLED": "false",
+    "AWS_ACCESS_KEY_ID": "minioadmin",
+    "AWS_SECRET_ACCESS_KEY": "minioadmin"
+  }
+}
+```
+
+**Important Configuration Notes:**
+
+- **Environment Variable Prefix**: All otlp2parquet config variables use the `OTLP2PARQUET_` prefix
+- **Batching on Lambda**: Set `OTLP2PARQUET_BATCHING_ENABLED: "false"` for Lambda
+  - **Why?** Lambda invocations are stateless - if batching is enabled, unflushed batches are lost when the invocation ends
+  - Batching thresholds: 200K rows, 128MB, or 10 seconds - with single test records, data will be lost
+  - For production, use batching ONLY if you have high-volume, sustained traffic that will trigger flushes
+- **MinIO Testing**: When using `sam local invoke`, you must manually edit `.aws-sam/build/template.yaml` to add environment variables (see Testing with Event Files section)
+
+*Note: Add `local-env.json` to your `.gitignore` file.*
+
+### Available Environment Variables
+
+All configuration uses the `OTLP2PARQUET_` prefix:
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `OTLP2PARQUET_S3_BUCKET` | S3 bucket name | `otlp-logs` | `my-logs-bucket` |
+| `OTLP2PARQUET_S3_REGION` | AWS region | `us-east-1` | `eu-west-1` |
+| `OTLP2PARQUET_S3_ENDPOINT` | Custom S3 endpoint (optional) | None | `http://minio:9000` |
+| `OTLP2PARQUET_BATCHING_ENABLED` | Enable batching (⚠️ risk of data loss) | `true` | `false` |
+| `OTLP2PARQUET_BATCH_MAX_ROWS` | Batch flush threshold - rows | `200000` | `100000` |
+| `OTLP2PARQUET_BATCH_MAX_BYTES` | Batch flush threshold - bytes | `134217728` (128MB) | `67108864` (64MB) |
+| `OTLP2PARQUET_BATCH_MAX_AGE_SECS` | Batch flush threshold - seconds | `10` | `5` |
+| `OTLP2PARQUET_MAX_PAYLOAD_BYTES` | Max request payload size | `6291456` (6MB) | `10485760` (10MB) |
+
+**AWS Credentials** (no prefix):
+- `AWS_ACCESS_KEY_ID` - AWS access key (Lambda IAM role preferred)
+- `AWS_SECRET_ACCESS_KEY` - AWS secret key
+- `RUST_LOG` - Logging level (e.g., `info`, `debug`, `trace`)
+
+## 5. Monitoring & Troubleshooting
+
+### View CloudWatch Logs
 
 ```bash
-# View CloudWatch logs
+# Tail logs for the deployed stack
 sam logs --tail --stack-name otlp2parquet
-
-# View logs for specific invocation
-sam logs -n OtlpToParquetFunction --filter "ERROR"
-
-# Or use AWS CLI
-aws logs tail /aws/lambda/otlp2parquet-OtlpToParquetFunction --follow
 ```
 
-### Lambda Insights
+### Common Local Issues
 
-```bash
-# Enable Lambda Insights for advanced monitoring
-aws lambda update-function-configuration \
-  --function-name otlp2parquet-OtlpToParquetFunction \
-  --layers arn:aws:lambda:us-east-1:580247275435:layer:LambdaInsightsExtension-Arm64:latest
-```
-
-### CloudWatch Metrics
-
-Available metrics in CloudWatch:
-- `Invocations` - Number of function invocations
-- `Duration` - Execution time
-- `Errors` - Number of errors
-- `Throttles` - Number of throttled requests
-- `ConcurrentExecutions` - Concurrent invocations
-
-## Security
-
-### Function URL Authentication
-
-By default, Function URL uses `AuthType: NONE` (public access). To require authentication:
-
-Edit `template.yaml`:
-
-```yaml
-FunctionUrlConfig:
-  AuthType: AWS_IAM  # Require AWS SigV4 authentication
-```
-
-Then sign requests with AWS credentials:
-
-```bash
-# Use awscurl or AWS SDK
-pip install awscurl
-
-awscurl -X POST \
-  --service lambda \
-  --region us-east-1 \
-  "${FUNCTION_URL}/v1/logs" \
-  -H "Content-Type: application/x-protobuf" \
-  --data-binary @test-payload.pb
-```
-
-### VPC Configuration
-
-To run Lambda in VPC (for private S3 access):
-
-Edit `template.yaml`:
-
-```yaml
-OtlpToParquetFunction:
-  Type: AWS::Serverless::Function
-  Properties:
-    VpcConfig:
-      SecurityGroupIds:
-        - sg-12345678
-      SubnetIds:
-        - subnet-12345678
-        - subnet-87654321
-```
-
-### Least Privilege IAM
-
-The SAM template creates a minimal IAM role with:
-- S3 read/write to specified bucket only
-- CloudWatch Logs write access
-
-## Performance Tuning
-
-### Memory and Timeout
-
-Edit `template.yaml`:
-
-```yaml
-Globals:
-  Function:
-    Timeout: 60        # Increase timeout (default: 30s)
-    MemorySize: 1024   # Increase memory (default: 512MB)
-```
-
-**Note:** More memory = more CPU (and faster execution)
-
-### Provisioned Concurrency
-
-For consistent performance (eliminates cold starts):
-
-```bash
-# Add provisioned concurrency
-aws lambda put-provisioned-concurrency-config \
-  --function-name otlp2parquet-OtlpToParquetFunction \
-  --provisioned-concurrent-executions 2
-```
-
-**Cost:** $0.015 per GB-hour provisioned
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────┐
-│  OTLP Client (OpenTelemetry SDK)           │
-└────────────┬────────────────────────────────┘
-             │ HTTP POST /v1/logs
-             │ (Protobuf)
-             ▼
-┌─────────────────────────────────────────────┐
-│  Lambda Function URL (Public Endpoint)     │
-└────────────┬────────────────────────────────┘
-             │
-             ▼
-┌─────────────────────────────────────────────┐
-│  otlp2parquet Lambda Function (ARM64)      │
-│  - Parse OTLP protobuf                      │
-│  - Convert to Arrow RecordBatch             │
-│  - Write Parquet with Snappy compression    │
-└────────────┬────────────────────────────────┘
-             │
-             ▼
-┌─────────────────────────────────────────────┐
-│  S3 Bucket (Partitioned Parquet Files)     │
-│  logs/{service}/year=/month=/day=/hour=/    │
-│  - Versioned bucket                         │
-│  - Encrypted at rest (AES-256)              │
-│  - Lifecycle policies (IA, Glacier)         │
-└────────────┬────────────────────────────────┘
-```
-
-## Cost Estimation
-
-### Lambda Costs (us-east-1, ARM64)
-
-| Component | Free Tier | Price | Example (1M logs/day) |
-|-----------|-----------|-------|------------------------|
-| Requests | 1M/month | $0.20 per 1M | $6/month |
-| Duration (512MB) | 400,000 GB-sec/month | $0.0000133 per GB-sec | ~$5/month |
-| **Lambda Total** | | | **~$11/month** |
-
-### S3 Costs
-
-| Component | Price | Example (1M logs/day) |
-|-----------|-------|------------------------|
-| Storage (Standard) | $0.023/GB | $2.30/month (100GB) |
-| PUT requests | $0.005 per 1000 | $1.50/month (300k files) |
-| GET requests | $0.0004 per 1000 | Minimal (for queries) |
-| **S3 Total** | | **~$4/month** |
-
-### CloudWatch Logs
-
-| Component | Price | Example (1M logs/day) |
-|-----------|-------|------------------------|
-| Ingestion | $0.50/GB | ~$0.50/month |
-| Storage | $0.03/GB | ~$0.30/month (10GB) |
-| **Logs Total** | | **~$1/month** |
-
-**Total estimated cost: ~$16/month for 1M logs/day**
-
-## CI/CD with GitHub Actions
-
-Create `.github/workflows/deploy-lambda.yml`:
-
-```yaml
-name: Deploy to Lambda
-
-on:
-  push:
-    tags: ['v*']
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
-      - name: Install SAM CLI
-        run: pip install aws-sam-cli
-
-      - name: Build and deploy
-        run: sam deploy --no-confirm-changeset --no-fail-on-empty-changeset
-```
-
-## Troubleshooting
-
-### Deployment fails
-
-```bash
-# View CloudFormation events
-aws cloudformation describe-stack-events \
-  --stack-name otlp2parquet \
-  --max-items 10
-
-# Common issues:
-# 1. Bucket name already exists (must be globally unique)
-# 2. Insufficient IAM permissions
-# 3. cargo-lambda not installed
-```
-
-### Function timeout
-
-```bash
-# Increase timeout in template.yaml
-Timeout: 60  # seconds
-
-# Redeploy
-sam deploy
-```
-
-### Cold starts
-
-```bash
-# Check duration metrics
-aws cloudwatch get-metric-statistics \
-  --namespace AWS/Lambda \
-  --metric-name Duration \
-  --dimensions Name=FunctionName,Value=otlp2parquet-OtlpToParquetFunction \
-  --start-time 2025-01-01T00:00:00Z \
-  --end-time 2025-01-02T00:00:00Z \
-  --period 3600 \
-  --statistics Average,Maximum
-
-# Solution: Add provisioned concurrency (see Performance Tuning)
-```
-
-## Advanced: CDK Deployment (TypeScript)
-
-For infrastructure-as-code with TypeScript:
-
-```bash
-cd cdk
-npm install
-cdk deploy
-```
-
-See [CDK Deployment Guide](../../cdk/README.md) for details.
-
-## Clean Up
-
-```bash
-# Delete the stack and all resources
-sam delete --stack-name otlp2parquet
-
-# Confirm deletion
-Are you sure you want to delete the stack otlp2parquet? [y/N]: y
-
-# Note: S3 bucket must be empty before deletion
-aws s3 rm s3://otlp-logs --recursive
-```
+*   **"Cannot connect to Docker daemon"**: Ensure Docker Desktop is running.
+*   **"Connection refused to MinIO"**: Verify the `docker-compose` containers are running and that you are using the correct `--docker-network` for `sam local start-api`.
+*   **Cold Starts**: Use the `--warm-containers EAGER` flag with `sam local start-api` to keep the local function warm for faster iteration.

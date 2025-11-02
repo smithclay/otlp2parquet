@@ -4,7 +4,6 @@
 
 use anyhow::Result;
 use base64::Engine;
-use otlp2parquet_batch::CompletedBatch;
 use otlp2parquet_core::otlp;
 use serde_json::json;
 use std::borrow::Cow;
@@ -104,49 +103,20 @@ async fn process_logs(
         }
     };
 
-    let mut uploads: Vec<CompletedBatch<otlp::LogMetadata>> = Vec::new();
-    let metadata: otlp::LogMetadata;
+    // Convert directly to Arrow (no batching)
+    let batch = match state.passthrough.ingest(&request) {
+        Ok(batch) => batch,
+        Err(err) => {
+            eprintln!("Failed to convert OTLP to Arrow: {}", err);
+            return HttpResponseData::json(
+                500,
+                json!({ "error": "internal encoding failure" }).to_string(),
+            );
+        }
+    };
 
-    if let Some(batcher) = &state.batcher {
-        match batcher.drain_expired() {
-            Ok(mut expired) => uploads.append(&mut expired),
-            Err(err) => {
-                eprintln!("Failed to flush expired batches: {}", err);
-                return HttpResponseData::json(
-                    500,
-                    json!({ "error": "internal batching failure" }).to_string(),
-                );
-            }
-        }
-
-        match batcher.ingest(&request, body.len()) {
-            Ok((mut ready, meta)) => {
-                uploads.append(&mut ready);
-                metadata = meta;
-            }
-            Err(err) => {
-                eprintln!("Batch enqueue failed: {}", err);
-                return HttpResponseData::json(
-                    500,
-                    json!({ "error": "internal batching failure" }).to_string(),
-                );
-            }
-        }
-    } else {
-        match state.passthrough.ingest(&request) {
-            Ok(batch) => {
-                metadata = batch.metadata.clone();
-                uploads.push(batch);
-            }
-            Err(err) => {
-                eprintln!("Failed to convert OTLP to Arrow: {}", err);
-                return HttpResponseData::json(
-                    500,
-                    json!({ "error": "internal encoding failure" }).to_string(),
-                );
-            }
-        }
-    }
+    let metadata = batch.metadata.clone();
+    let uploads = vec![batch];
 
     let mut uploaded_paths = Vec::new();
     for batch in uploads {

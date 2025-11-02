@@ -1,100 +1,115 @@
-# Docker Deployment
+# Docker Deployment Guide
 
-One command: `docker-compose up`
+This guide provides a focused workflow for running `otlp2parquet` using Docker and Docker Compose, covering both local development and production-like scenarios.
 
-## Default Setup (MinIO)
+## Prerequisites
 
-```bash
-docker-compose up
-```
+*   **Docker and Docker Compose**: Ensure you have both installed and running on your system.
 
-Includes:
-- otlp2parquet HTTP server (:4318)
-- MinIO S3-compatible storage (:9000 API, :9001 console)
-- Auto-created `otlp-logs` bucket
+## 1. Local Development & Testing (with MinIO)
 
-MinIO console: http://localhost:9001 (minioadmin/minioadmin)
+The recommended setup for local development uses Docker Compose to spin up the `otlp2parquet` service alongside a MinIO container for S3-compatible object storage.
 
-## Cloud Storage
+### Workflow
 
-Override environment variables:
+1.  **Start the Services**:
 
-**AWS S3:**
+    ```bash
+    # This command builds the containers and starts both services.
+    docker-compose up
+    ```
+
+    This includes:
+    *   `otlp2parquet` HTTP server running on port `4318`.
+    *   MinIO S3-compatible storage with an API on port `9000` and a web console on `9001`.
+    *   An auto-created S3 bucket named `otlp-logs`.
+
+2.  **Test the Service**:
+
+    Send a test request to the local `otlp2parquet` container.
+
+    ```bash
+    curl -X POST http://localhost:4318/v1/logs \
+      -H "Content-Type: application/x-protobuf" \
+      --data-binary @testdata/logs.pb
+    ```
+
+3.  **Verify the Output**:
+
+    You can verify that the Parquet file was created in two ways:
+
+    *   **MinIO Console**: Open [http://localhost:9001](http://localhost:9001) in your browser and log in with `minioadmin`/`minioadmin` to see the `otlp-logs` bucket.
+    *   **AWS CLI**: Use the AWS CLI configured for a local endpoint.
+
+        ```bash
+        aws s3 ls s3://otlp-logs/logs/ --recursive \
+          --endpoint-url http://localhost:9000
+        ```
+
+### Managing the Local Environment
+
+*   **View Logs**: Tail the logs from the running container.
+
+    ```bash
+    docker-compose logs -f otlp2parquet
+    ```
+
+*   **Reset Data**: To start fresh, take down the services and remove the data volume.
+
+    ```bash
+    docker-compose down -v
+    ```
+
+## 2. Production Deployment (Connecting to Cloud Storage)
+
+For a production environment, you can run the same Docker container but configure it to connect to a managed cloud storage service like AWS S3 or Cloudflare R2.
+
+This is done by overriding the default environment variables in the `docker-compose.yml` file.
+
+**Example for AWS S3:**
+
 ```bash
 OTLP2PARQUET_STORAGE_BACKEND=s3 \
-OTLP2PARQUET_S3_BUCKET=my-otlp-bucket \
+OTLP2PARQUET_S3_BUCKET=my-production-s3-bucket \
 OTLP2PARQUET_S3_REGION=us-east-1 \
-AWS_ACCESS_KEY_ID=xxx AWS_SECRET_ACCESS_KEY=xxx \
+AWS_ACCESS_KEY_ID=<your-aws-key> \
+AWS_SECRET_ACCESS_KEY=<your-aws-secret> \
 docker-compose up
 ```
 
-**Cloudflare R2:**
+**Example for Cloudflare R2:**
+
 ```bash
 OTLP2PARQUET_STORAGE_BACKEND=r2 \
-OTLP2PARQUET_R2_BUCKET=my-r2-bucket \
-OTLP2PARQUET_R2_ACCOUNT_ID=your_account_id \
-OTLP2PARQUET_R2_ACCESS_KEY_ID=xxx \
-OTLP2PARQUET_R2_SECRET_ACCESS_KEY=xxx \
+OTLP2PARQUET_R2_BUCKET=my-production-r2-bucket \
+OTLP2PARQUET_R2_ACCOUNT_ID=<your-cf-account-id> \
+OTLP2PARQUET_R2_ACCESS_KEY_ID=<your-r2-key> \
+OTLP2PARQUET_R2_SECRET_ACCESS_KEY=<your-r2-secret> \
 docker-compose up
 ```
 
-## Build from Source
+### Building from Source
+
+To build the Docker image from the latest source code instead of using a pre-built image, use the `--build` flag.
 
 ```bash
-git clone https://github.com/smithclay/otlp2parquet.git
-cd otlp2parquet
 docker-compose up --build
 ```
 
-## Kubernetes
+## 3. Configuration
 
-See [Kubernetes manifests](../../deploy/docker/kubernetes/) for details.
-
-```bash
-kubectl apply -f deploy/docker/kubernetes/
-```
-
-## Environment Variables
-
-For complete configuration options, see the [Configuration Guide](../configuration.md).
-
-### Key Variables
+The Docker container is configured entirely through environment variables. Below are some of the key variables.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OTLP2PARQUET_STORAGE_BACKEND` | `fs` | Storage backend: `fs`, `s3`, or `r2` |
-| `OTLP2PARQUET_STORAGE_PATH` | `./data` | Filesystem storage path (when backend=fs) |
-| `OTLP2PARQUET_S3_BUCKET` | `otlp-logs` | S3 bucket name (when backend=s3) |
-| `OTLP2PARQUET_S3_REGION` | `us-east-1` | AWS region (when backend=s3) |
-| `OTLP2PARQUET_S3_ENDPOINT` | - | Custom S3 endpoint (optional, for MinIO/S3-compatible) |
-| `OTLP2PARQUET_LISTEN_ADDR` | `0.0.0.0:4318` | HTTP server listen address |
-| `OTLP2PARQUET_LOG_LEVEL` | `info` | Log level: `trace`, `debug`, `info`, `warn`, `error` |
-| `OTLP2PARQUET_LOG_FORMAT` | `text` | Log format: `text` or `json` |
-| `OTLP2PARQUET_BATCH_MAX_ROWS` | `200000` | Maximum rows per batch |
-| `OTLP2PARQUET_BATCH_MAX_BYTES` | `134217728` | Maximum bytes per batch (128 MB) |
-| `OTLP2PARQUET_BATCH_MAX_AGE_SECS` | `10` | Maximum batch age (seconds) |
-| `OTLP2PARQUET_BATCHING_ENABLED` | `true` | Enable/disable batching |
+| `OTLP2PARQUET_STORAGE_BACKEND` | `fs` | Storage backend: `fs`, `s3`, or `r2`. |
+| `OTLP2PARQUET_S3_BUCKET` | `otlp-logs` | The name of the S3 or R2 bucket. |
+| `OTLP2PARQUET_S3_ENDPOINT` | - | Custom S3 endpoint for S3-compatible services like MinIO. |
+| `OTLP2PARQUET_LISTEN_ADDR` | `0.0.0.0:4318` | The listen address for the HTTP server. |
+| `OTLP2PARQUET_LOG_LEVEL` | `info` | Log level: `trace`, `debug`, `info`, `warn`, `error`. |
 
-### AWS Credentials
+## 4. Kubernetes
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AWS_ACCESS_KEY_ID` | `minioadmin` | AWS/MinIO access key |
-| `AWS_SECRET_ACCESS_KEY` | `minioadmin` | AWS/MinIO secret key |
+For Kubernetes deployment, please refer to the provided [Kubernetes manifests](../../deploy/docker/kubernetes/) for detailed instructions and examples.
 
-## Troubleshooting
-
-**Port conflict:**
-```bash
-HTTP_PORT=8081 MINIO_API_PORT=9002 MINIO_CONSOLE_PORT=9003 docker-compose up
-```
-
-**View logs:**
-```bash
-docker-compose logs -f otlp2parquet
-```
-
-**Reset data:**
-```bash
-docker-compose down -v
 ```

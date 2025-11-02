@@ -7,11 +7,10 @@
 
 use anyhow::Result;
 use lambda_runtime::{service_fn, Error, LambdaEvent};
-use otlp2parquet_batch::{BatchConfig, BatchManager, PassthroughBatcher};
+use otlp2parquet_batch::PassthroughBatcher;
 use otlp2parquet_config::{RuntimeConfig, StorageBackend};
 use otlp2parquet_storage::ParquetWriter;
 use std::sync::Arc;
-use std::time::Duration;
 
 mod handlers;
 mod response;
@@ -88,7 +87,6 @@ async fn handle_request(
 #[derive(Clone)]
 pub(crate) struct LambdaState {
     pub parquet_writer: Arc<ParquetWriter>,
-    pub batcher: Option<Arc<BatchManager>>,
     pub passthrough: PassthroughBatcher,
     pub max_payload_bytes: usize,
 }
@@ -109,7 +107,10 @@ pub async fn run() -> Result<(), Error> {
         )));
     }
 
-    let s3 = config.storage.s3.as_ref()
+    let s3 = config
+        .storage
+        .s3
+        .as_ref()
         .ok_or_else(|| lambda_runtime::Error::from("S3 configuration required for Lambda"))?;
 
     // Initialize OpenDAL S3 storage
@@ -129,31 +130,15 @@ pub async fn run() -> Result<(), Error> {
     );
     let parquet_writer = Arc::new(ParquetWriter::new(storage.operator().clone()));
 
-    let batch_config = BatchConfig {
-        max_rows: config.batch.max_rows,
-        max_bytes: config.batch.max_bytes,
-        max_age: Duration::from_secs(config.batch.max_age_secs),
-    };
-
-    let batcher = if !config.batch.enabled {
-        println!("Lambda batching disabled by configuration");
-        None
-    } else {
-        println!(
-            "Lambda batching enabled (max_rows={} max_bytes={} max_age={}s)",
-            batch_config.max_rows,
-            batch_config.max_bytes,
-            batch_config.max_age.as_secs()
-        );
-        Some(Arc::new(BatchManager::new(batch_config)))
-    };
+    // Lambda: Always use passthrough (no batching)
+    // Event-driven/stateless architecture makes batching ineffective
+    println!("Lambda using passthrough mode (no batching)");
 
     let max_payload_bytes = config.request.max_payload_bytes;
     println!("Lambda payload cap set to {} bytes", max_payload_bytes);
 
     let state = Arc::new(LambdaState {
         parquet_writer,
-        batcher,
         passthrough: PassthroughBatcher::default(),
         max_payload_bytes,
     });
