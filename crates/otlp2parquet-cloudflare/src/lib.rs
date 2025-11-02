@@ -76,8 +76,15 @@ mod wasm_parquet {
     }
 }
 
+/// Cloudflare Workers entry point
+#[event(fetch)]
+pub async fn main(req: Request, env: Env, ctx: Context) -> Result<Response> {
+    console_log!("Cloudflare Workers OTLP endpoint started");
+    handle_otlp_request(req, env, ctx).await
+}
+
 /// Handle OTLP HTTP POST request and write to R2
-pub async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
+async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
     // Only accept POST requests to /v1/logs
     if req.method() != Method::Post {
         return Response::error("Method not allowed", 405);

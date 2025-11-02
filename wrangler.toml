@@ -2,12 +2,11 @@
 # Deploy with: wrangler deploy
 
 name = "otlp2parquet"
-main = "build/worker/otlp2parquet.wasm"
+main = "crates/otlp2parquet-cloudflare/build/index.js"
 compatibility_date = "2025-01-15"
 
 # Worker compute settings
 workers_dev = true
-route = ""  # Set to your custom domain if needed
 
 # Account information (set via wrangler login or environment)
 # account_id = ""  # Optional: set via CLOUDFLARE_ACCOUNT_ID env var
@@ -20,13 +19,7 @@ preview_bucket_name = "otlp-logs-preview"  # Optional: separate bucket for dev
 
 # Build configuration
 [build]
-command = "make build-cloudflare"
-watch_dirs = ["src", "crates"]
-
-# Build output
-[build.upload]
-format = "modules"
-main = "./build/worker/otlp2parquet.wasm"
+command = "cd crates/otlp2parquet-cloudflare && cargo install -q worker-build && worker-build --release"
 
 # Limits (Cloudflare Workers Free tier)
 # - 100,000 requests/day
@@ -35,6 +28,10 @@ main = "./build/worker/otlp2parquet.wasm"
 
 # Environment variables (optional - for advanced config)
 [vars]
+OTLP2PARQUET_R2_BUCKET = "otlp-logs-preview"
+OTLP2PARQUET_R2_ACCOUNT_ID = "test"
+OTLP2PARQUET_R2_ACCESS_KEY_ID = "test"
+OTLP2PARQUET_R2_SECRET_ACCESS_KEY = "test"  # For local testing only
 # LOG_LEVEL = "info"
 # MAX_BATCH_SIZE = "1000"
 

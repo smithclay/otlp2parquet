@@ -44,6 +44,8 @@ coverage/
 *.profdata
 local-env.json
 
+node_modules
+
 # Kubernetes secrets (use secret.yaml.example as template)
 **/secret.yaml
 !**/secret.yaml.example
