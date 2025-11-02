@@ -2,16 +2,15 @@
 
 > Put your observability data in cheap object storage, servers optional.
 
-`otlp2parquet` is a multi-platform tool for ingesting OpenTelemetry logs, metrics, and traces and storing them in object storage in cost-effective and compressed Parquet format. It's designed for running a minimal ingest pipeline in serverless runtimes like AWS Lambda and Cloudflare workers.
+`otlp2parquet` ingests OpenTelemetry logs, metrics, and traces and stores them in object storage in Parquet format. It can run natively in serverless runtimes like AWS Lambda and Cloudflare Workers.
 
-While functional, __the project is currently considered experimental__ as the API and schema may evolve.
-
-The current schema is based on the ClickHouse OpenTelemetry exporter schema, similar to the [duckdb-otlp extension](https://github.com/smithclay/duckdb-otlp). This project serves as a bridge to the official [OpenTelemetry Arrow Protocol](https://github.com/open-telemetry/otel-arrow). We plan to converge with the official protocol once it becomes generally available, which will make much of the OTLP->Arrow translation this tool does unnecessary.
+While functional, __the project is currently considered experimental__ as the API and schema will evolve (see "Notes on the schema" below). This project is not a telemetry pipeline replacement: in production scenarios, it would be paired with [pOpenTelemetry Collector](https://opentelemetry.io/docs/collector/) or [Vector](https://vector.dev/) agents that do advanced transformations, routing, and batching.
 
 **Key Features:**
 *   Ingests OTLP HTTP (protobuf, JSON, or JSONL) for logs, metrics, and traces.
-*   Writes Parquet files for easy querying in duckdb.
+*   Writes Parquet files for [easy and efficient querying in duckdb](https://duckdb.org/docs/stable/data/parquet/overview).
 *   Supports Docker, Cloudflare Workers (WASM), and AWS Lambda deployments.
+*   Small and fast: written in Rust, uncompressed binary size is ~5 MB.
 
 ## Platform & Feature Matrix
 
@@ -40,6 +39,12 @@ To get started quickly, check out the [Quickstart Guide](docs/get-started/quicks
 For comprehensive information on deployment, usage, architecture, and development, please visit our full documentation site:
 
 ➡️ [**View Documentation**](https://smithclay.github.io/otlp2parquet/)
+
+## Notes on the schema
+
+The current schema is based on the ClickHouse OpenTelemetry exporter schema, similar to the [duckdb-otlp extension](https://github.com/smithclay/duckdb-otlp). This project serves as a bridge to the official [OpenTelemetry Arrow Protocol](https://github.com/open-telemetry/otel-arrow).
+
+We plan to converge with the official protocol once it becomes generally available, which will make much of the OTLP->Arrow translation this tool does unnecessary.
 
 ## Contributing
 

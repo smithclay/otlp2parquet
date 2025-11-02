@@ -41,6 +41,7 @@ nav:
           - Cloudflare Workers: get-started/deployment/cloudflare.md
           - AWS Lambda: get-started/deployment/aws-lambda.md
       - Usage: get-started/usage.md
+      - Querying Data: get-started/querying-data.md
   - Developers:
       - Overview: developers/index.md
       - Architecture: developers/architecture.md
@@ -48,4 +49,5 @@ nav:
       - Schema: developers/schema.md
       - Development Setup: developers/development-setup.md
       - Performance Audit: developers/performance.md
+      - Style Guide: style-guide.md
       - API Reference (Rustdoc): https://smithclay.github.io/otlp2parquet/api/otlp2parquet/index.html # Placeholder, will be generated

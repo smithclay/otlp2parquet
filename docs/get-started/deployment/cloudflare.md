@@ -1,6 +1,6 @@
 # Cloudflare Workers Deployment Guide
 
-This guide provides a focused workflow for developing, testing, and deploying `otlp2parquet` to Cloudflare Workers with R2 storage.
+This guide shows how to develop, test, and deploy `otlp2parquet` to Cloudflare Workers with R2 storage.
 
 ## Prerequisites
 
@@ -21,7 +21,9 @@ brew install binaryen
 
 ## 1. Local Development & Testing
 
-`wrangler dev` allows you to run your Worker locally, with hot-reloading and access to a preview R2 bucket.
+Use `wrangler dev` to run the Worker locally, with support for hot-reloading and a preview R2 bucket.
+
+> **Note**: All `wrangler` commands in this guide should be run from the `crates/otlp2parquet-cloudflare` directory.
 
 ### Development Workflow
 
@@ -42,7 +44,6 @@ brew install binaryen
 
     ```bash
     # This command starts a local server that simulates the Cloudflare environment.
-    cd crates/otlp2parquet-cloudflare
     wrangler dev
     ```
 
@@ -68,11 +69,11 @@ brew install binaryen
 
 ## 2. Deployment to Cloudflare
 
-Once you've tested locally, you can deploy your Worker to the Cloudflare global network.
+After local testing, you can deploy the Worker to the Cloudflare global network.
 
 ### Option A: Quick Start (Deploy Button)
 
-The easiest way to deploy is to use the deploy button, which forks the repository and handles the initial setup automatically.
+The easiest way to deploy is with the deploy button, which forks the repository and handles the initial setup automatically.
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/smithclay/otlp2parquet)
 
@@ -86,7 +87,7 @@ The easiest way to deploy is to use the deploy button, which forks the repositor
 
 2.  **Configure `wrangler.toml`**:
 
-    Update the `crates/otlp2parquet-cloudflare/wrangler.toml` file to link to your R2 bucket.
+    Update `crates/otlp2parquet-cloudflare/wrangler.toml` to link to your R2 bucket.
 
     ```toml
     # crates/otlp2parquet-cloudflare/wrangler.toml
@@ -98,6 +99,8 @@ The easiest way to deploy is to use the deploy button, which forks the repositor
 
 3.  **Build the WASM Binary**:
 
+    From the workspace root, run the build command.
+
     ```bash
     # This command builds, optimizes, and compresses the WASM binary.
     make build-cloudflare
@@ -105,9 +108,10 @@ The easiest way to deploy is to use the deploy button, which forks the repositor
 
 4.  **Deploy**:
 
+    From the `crates/otlp2parquet-cloudflare` directory, run the deploy command.
+
     ```bash
     # Deploy to your production environment.
-    cd crates/otlp2parquet-cloudflare
     wrangler deploy
     ```
 
@@ -115,7 +119,7 @@ The easiest way to deploy is to use the deploy button, which forks the repositor
 
 ## 3. Configuration
 
-Configuration for your Worker is managed in `crates/otlp2parquet-cloudflare/wrangler.toml`.
+Manage your Worker's configuration in `crates/otlp2parquet-cloudflare/wrangler.toml`.
 
 ### Environment Variables
 
@@ -133,22 +137,14 @@ OTLP2PARQUET_BATCHING_ENABLED = "true"
 Use `wrangler secret` to store sensitive credentials like R2 access keys. **Do not** store secrets in `wrangler.toml`.
 
 ```bash
+# Run from the crates/otlp2parquet-cloudflare directory
 # This will prompt you to enter the secret value securely.
-cd crates/otlp2parquet-cloudflare
 wrangler secret put OTLP2PARQUET_R2_SECRET_ACCESS_KEY
 ```
 
-### Environments
-
-You can define different environments (e.g., `staging`, `production`) in `wrangler.toml` to deploy different versions of your Worker with separate configurations.
-
-```bash
-# Deploy to a specific environment
-cd crates/otlp2parquet-cloudflare
-wrangler deploy --env staging
-```
-
 ## 4. Monitoring & Troubleshooting
+
+> **Note**: Run these commands from the `crates/otlp2parquet-cloudflare` directory.
 
 ### View Logs
 
@@ -156,11 +152,10 @@ Stream logs from your deployed Worker in real-time.
 
 ```bash
 # Tail logs from your worker
-cd crates/otlp2parquet-cloudflare
 wrangler tail
 ```
 
 ### Common Issues
 
-*   **Build fails - WASM too large**: The WASM binary must be under 3MB (compressed). Use `make wasm-profile` to analyze binary size and identify large dependencies.
-*   **R2 Bucket Access Denied**: Ensure the `binding` name in `wrangler.toml` matches the one used in the code (`env.LOGS_BUCKET`). Also, verify that your API token has the necessary R2 permissions.
+*   **Build fails - WASM too large**: The WASM binary must be under 3MB (compressed). Use `make wasm-profile` from the workspace root to analyze binary size.
+*   **R2 Bucket Access Denied**: Ensure the `binding` name in `wrangler.toml` matches the one used in the code (`env.LOGS_BUCKET`). Also, verify your API token has the necessary R2 permissions.

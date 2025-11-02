@@ -1,20 +1,17 @@
 # Schema
 
-`otlp2parquet` converts OpenTelemetry logs into Parquet files using a ClickHouse-compatible schema. This ensures that the generated data is easily queryable and integrates well with analytical databases.
+`otlp2parquet` converts OpenTelemetry data into Parquet files using a ClickHouse-compatible schema. This makes the data easy to query and integrate with analytical databases.
 
-## ClickHouse-Compatible Schema Definition
+## Schema Definition
 
-The schema is designed with 15 fields, using PascalCase naming conventions to align with ClickHouse best practices. Common resource attributes are extracted into dedicated columns for easier querying.
+The schema uses 15 fields with PascalCase naming conventions to align with ClickHouse best practices. It also extracts common resource attributes into dedicated columns to simplify querying.
 
 ```rust
-// crates/core/src/schema.rs
-
-use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-use std::sync::Arc;
+// crates/otlp2parquet-core/src/schema.rs
 
 pub fn otel_logs_schema() -> Schema {
     Schema::new(vec![
-        // Timestamps - nanosecond precision, UTC
+        // Timestamps (nanosecond precision, UTC)
         Field::new(
             "Timestamp",
             DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())),
@@ -38,7 +35,7 @@ pub fn otel_logs_schema() -> Schema {
         // Body
         Field::new("Body", DataType::Utf8, false),
 
-        // Resource attributes - extracted common fields
+        // Extracted resource attributes
         Field::new("ServiceName", DataType::Utf8, false),
         Field::new("ServiceNamespace", DataType::Utf8, true),
         Field::new("ServiceInstanceId", DataType::Utf8, true),
@@ -47,7 +44,7 @@ pub fn otel_logs_schema() -> Schema {
         Field::new("ScopeName", DataType::Utf8, false),
         Field::new("ScopeVersion", DataType::Utf8, true),
 
-        // Remaining attributes as Map<String, String>
+        // Remaining attributes
         Field::new(
             "ResourceAttributes",
             DataType::Map(
@@ -80,21 +77,14 @@ pub fn otel_logs_schema() -> Schema {
         ),
     ])
 }
-
-// Common resource attribute keys to extract
-pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
-    "service.name",
-    "service.namespace",
-    "service.instance.id",
-];
 ```
 
 ## Extracted Attributes
 
-To optimize for common query patterns and reduce data redundancy, the following OpenTelemetry resource attributes are extracted into dedicated top-level columns:
+To optimize for common queries, the following OpenTelemetry resource attributes are extracted into their own top-level columns:
 
 *   `service.name` → `ServiceName`
 *   `service.namespace` → `ServiceNamespace`
 *   `service.instance.id` → `ServiceInstanceId`
 
-All other resource and log attributes are stored as `Map<String, String>` in the `ResourceAttributes` and `LogAttributes` columns, respectively.
+All other resource and log attributes are stored as key-value maps in the `ResourceAttributes` and `LogAttributes` columns.
