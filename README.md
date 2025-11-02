@@ -1,10 +1,12 @@
 # otlp2parquet
 
-> Experimental ingest and store observability data in cheap object storage, servers optional
+> Put your observability data in cheap object storage, servers optional.
 
-`otlp2parquet` is a multi-platform tool for ingesting OpenTelemetry logs, metrics, and traces, converting them to Apache Parquet format, and storing them efficiently in object storage. It's designed for running in serverless runtimes like AWS Lambda and Cloudflare workers.
+`otlp2parquet` is a multi-platform tool for ingesting OpenTelemetry logs, metrics, and traces and storing them in object storage in cost-effective and compressed Parquet format. It's designed for running a minimal ingest pipeline in serverless runtimes like AWS Lambda and Cloudflare workers.
 
-The current schema, like the [duckdb-otlp extension](https://github.com/smithclay/duckdb-otlp), is based on the ClickHouse OpenTelemetry exporter schema. __Long-term, one goal of this project is to beome obsolete__: we hope to replace or converge this proof-of-concept with the [OpenTelemetry Arrow Protocol](https://github.com/open-telemetry/otel-arrow) that will make much of the OTLP->Arrow translation this tool does unnessecary.
+While functional, __the project is currently considered experimental__ as the API and schema may evolve.
+
+The current schema is based on the ClickHouse OpenTelemetry exporter schema, similar to the [duckdb-otlp extension](https://github.com/smithclay/duckdb-otlp). This project serves as a bridge to the official [OpenTelemetry Arrow Protocol](https://github.com/open-telemetry/otel-arrow). We plan to converge with the official protocol once it becomes generally available, which will make much of the OTLP->Arrow translation this tool does unnecessary.
 
 **Key Features:**
 *   Ingests OTLP HTTP (protobuf, JSON, or JSONL) for logs, metrics, and traces.
@@ -27,7 +29,7 @@ The current schema, like the [duckdb-otlp extension](https://github.com/smithcla
 | **Advanced Features** | | | |
 | In-Memory Batching | ✅ | ❌** | ❌** |
 
-__**Important__: Something like the [OpenTelemetry Collector](https://github.com/open-telemetry/opentelemetry-collector) or [vector](https://github.com/vectordotdev/vector) is need to batch (group) data before being received by a Lambda function or Cloudflare worker to reduce cloud spend and optimize performance ([see example configuration](docs/get-started/usage.md#batching-with-opentelemetry-collector)).
+** In serverless environments, batching must be handled by an upstream agent like the [OpenTelemetry Collector](https://github.com/open-telemetry/opentelemetry-collector) or [Vector](https://github.com/vectordotdev/vector) to optimize performance and cost ([see example configuration](docs/get-started/usage.md#batching-with-opentelemetry-collector)).
 
 ## Quick Start
 
