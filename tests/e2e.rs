@@ -227,8 +227,309 @@ async fn test_metrics_summary_protobuf() {
     assert!(metadata.summary_count > 0, "Expected summary metrics");
 }
 
-// Note: JSON metrics tests are covered by the protobuf tests above
-// JSON parsing for metrics has the same coverage as protobuf format
+// ============================================================================
+// METRICS JSON/JSONL FORMAT TESTS
+// ============================================================================
+
+#[tokio::test]
+async fn test_metrics_gauge_json() {
+    use otlp2parquet_core::otlp::metrics;
+
+    let payload =
+        fs::read("testdata/metrics_gauge.json").expect("Failed to read metrics_gauge.json");
+
+    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Json)
+        .expect("Failed to parse metrics JSON request");
+
+    let converter = metrics::ArrowConverter::new();
+    let result = converter.convert(request);
+
+    assert!(
+        result.is_ok(),
+        "Failed to convert metrics: {:?}",
+        result.err()
+    );
+
+    let (batches_by_type, metadata) = result.unwrap();
+    assert!(!batches_by_type.is_empty(), "Expected metric batches");
+    assert!(metadata.gauge_count > 0, "Expected gauge metrics");
+}
+
+#[tokio::test]
+async fn test_metrics_sum_json() {
+    use otlp2parquet_core::otlp::metrics;
+
+    let payload = fs::read("testdata/metrics_sum.json").expect("Failed to read metrics_sum.json");
+
+    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Json)
+        .expect("Failed to parse metrics JSON request");
+
+    let converter = metrics::ArrowConverter::new();
+    let result = converter.convert(request);
+
+    assert!(
+        result.is_ok(),
+        "Failed to convert metrics: {:?}",
+        result.err()
+    );
+
+    let (batches_by_type, metadata) = result.unwrap();
+    assert!(!batches_by_type.is_empty(), "Expected metric batches");
+    assert!(metadata.sum_count > 0, "Expected sum metrics");
+}
+
+#[tokio::test]
+async fn test_metrics_histogram_json() {
+    use otlp2parquet_core::otlp::metrics;
+
+    let payload =
+        fs::read("testdata/metrics_histogram.json").expect("Failed to read metrics_histogram.json");
+
+    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Json)
+        .expect("Failed to parse metrics JSON request");
+
+    let converter = metrics::ArrowConverter::new();
+    let result = converter.convert(request);
+
+    assert!(
+        result.is_ok(),
+        "Failed to convert metrics: {:?}",
+        result.err()
+    );
+
+    let (batches_by_type, metadata) = result.unwrap();
+    assert!(!batches_by_type.is_empty(), "Expected metric batches");
+    assert!(metadata.histogram_count > 0, "Expected histogram metrics");
+}
+
+#[tokio::test]
+async fn test_metrics_exponential_histogram_json() {
+    use otlp2parquet_core::otlp::metrics;
+
+    let payload = fs::read("testdata/metrics_exponential_histogram.json")
+        .expect("Failed to read metrics_exponential_histogram.json");
+
+    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Json)
+        .expect("Failed to parse metrics JSON request");
+
+    let converter = metrics::ArrowConverter::new();
+    let result = converter.convert(request);
+
+    assert!(
+        result.is_ok(),
+        "Failed to convert metrics: {:?}",
+        result.err()
+    );
+
+    let (batches_by_type, metadata) = result.unwrap();
+    assert!(!batches_by_type.is_empty(), "Expected metric batches");
+    assert!(
+        metadata.exponential_histogram_count > 0,
+        "Expected exponential histogram metrics"
+    );
+}
+
+#[tokio::test]
+async fn test_metrics_summary_json() {
+    use otlp2parquet_core::otlp::metrics;
+
+    let payload =
+        fs::read("testdata/metrics_summary.json").expect("Failed to read metrics_summary.json");
+
+    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Json)
+        .expect("Failed to parse metrics JSON request");
+
+    let converter = metrics::ArrowConverter::new();
+    let result = converter.convert(request);
+
+    assert!(
+        result.is_ok(),
+        "Failed to convert metrics: {:?}",
+        result.err()
+    );
+
+    let (batches_by_type, metadata) = result.unwrap();
+    assert!(!batches_by_type.is_empty(), "Expected metric batches");
+    assert!(metadata.summary_count > 0, "Expected summary metrics");
+}
+
+#[tokio::test]
+async fn test_metrics_mixed_json() {
+    use otlp2parquet_core::otlp::metrics;
+
+    let payload =
+        fs::read("testdata/metrics_mixed.json").expect("Failed to read metrics_mixed.json");
+
+    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Json)
+        .expect("Failed to parse metrics JSON request");
+
+    let converter = metrics::ArrowConverter::new();
+    let result = converter.convert(request);
+
+    assert!(
+        result.is_ok(),
+        "Failed to convert metrics: {:?}",
+        result.err()
+    );
+
+    let (batches_by_type, metadata) = result.unwrap();
+    assert!(!batches_by_type.is_empty(), "Expected metric batches");
+    // Mixed file contains multiple metric types
+    assert!(
+        metadata.gauge_count > 0 || metadata.sum_count > 0 || metadata.histogram_count > 0,
+        "Expected mixed metrics"
+    );
+}
+
+#[tokio::test]
+async fn test_metrics_gauge_jsonl() {
+    use otlp2parquet_core::otlp::metrics;
+
+    let payload =
+        fs::read("testdata/metrics_gauge.jsonl").expect("Failed to read metrics_gauge.jsonl");
+
+    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Jsonl)
+        .expect("Failed to parse metrics JSONL request");
+
+    let converter = metrics::ArrowConverter::new();
+    let result = converter.convert(request);
+
+    assert!(
+        result.is_ok(),
+        "Failed to convert metrics: {:?}",
+        result.err()
+    );
+
+    let (batches_by_type, metadata) = result.unwrap();
+    assert!(!batches_by_type.is_empty(), "Expected metric batches");
+    assert!(metadata.gauge_count > 0, "Expected gauge metrics");
+}
+
+#[tokio::test]
+async fn test_metrics_sum_jsonl() {
+    use otlp2parquet_core::otlp::metrics;
+
+    let payload = fs::read("testdata/metrics_sum.jsonl").expect("Failed to read metrics_sum.jsonl");
+
+    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Jsonl)
+        .expect("Failed to parse metrics JSONL request");
+
+    let converter = metrics::ArrowConverter::new();
+    let result = converter.convert(request);
+
+    assert!(
+        result.is_ok(),
+        "Failed to convert metrics: {:?}",
+        result.err()
+    );
+
+    let (batches_by_type, metadata) = result.unwrap();
+    assert!(!batches_by_type.is_empty(), "Expected metric batches");
+    assert!(metadata.sum_count > 0, "Expected sum metrics");
+}
+
+#[tokio::test]
+async fn test_metrics_histogram_jsonl() {
+    use otlp2parquet_core::otlp::metrics;
+
+    let payload = fs::read("testdata/metrics_histogram.jsonl")
+        .expect("Failed to read metrics_histogram.jsonl");
+
+    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Jsonl)
+        .expect("Failed to parse metrics JSONL request");
+
+    let converter = metrics::ArrowConverter::new();
+    let result = converter.convert(request);
+
+    assert!(
+        result.is_ok(),
+        "Failed to convert metrics: {:?}",
+        result.err()
+    );
+
+    let (batches_by_type, metadata) = result.unwrap();
+    assert!(!batches_by_type.is_empty(), "Expected metric batches");
+    assert!(metadata.histogram_count > 0, "Expected histogram metrics");
+}
+
+#[tokio::test]
+async fn test_metrics_exponential_histogram_jsonl() {
+    use otlp2parquet_core::otlp::metrics;
+
+    let payload = fs::read("testdata/metrics_exponential_histogram.jsonl")
+        .expect("Failed to read metrics_exponential_histogram.jsonl");
+
+    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Jsonl)
+        .expect("Failed to parse metrics JSONL request");
+
+    let converter = metrics::ArrowConverter::new();
+    let result = converter.convert(request);
+
+    assert!(
+        result.is_ok(),
+        "Failed to convert metrics: {:?}",
+        result.err()
+    );
+
+    let (batches_by_type, metadata) = result.unwrap();
+    assert!(!batches_by_type.is_empty(), "Expected metric batches");
+    assert!(
+        metadata.exponential_histogram_count > 0,
+        "Expected exponential histogram metrics"
+    );
+}
+
+#[tokio::test]
+async fn test_metrics_summary_jsonl() {
+    use otlp2parquet_core::otlp::metrics;
+
+    let payload =
+        fs::read("testdata/metrics_summary.jsonl").expect("Failed to read metrics_summary.jsonl");
+
+    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Jsonl)
+        .expect("Failed to parse metrics JSONL request");
+
+    let converter = metrics::ArrowConverter::new();
+    let result = converter.convert(request);
+
+    assert!(
+        result.is_ok(),
+        "Failed to convert metrics: {:?}",
+        result.err()
+    );
+
+    let (batches_by_type, metadata) = result.unwrap();
+    assert!(!batches_by_type.is_empty(), "Expected metric batches");
+    assert!(metadata.summary_count > 0, "Expected summary metrics");
+}
+
+#[tokio::test]
+async fn test_metrics_mixed_jsonl() {
+    use otlp2parquet_core::otlp::metrics;
+
+    let payload =
+        fs::read("testdata/metrics_mixed.jsonl").expect("Failed to read metrics_mixed.jsonl");
+
+    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Jsonl)
+        .expect("Failed to parse metrics JSONL request");
+
+    let converter = metrics::ArrowConverter::new();
+    let result = converter.convert(request);
+
+    assert!(
+        result.is_ok(),
+        "Failed to convert metrics: {:?}",
+        result.err()
+    );
+
+    let (batches_by_type, metadata) = result.unwrap();
+    assert!(!batches_by_type.is_empty(), "Expected metric batches");
+    // Mixed file contains multiple metric types
+    assert!(
+        metadata.gauge_count > 0 || metadata.sum_count > 0 || metadata.histogram_count > 0,
+        "Expected mixed metrics"
+    );
+}
 
 // ============================================================================
 // TRACES TESTS

@@ -2,6 +2,11 @@
 //
 // Handles conversion from canonical OTLP JSON (camelCase, string numbers)
 // to the format expected by prost-generated structs (snake_case, actual numbers)
+//
+// Supports all OTLP signals:
+// - Logs: LogRecord with body, attributes, resources
+// - Traces: Span with events, links, status
+// - Metrics: All 5 metric types (Gauge, Sum, Histogram, ExponentialHistogram, Summary)
 
 use anyhow::{anyhow, Context, Result};
 use hex::FromHex;
@@ -17,6 +22,9 @@ const U64_FIELDS: &[&str] = &[
     otlp::OBSERVED_TIME_UNIX_NANO,
     otlp::START_TIME_UNIX_NANO,
     otlp::END_TIME_UNIX_NANO,
+    otlp::COUNT,      // Metrics: histogram/exp_histogram count
+    otlp::ZERO_COUNT, // Metrics: exponential histogram zero count
+    otlp::SCALE,      // Metrics: exponential histogram scale
 ];
 const U32_FIELDS: &[&str] = &[
     otlp::DROPPED_ATTRIBUTES_COUNT,
@@ -25,8 +33,14 @@ const U32_FIELDS: &[&str] = &[
     otlp::DROPPED_EVENTS_COUNT,
     otlp::DROPPED_LINKS_COUNT,
 ];
-const I64_FIELDS: &[&str] = &[otlp::INT_VALUE];
-const F64_FIELDS: &[&str] = &[otlp::DOUBLE_VALUE];
+const I64_FIELDS: &[&str] = &[
+    otlp::INT_VALUE,
+    otlp::AS_INT, // Metrics: integer value in data points
+];
+const F64_FIELDS: &[&str] = &[
+    otlp::DOUBLE_VALUE,
+    otlp::AS_DOUBLE, // Metrics: double value in data points
+];
 const ANYVALUE_VARIANTS: &[&str] = &[
     otlp::STRING_VALUE,
     otlp::BOOL_VALUE,
@@ -225,11 +239,152 @@ pub(crate) fn normalise_json_value(value: &mut JsonValue, key_hint: Option<&str>
                     .or_insert_with(|| JsonValue::String(String::new()));
             }
 
+            // ================================================================
+            // METRICS HANDLERS
+            // ================================================================
+
+            // ResourceMetrics: fill defaults
+            if let Some(otlp::RESOURCE_METRICS) = key_hint {
+                map.entry(otlp::SCHEMA_URL.to_string())
+                    .or_insert_with(|| JsonValue::String(String::new()));
+                map.entry(otlp::SCOPE_METRICS.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+            }
+
+            // ScopeMetrics: fill defaults
+            if let Some(otlp::SCOPE_METRICS) = key_hint {
+                map.entry(otlp::SCHEMA_URL.to_string())
+                    .or_insert_with(|| JsonValue::String(String::new()));
+                map.entry(otlp::METRICS.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+            }
+
+            // Metrics: Transform gauge/sum/histogram/exponential_histogram/summary
+            // from OTLP JSON format to prost enum format
+            //
+            // OTLP JSON:  {"name": "...", "gauge": {"dataPoints": [...]}}
+            // Prost format: {"name": "...", "data": {"Gauge": {"data_points": [...]}}}
+            if let Some(otlp::METRICS) = key_hint {
+                // Check for each metric type and transform to data field
+                let metric_types = [
+                    (otlp::GAUGE, "Gauge"),
+                    (otlp::SUM, "Sum"),
+                    (otlp::HISTOGRAM, "Histogram"),
+                    (otlp::EXPONENTIAL_HISTOGRAM, "ExponentialHistogram"),
+                    (otlp::SUMMARY, "Summary"),
+                ];
+
+                for (field_name, variant_name) in &metric_types {
+                    if let Some(data_value) = map.remove(*field_name) {
+                        // Wrap the value in a data object with the variant name
+                        let mut data_map = serde_json::Map::new();
+                        data_map.insert(variant_name.to_string(), data_value);
+                        map.insert("data".to_string(), JsonValue::Object(data_map));
+                        break; // Only one data type per metric
+                    }
+                }
+            }
+
+            // Data points: fill defaults and transform as_double/as_int to value field
+            if let Some(otlp::DATA_POINTS) = key_hint {
+                map.entry(otlp::TIME_UNIX_NANO.to_string())
+                    .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u64)));
+                map.entry(otlp::START_TIME_UNIX_NANO.to_string())
+                    .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u64)));
+                map.entry(otlp::ATTRIBUTES.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+                map.entry("exemplars".to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+                map.entry("flags".to_string())
+                    .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0u32)));
+
+                // For ExponentialHistogramDataPoint: add zero_threshold default
+                // We detect exponential histogram data points by the presence of "scale" field
+                if map.contains_key(otlp::SCALE) {
+                    map.entry("zero_threshold".to_string()).or_insert_with(|| {
+                        JsonValue::Number(serde_json::Number::from_f64(0.0).unwrap())
+                    });
+                }
+
+                // Transform as_double/as_int to value field
+                // OTLP JSON:  {"timeUnixNano": "...", "asDouble": 45.2}
+                // Prost format: {"time_unix_nano": ..., "value": {"AsDouble": 45.2}}
+                if let Some(as_double_value) = map.remove(otlp::AS_DOUBLE) {
+                    let mut value_map = serde_json::Map::new();
+                    value_map.insert("AsDouble".to_string(), as_double_value);
+                    map.insert("value".to_string(), JsonValue::Object(value_map));
+                } else if let Some(as_int_value) = map.remove(otlp::AS_INT) {
+                    let mut value_map = serde_json::Map::new();
+                    value_map.insert("AsInt".to_string(), as_int_value);
+                    map.insert("value".to_string(), JsonValue::Object(value_map));
+                }
+            }
+
+            // Gauge: fill data_points default
+            if let Some(otlp::GAUGE) = key_hint {
+                map.entry(otlp::DATA_POINTS.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+            }
+
+            // Sum: fill defaults
+            if let Some(otlp::SUM) = key_hint {
+                map.entry(otlp::DATA_POINTS.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+                map.entry(otlp::AGGREGATION_TEMPORALITY.to_string())
+                    .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0)));
+                map.entry(otlp::IS_MONOTONIC.to_string())
+                    .or_insert_with(|| JsonValue::Bool(false));
+            }
+
+            // Histogram: fill defaults
+            if let Some(otlp::HISTOGRAM) = key_hint {
+                map.entry(otlp::DATA_POINTS.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+                map.entry(otlp::AGGREGATION_TEMPORALITY.to_string())
+                    .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0)));
+            }
+
+            // ExponentialHistogram: fill defaults
+            if let Some(otlp::EXPONENTIAL_HISTOGRAM) = key_hint {
+                map.entry(otlp::DATA_POINTS.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+                map.entry(otlp::AGGREGATION_TEMPORALITY.to_string())
+                    .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0)));
+            }
+
+            // Summary: fill defaults
+            if let Some(otlp::SUMMARY) = key_hint {
+                map.entry(otlp::DATA_POINTS.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+            }
+
+            // Positive/Negative buckets for exponential histogram
+            if matches!(key_hint, Some(otlp::POSITIVE) | Some(otlp::NEGATIVE)) {
+                map.entry(otlp::POSITIVE_OFFSET.to_string()) // Both use "offset"
+                    .or_insert_with(|| JsonValue::Number(serde_json::Number::from(0)));
+                map.entry(otlp::BUCKET_COUNTS.to_string())
+                    .or_insert_with(|| JsonValue::Array(Vec::new()));
+            }
+
             Ok(())
         }
         JsonValue::Array(values) => {
-            for item in values.iter_mut() {
-                normalise_json_value(item, key_hint)?;
+            // Special handling for arrays of string numbers (e.g., bucket_counts)
+            if let Some(otlp::BUCKET_COUNTS) = key_hint {
+                // Convert array of string numbers to array of u64 numbers
+                for item in values.iter_mut() {
+                    if let JsonValue::String(s) = item {
+                        let parsed = s.parse::<u64>().with_context(|| {
+                            format!("Failed to parse '{}' as u64 in bucket_counts array", s)
+                        })?;
+                        *item = JsonValue::Number(serde_json::Number::from(parsed));
+                    }
+                }
+            } else {
+                // Standard recursive normalization for other arrays
+                for item in values.iter_mut() {
+                    normalise_json_value(item, key_hint)?;
+                }
             }
             Ok(())
         }
