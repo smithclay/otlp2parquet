@@ -35,16 +35,16 @@ make flamegraph             # CPU profiling only
 **Run benchmarks**:
 ```bash
 # Run all benchmarks
-cargo bench --no-default-features --features server
+cargo bench
 
 # Run specific benchmark
-cargo bench --no-default-features --features server --bench e2e_pipeline
+cargo bench --bench e2e_pipeline
 
 # Save baseline for comparison
-cargo bench --features server -- --save-baseline before
+cargo bench -- --save-baseline before
 
 # Compare against baseline
-cargo bench --features server -- --baseline before
+cargo bench -- --baseline before
 ```
 
 **Output**: `target/criterion/report/index.html` (HTML dashboard with charts)
@@ -207,7 +207,7 @@ git apply --check patches/001-add-inline-annotations.patch
 cp findings.json findings-before.json
 
 # Option B: Manual control
-cargo bench --features server        # Run benchmarks manually
+cargo bench                          # Run benchmarks manually
 ./scripts/perf_audit.py              # Still need this for analysis + findings.json
 cp findings.json findings-before.json
 ```
@@ -218,14 +218,14 @@ cp findings.json findings-before.json
 git apply patches/*.patch
 
 # Verify compilation
-cargo check --features server
-cargo test --features server
+cargo check
+cargo test
 ```
 
 ### After Optimization
 ```bash
 # 1. Benchmark with comparison
-cargo bench --features server -- --baseline before
+cargo bench -- --baseline before
 
 # 2. Record new metrics
 ./scripts/perf_audit.py

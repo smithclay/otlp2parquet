@@ -20,11 +20,11 @@ brew install aws-sam-cli
 
 ## 1. Build the Lambda Function
 
-Before testing or deploying, you need to build the Lambda function binary with the `lambda` feature enabled.
+Before testing or deploying, you need to build the Lambda function binary from the `otlp2parquet-lambda` package.
 
 ```bash
 # Build for Lambda using cargo-lambda directly
-cargo lambda build --release --arm64 --features lambda
+cargo lambda build --release --arm64 -p otlp2parquet-lambda
 
 # Copy the binary to SAM's build directory
 mkdir -p .aws-sam/build/OtlpToParquetFunction
@@ -34,7 +34,7 @@ cp target/lambda/otlp2parquet/bootstrap .aws-sam/build/OtlpToParquetFunction/
 # .aws-sam/build/OtlpToParquetFunction/bootstrap
 ```
 
-**Why not `sam build`?** SAM's Rust support via `cargo-lambda` is currently a beta feature and doesn't correctly pass the `Features` property to cargo-lambda. Building with `cargo lambda` directly ensures the `lambda` feature flag is included.
+**Why not `sam build`?** SAM's Rust support via `cargo-lambda` is currently a beta feature. Building with `cargo lambda` directly with the `-p` flag ensures the correct package is built.
 
 ## 2. Local Development & Testing
 
@@ -97,7 +97,7 @@ For testing with binary protobuf data, use `sam local invoke` with pre-built eve
 
 ```bash
 # Build first (if not already built)
-cargo lambda build --release --arm64 --features lambda
+cargo lambda build --release --arm64 -p otlp2parquet-lambda
 mkdir -p .aws-sam/build/OtlpToParquetFunction
 cp target/lambda/otlp2parquet/bootstrap .aws-sam/build/OtlpToParquetFunction/
 

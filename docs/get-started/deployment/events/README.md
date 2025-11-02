@@ -14,12 +14,12 @@ These event files contain base64-encoded OTLP payloads for testing the Lambda fu
 
 ```bash
 # From the repository root
-cargo lambda build --release --arm64 --features lambda
+cargo lambda build --release --arm64 -p otlp2parquet-lambda
 mkdir -p .aws-sam/build/OtlpToParquetFunction
 cp target/lambda/otlp2parquet/bootstrap .aws-sam/build/OtlpToParquetFunction/
 ```
 
-**Note**: We use `cargo lambda build` directly instead of `sam build` because SAM doesn't correctly pass the `Features` property to cargo-lambda.
+**Note**: We use `cargo lambda build` directly with the `-p` flag instead of `sam build` to ensure the correct package is built.
 
 ### Create local-env.json
 

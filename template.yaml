@@ -44,7 +44,7 @@ Resources:
       BuildMethod: rust-cargolambda
       BuildProperties:
         Binary: otlp2parquet
-        Features: lambda
+        CargoPackage: otlp2parquet-lambda
     Properties:
       CodeUri: .
       Handler: bootstrap  # Required for custom runtime

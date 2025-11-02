@@ -22,13 +22,13 @@ COPY benches ./benches
 
 # Build dependencies first (better caching)
 RUN mkdir src && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs
-RUN cargo build --release --features server
+RUN cargo build --release
 RUN rm -rf src target/release/otlp2parquet* target/release/deps/otlp2parquet*
 
 # Copy source and build
 COPY src ./src
 
-RUN cargo build --release --features server
+RUN cargo build --release
 
 # Strip binary for smaller size
 RUN strip target/release/otlp2parquet
