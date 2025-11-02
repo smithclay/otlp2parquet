@@ -7,6 +7,7 @@ use anyhow::{bail, Result};
 use arrow::array::RecordBatch;
 use opendal::Operator;
 use parquet::file::properties::{EnabledStatistics, WriterProperties};
+use parquet::format::KeyValue;
 use std::io::{self, Write};
 use std::sync::OnceLock;
 
@@ -64,9 +65,30 @@ fn compression_setting() -> Compression {
 /// - Platform-specific compression (Snappy for WASM, ZSTD for native)
 /// - Dictionary encoding enabled
 /// - 32k rows per group (balances memory and query performance)
+/// - OTLP version metadata embedded in file
 pub fn writer_properties() -> &'static WriterProperties {
     static PROPERTIES: OnceLock<WriterProperties> = OnceLock::new();
     PROPERTIES.get_or_init(|| {
+        // Embed OTLP version and schema information in Parquet metadata
+        let metadata = vec![
+            KeyValue {
+                key: "otlp.version".to_string(),
+                value: Some("1.5.0".to_string()),
+            },
+            KeyValue {
+                key: "otlp.protocol.version".to_string(),
+                value: Some("v1".to_string()),
+            },
+            KeyValue {
+                key: "otlp2parquet.version".to_string(),
+                value: Some(env!("CARGO_PKG_VERSION").to_string()),
+            },
+            KeyValue {
+                key: "schema.source".to_string(),
+                value: Some("opentelemetry-collector-contrib/clickhouseexporter".to_string()),
+            },
+        ];
+
         WriterProperties::builder()
             .set_dictionary_enabled(true)
             .set_statistics_enabled(EnabledStatistics::Page)
@@ -75,6 +97,7 @@ pub fn writer_properties() -> &'static WriterProperties {
             .set_write_batch_size(32 * 1024)
             .set_max_row_group_size(32 * 1024) // 32k rows per group
             .set_dictionary_page_size_limit(128 * 1024)
+            .set_key_value_metadata(Some(metadata))
             .build()
     })
 }
@@ -323,5 +346,73 @@ mod tests {
         let hash1 = blake3::hash(&buf1);
         let hash2 = blake3::hash(&buf2);
         assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_metadata_embedded_in_parquet() {
+        use bytes::Bytes;
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+
+        let batch = create_test_batch();
+        let mut buffer = Vec::new();
+
+        // Write with our properties
+        let props = writer_properties().clone();
+        let mut writer =
+            parquet::arrow::ArrowWriter::try_new(&mut buffer, batch.schema(), Some(props)).unwrap();
+        writer.write(&batch).unwrap();
+        writer.close().unwrap();
+
+        // Read back and verify metadata
+        let bytes = Bytes::from(buffer);
+        let reader = ParquetRecordBatchReaderBuilder::try_new(bytes).unwrap();
+        let file_metadata = reader.metadata().file_metadata();
+        let kv_metadata = file_metadata.key_value_metadata();
+
+        assert!(kv_metadata.is_some(), "Metadata should be present");
+        let metadata = kv_metadata.unwrap();
+
+        // Verify OTLP version metadata
+        let otlp_version = metadata
+            .iter()
+            .find(|kv| kv.key == "otlp.version")
+            .expect("otlp.version should be present");
+        assert_eq!(
+            otlp_version.value.as_ref().unwrap(),
+            "1.5.0",
+            "OTLP version should be 1.5.0"
+        );
+
+        // Verify protocol version
+        let protocol_version = metadata
+            .iter()
+            .find(|kv| kv.key == "otlp.protocol.version")
+            .expect("otlp.protocol.version should be present");
+        assert_eq!(
+            protocol_version.value.as_ref().unwrap(),
+            "v1",
+            "Protocol version should be v1"
+        );
+
+        // Verify schema source
+        let schema_source = metadata
+            .iter()
+            .find(|kv| kv.key == "schema.source")
+            .expect("schema.source should be present");
+        assert_eq!(
+            schema_source.value.as_ref().unwrap(),
+            "opentelemetry-collector-contrib/clickhouseexporter",
+            "Schema source should reference ClickHouse exporter"
+        );
+
+        // Verify otlp2parquet version exists
+        let tool_version = metadata
+            .iter()
+            .find(|kv| kv.key == "otlp2parquet.version")
+            .expect("otlp2parquet.version should be present");
+        assert!(
+            tool_version.value.is_some(),
+            "Tool version should have a value"
+        );
     }
 }
