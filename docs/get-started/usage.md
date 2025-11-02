@@ -79,6 +79,60 @@ curl -X POST http://localhost:4318/v1/traces \
   --data-binary @traces.jsonl
 ```
 
+## Batching with OpenTelemetry Collector
+
+For serverless environments like AWS Lambda and Cloudflare Workers, it is critical to batch data before sending it to `otlp2parquet`. Sending individual logs, metrics, or traces can be inefficient and lead to high costs and suboptimal Parquet file sizes.
+
+Tools like the [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/) or [Vector](https://vector.dev/) can be configured to act as an intermediary, receiving data from your applications, grouping it into larger batches, and then forwarding those batches to `otlp2parquet`.
+
+### Example: OpenTelemetry Collector Configuration
+
+Below is an example `otel-collector-config.yaml` that configures the `batch` processor to create batches that are ideal for writing efficient Parquet files (around 100 MiB).
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+      http:
+
+processors:
+  batch:
+    # The number of bytes is a soft limit. Batches may exceed this limit.
+    send_batch_max_size: 104857600 # 100 MiB
+    # The number of seconds to wait before sending a batch.
+    timeout: 10s
+
+exporters:
+  otlphttp:
+    # Replace with the endpoint of your otlp2parquet deployment
+    # e.g., http://localhost:4318 for Docker, or your Lambda/Worker URL
+    endpoint: http://localhost:4318/
+
+service:
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp]
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp]
+```
+
+**Key Configuration:**
+
+*   **`processors.batch.send_batch_max_size`**: This sets a soft limit on the batch size. The collector will attempt to create batches of this size, but they may be larger or smaller depending on the incoming data and timeout.
+*   **`processors.batch.timeout`**: This ensures that even if the batch size isn't reached, data will be sent after a specified time, preventing data loss on shutdown.
+*   **`exporters.otlphttp.endpoint`**: This is the URL of your `otlp2parquet` instance. All batched data will be sent here.
+
+By using a collector, you gain better control over the size of the data chunks sent to `otlp2parquet`, leading to more optimized Parquet files, reduced cloud function invocations, and lower costs.
+
 ## Query with DuckDB
 
 ### Logs
