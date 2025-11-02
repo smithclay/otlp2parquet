@@ -36,13 +36,9 @@ _Note: If you want to query or convert existing OTLP files, you can use the [otl
 
 ** In serverless environments, batching must be handled by an upstream agent like the [OpenTelemetry Collector](https://github.com/open-telemetry/opentelemetry-collector) or [Vector](https://github.com/vectordotdev/vector) to optimize performance and cost ([see example configuration](docs/get-started/usage.md#batching-with-opentelemetry-collector)).
 
-## Quick Start
-
-To get started quickly, check out the [Quickstart Guide](docs/get-started/quickstart.md).
-
 ## Documentation
 
-For comprehensive information on deployment, usage, architecture, and development, please visit our full documentation site:
+For deployment instructions, usage examples, and detailed guides:
 
 ➡️ [**View Documentation**](https://smithclay.github.io/otlp2parquet/)
 
