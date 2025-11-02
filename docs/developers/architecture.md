@@ -1,15 +1,21 @@
 # Architecture
 
-This document details the architectural design of `otlp2parquet`, emphasizing its core principles, platform-specific considerations, and the role of Apache OpenDAL as a unified storage abstraction.
+This document outlines the architectural design of `otlp2parquet`, its core principles, and its different runtimes.
 
-### Default + Constrained Runtimes
+## Core Principles
 
-*   **Server Mode (Default):** This is the full-featured implementation, providing a robust Axum HTTP server with multi-backend storage capabilities.
-*   **Lambda & Cloudflare (Constrained Runtimes):** These are specialized cases that leverage the same core processing logic but operate under platform-specific limitations (e.g., S3-only for Lambda, R2-only for Cloudflare Workers due to WASM constraints).
+The architecture separates the **essence** (the pure OTLP-to-Parquet conversion logic) from the **accident** (platform-specific I/O and networking). This results in a pure, deterministic core that is adapted for different environments.
 
-## High-Level Architecture Diagram
+### Execution Runtimes
 
-The following diagram illustrates the flow of data and the separation of concerns within `otlp2parquet`:
+`otlp2parquet` supports multiple execution runtimes:
+
+*   **Server Mode (Default):** A full-featured implementation that uses an Axum HTTP server with multi-backend storage capabilities.
+*   **Lambda & Cloudflare (Constrained Runtimes):** Specialized runtimes that use the same core logic but operate under platform-specific limitations (e.g., S3-only for Lambda, R2-only for Cloudflare Workers).
+
+## High-Level Diagram
+
+This diagram shows the data flow and separation of concerns within `otlp2parquet`:
 
 ```
 ┌─────────────────────────────────────────┐
@@ -47,8 +53,8 @@ The following diagram illustrates the flow of data and the separation of concern
 
 ## Architecture Highlights
 
-*   **Server is Default:** Full-featured mode with Axum HTTP server, structured logging, graceful shutdown.
-*   **Unified Storage:** Apache OpenDAL provides a consistent API across all platforms, abstracting away the complexities of different object storage backends.
-*   **Pure Core:** The OTLP processing logic is designed to be deterministic and free of I/O dependencies, ensuring high reliability and testability.
-*   **Platform-Native:** Each runtime leverages its native async model (e.g., `worker` for Cloudflare, `tokio` for Lambda/Server) for optimal performance.
-*   **Binary Size:** Aggressive optimization techniques are applied to ensure minimal binary sizes, crucial for WASM deployments like Cloudflare Workers.
+*   **Server as Default:** The server mode provides a full-featured Axum HTTP server, structured logging, and graceful shutdown.
+*   **Unified Storage:** Apache OpenDAL provides a consistent API across all platforms, which abstracts away the complexities of different object storage backends.
+*   **Pure Core:** The OTLP processing logic is deterministic and has no I/O dependencies, which improves reliability and testability.
+*   **Platform-Native:** Each runtime uses its native async model (e.g., `worker` for Cloudflare, `tokio` for Lambda/Server) for optimal performance.
+*   **Binary Size:** Aggressive optimizations ensure a minimal binary size, which is crucial for WASM deployments.

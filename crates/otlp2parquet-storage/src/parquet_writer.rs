@@ -16,6 +16,28 @@ use parquet::basic::Compression;
 #[cfg(not(target_arch = "wasm32"))]
 use parquet::basic::{Compression, ZstdLevel};
 
+const DEFAULT_ROW_GROUP_SIZE: usize = 32 * 1024;
+static ROW_GROUP_SIZE: OnceLock<usize> = OnceLock::new();
+
+/// Configure the global Parquet row group size used by Arrow writers.
+///
+/// Must be called before the first Parquet writer is created. Subsequent calls
+/// are ignored to preserve the existing writer properties cache.
+pub fn set_parquet_row_group_size(row_group_size: usize) {
+    if row_group_size == 0 {
+        return;
+    }
+
+    let _ = ROW_GROUP_SIZE.set(row_group_size);
+}
+
+fn configured_row_group_size() -> usize {
+    ROW_GROUP_SIZE
+        .get()
+        .copied()
+        .unwrap_or(DEFAULT_ROW_GROUP_SIZE)
+}
+
 struct HashingBuffer {
     buffer: Vec<u8>,
     hasher: blake3::Hasher,
@@ -64,7 +86,7 @@ fn compression_setting() -> Compression {
 /// Configuration optimized for size and query performance:
 /// - Platform-specific compression (Snappy for WASM, ZSTD for native)
 /// - Dictionary encoding enabled
-/// - 32k rows per group (balances memory and query performance)
+/// - 32k rows per group by default (configurable)
 /// - OTLP version metadata embedded in file
 pub fn writer_properties() -> &'static WriterProperties {
     static PROPERTIES: OnceLock<WriterProperties> = OnceLock::new();
@@ -95,7 +117,7 @@ pub fn writer_properties() -> &'static WriterProperties {
             .set_compression(compression_setting())
             .set_data_page_size_limit(256 * 1024) // 256 KiB data pages
             .set_write_batch_size(32 * 1024)
-            .set_max_row_group_size(32 * 1024) // 32k rows per group
+            .set_max_row_group_size(configured_row_group_size()) // Configurable row group size
             .set_dictionary_page_size_limit(128 * 1024)
             .set_key_value_metadata(Some(metadata))
             .build()

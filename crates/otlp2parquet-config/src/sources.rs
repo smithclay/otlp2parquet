@@ -46,12 +46,14 @@ fn platform_defaults(platform: Platform) -> RuntimeConfig {
     let storage = match storage_backend {
         StorageBackend::Fs => StorageConfig {
             backend: StorageBackend::Fs,
+            parquet_row_group_size: default_parquet_row_group_size(),
             fs: Some(FsConfig::default()),
             s3: None,
             r2: None,
         },
         StorageBackend::S3 => StorageConfig {
             backend: StorageBackend::S3,
+            parquet_row_group_size: default_parquet_row_group_size(),
             fs: None,
             s3: Some(S3Config {
                 bucket: "otlp-logs".to_string(), // Lambda default
@@ -62,6 +64,7 @@ fn platform_defaults(platform: Platform) -> RuntimeConfig {
         },
         StorageBackend::R2 => StorageConfig {
             backend: StorageBackend::R2,
+            parquet_row_group_size: default_parquet_row_group_size(),
             fs: None,
             s3: None,
             r2: Some(R2Config {
@@ -183,6 +186,9 @@ fn apply_env_overrides(config: &mut RuntimeConfig, platform: Platform) -> Result
         config.storage.backend = backend
             .parse::<StorageBackend>()
             .context("Invalid OTLP2PARQUET_STORAGE_BACKEND value")?;
+    }
+    if let Some(row_group_size) = get_env_usize("PARQUET_ROW_GROUP_SIZE")? {
+        config.storage.parquet_row_group_size = row_group_size;
     }
 
     // Filesystem storage

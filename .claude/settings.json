@@ -3,7 +3,7 @@
     "sessionStart": [
       {
         "description": "Initialize pre-commit hooks",
-        "command": "uvx --with pre-commit-uv pre-commit install"
+        "command": "make install-tools"
       }
     ]
   }

@@ -1,95 +1,75 @@
 # Usage
 
-Once `otlp2parquet` is deployed, you can start sending OpenTelemetry logs, metrics, and traces, then query the resulting Parquet files.
+After deploying `otlp2parquet`, you can send it OpenTelemetry data.
 
-## Send Logs
+This guide covers two methods for sending data:
+1.  **Directly via HTTP**: Useful for quick tests and low-volume scenarios.
+2.  **Via the OpenTelemetry Collector**: The recommended method for production, especially for serverless deployments.
 
-Send logs to your deployed `otlp2parquet` instance. The exact endpoint will depend on your deployment method (e.g., `http://localhost:4318/v1/logs` for Docker, your Worker URL for Cloudflare, or your Function URL for AWS Lambda).
+## Sending Data Directly
+
+You can send OTLP data directly to the appropriate endpoint for each signal type using a tool like `curl`. The examples below use the default Docker endpoint (`http://localhost:4318`). Replace this with your specific Lambda or Cloudflare Worker URL when deployed.
+
+### Logs
+
+Send log data to the `/v1/logs` endpoint.
 
 ```bash
 # Protobuf format
 curl -X POST http://localhost:4318/v1/logs \
   -H "Content-Type: application/x-protobuf" \
-  --data-binary @logs.pb
+  --data-binary @testdata/logs.pb
 
 # JSON format
 curl -X POST http://localhost:4318/v1/logs \
   -H "Content-Type: application/json" \
-  -d @logs.json
+  -d @testdata/log.json
 ```
 
-## Send Metrics
+### Metrics
 
-Send metrics to the `/v1/metrics` endpoint. Multiple formats are supported:
+Send metric data to the `/v1/metrics` endpoint.
 
 ```bash
 # Protobuf format
 curl -X POST http://localhost:4318/v1/metrics \
   -H "Content-Type: application/x-protobuf" \
-  --data-binary @metrics.pb
+  --data-binary @testdata/metrics_gauge.pb
 
 # JSON format
 curl -X POST http://localhost:4318/v1/metrics \
   -H "Content-Type: application/json" \
-  -d @metrics.json
-
-# JSONL format
-curl -X POST http://localhost:4318/v1/metrics \
-  -H "Content-Type: application/x-ndjson" \
-  --data-binary @metrics.jsonl
+  -d @testdata/metrics_gauge.json
 ```
 
-The response includes counts per metric type:
+### Traces
 
-```json
-{
-  "status": "ok",
-  "data_points_processed": 150,
-  "gauge_count": 50,
-  "sum_count": 75,
-  "histogram_count": 25,
-  "exponential_histogram_count": 0,
-  "summary_count": 0,
-  "partitions": [
-    "metrics/gauge/my-service/year=2024/.../file.parquet",
-    "metrics/sum/my-service/year=2024/.../file.parquet",
-    "metrics/histogram/my-service/year=2024/.../file.parquet"
-  ]
-}
-```
-
-## Send Traces
-
-Send traces to the `/v1/traces` endpoint:
+Send trace data to the `/v1/traces` endpoint.
 
 ```bash
 # Protobuf format
 curl -X POST http://localhost:4318/v1/traces \
   -H "Content-Type: application/x-protobuf" \
-  --data-binary @traces.pb
+  --data-binary @testdata/traces.pb
 
 # JSON format
 curl -X POST http://localhost:4318/v1/traces \
   -H "Content-Type: application/json" \
-  -d @traces.json
-
-# JSONL format
-curl -X POST http://localhost:4318/v1/traces \
-  -H "Content-Type: application/x-ndjson" \
-  --data-binary @traces.jsonl
+  -d @testdata/trace.json
 ```
 
-## Batching with OpenTelemetry Collector
+## Sending Data via OpenTelemetry Collector (Recommended)
 
-For serverless environments like AWS Lambda and Cloudflare Workers, it is critical to batch data before sending it to `otlp2parquet`. Sending individual logs, metrics, or traces can be inefficient and lead to high costs and suboptimal Parquet file sizes.
+For serverless environments like AWS Lambda and Cloudflare Workers, sending individual requests is inefficient. Using an agent like the [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/) to batch data is critical for optimizing performance and reducing cost.
 
-Tools like the [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/) or [Vector](https://vector.dev/) can be configured to act as an intermediary, receiving data from your applications, grouping it into larger batches, and then forwarding those batches to `otlp2parquet`.
+The collector receives data from your applications, groups it into larger batches, and then forwards those batches to `otlp2parquet`.
 
-### Example: OpenTelemetry Collector Configuration
+### Example Collector Configuration
 
-Below is an example `otel-collector-config.yaml` that configures the `batch` processor to create batches that are ideal for writing efficient Parquet files (around 100 MiB).
+This example configures the `batch` processor to create batches up to 100 MiB, which is ideal for writing efficient Parquet files.
 
 ```yaml
+# otel-collector-config.yaml
 receivers:
   otlp:
     protocols:
@@ -98,15 +78,14 @@ receivers:
 
 processors:
   batch:
-    # The number of bytes is a soft limit. Batches may exceed this limit.
+    # Sets a soft limit on batch size. Batches may exceed this.
     send_batch_max_size: 104857600 # 100 MiB
-    # The number of seconds to wait before sending a batch.
+    # Sends a batch every 10 seconds, even if it's not full.
     timeout: 10s
 
 exporters:
   otlphttp:
-    # Replace with the endpoint of your otlp2parquet deployment
-    # e.g., http://localhost:4318 for Docker, or your Lambda/Worker URL
+    # Replace with the endpoint of your otlp2parquet deployment.
     endpoint: http://localhost:4318/
 
 service:
@@ -125,140 +104,36 @@ service:
       exporters: [otlphttp]
 ```
 
-**Key Configuration:**
-
-*   **`processors.batch.send_batch_max_size`**: This sets a soft limit on the batch size. The collector will attempt to create batches of this size, but they may be larger or smaller depending on the incoming data and timeout.
-*   **`processors.batch.timeout`**: This ensures that even if the batch size isn't reached, data will be sent after a specified time, preventing data loss on shutdown.
-*   **`exporters.otlphttp.endpoint`**: This is the URL of your `otlp2parquet` instance. All batched data will be sent here.
-
-By using a collector, you gain better control over the size of the data chunks sent to `otlp2parquet`, leading to more optimized Parquet files, reduced cloud function invocations, and lower costs.
-
-## Query with DuckDB
-
-### Logs
-
-Files are stored in a Hive-style partitioned format: `logs/{service}/year={yyyy}/month={mm}/day={dd}/hour={hh}/{timestamp}-{hash}.parquet`.
-
-```sql
-INSTALL httpfs; LOAD httpfs;
-SET s3_endpoint='localhost:9000'; SET s3_url_style='path'; SET s3_use_ssl=false;
-SET s3_access_key_id='minioadmin'; SET s3_secret_access_key='minioadmin';
-
-SELECT Timestamp, ServiceName, SeverityText, Body
-FROM read_parquet('s3://otlp-logs/logs/**/*.parquet')
-ORDER BY Timestamp DESC LIMIT 10;
-```
-
-### Metrics
-
-Metrics are partitioned by type: `metrics/{type}/{service}/year={yyyy}/month={mm}/day={dd}/hour={hh}/{timestamp}-{hash}.parquet`
-
-Each metric type has its own schema for optimal query performance:
-
-```sql
--- Query gauge metrics
-SELECT Timestamp, ServiceName, MetricName, Value, Attributes
-FROM read_parquet('s3://otlp-logs/metrics/gauge/**/*.parquet')
-WHERE MetricName = 'cpu.usage'
-ORDER BY Timestamp DESC LIMIT 10;
-
--- Query sum metrics with temporality
-SELECT Timestamp, ServiceName, MetricName, Value,
-       AggregationTemporality, IsMonotonic
-FROM read_parquet('s3://otlp-logs/metrics/sum/**/*.parquet')
-WHERE MetricName = 'http.requests.total'
-ORDER BY Timestamp DESC LIMIT 10;
-
--- Query histogram metrics
-SELECT Timestamp, ServiceName, MetricName,
-       Count, Sum, BucketCounts, ExplicitBounds
-FROM read_parquet('s3://otlp-logs/metrics/histogram/**/*.parquet')
-WHERE MetricName = 'http.request.duration'
-ORDER BY Timestamp DESC LIMIT 10;
-
--- Query all metric types together
-SELECT 'gauge' as type, COUNT(*) as count FROM read_parquet('s3://otlp-logs/metrics/gauge/**/*.parquet')
-UNION ALL
-SELECT 'sum', COUNT(*) FROM read_parquet('s3://otlp-logs/metrics/sum/**/*.parquet')
-UNION ALL
-SELECT 'histogram', COUNT(*) FROM read_parquet('s3://otlp-logs/metrics/histogram/**/*.parquet');
-```
-
-### Traces
-
-Traces are partitioned by service: `traces/{service}/year={yyyy}/month={mm}/day={dd}/hour={hh}/{timestamp}-{hash}.parquet`
-
-```sql
--- Query spans with basic fields
-SELECT Timestamp, ServiceName, TraceId, SpanId, ParentSpanId,
-       Name, Kind, StatusCode
-FROM read_parquet('s3://otlp-logs/traces/**/*.parquet')
-ORDER BY Timestamp DESC LIMIT 10;
-
--- Find slow traces (duration > 1 second)
-SELECT TraceId, ServiceName, Name,
-       (EndTimeUnixNano - StartTimeUnixNano) / 1e9 as duration_seconds
-FROM read_parquet('s3://otlp-logs/traces/**/*.parquet')
-WHERE (EndTimeUnixNano - StartTimeUnixNano) > 1000000000
-ORDER BY duration_seconds DESC;
-
--- Query spans for a specific service
-SELECT Timestamp, Name, Kind, StatusCode, Attributes
-FROM read_parquet('s3://otlp-logs/traces/**/*.parquet')
-WHERE ServiceName = 'my-service'
-ORDER BY Timestamp DESC LIMIT 10;
-```
+Using a collector provides better control over file sizes, reduces the number of function invocations in serverless environments, and lowers overall cost.
 
 ## Troubleshooting
 
 For detailed configuration options, see the [Configuration Guide](configuration.md).
 
-### OTLP Protobuf Parse Errors
+### OTLP Parse Errors
 
-Ensure you're sending valid OTLP v1.3.2 format:
+If you receive parsing errors, ensure you are sending valid OTLP data. You can verify your payload with `otel-cli`.
+
 ```bash
-# Verify with otel-cli
+# Example verification for logs
 otel-cli logs --protocol http/protobuf --dry-run
 ```
 
 ### Storage Write Failures
 
-**Cloudflare Workers:**
-- Verify R2 bucket binding in `wrangler.toml`
-- Check environment variables: `OTLP2PARQUET_R2_BUCKET`, `OTLP2PARQUET_R2_ACCOUNT_ID`, `OTLP2PARQUET_R2_ACCESS_KEY_ID`
-- Ensure secret is set: `wrangler secret put OTLP2PARQUET_R2_SECRET_ACCESS_KEY`
-- Check bucket permissions
-
-**AWS Lambda:**
-- Verify IAM role has `s3:PutObject` permission
-- Check environment variables: `OTLP2PARQUET_S3_BUCKET`, `OTLP2PARQUET_S3_REGION`
-- Lambda automatically uses S3 backend (validated at startup)
-
-**Server Mode (Docker/Local):**
-- **Filesystem:** Verify `OTLP2PARQUET_STORAGE_PATH` directory exists and is writable
-- **S3:** Verify AWS credentials and S3 bucket permissions
-  - Set: `OTLP2PARQUET_STORAGE_BACKEND=s3`
-  - Set: `OTLP2PARQUET_S3_BUCKET` and `OTLP2PARQUET_S3_REGION`
-- **R2:** Verify R2 credentials and bucket permissions
-  - Set: `OTLP2PARQUET_STORAGE_BACKEND=r2`
-  - Set: `OTLP2PARQUET_R2_*` variables
-- Check `/health` and `/ready` endpoints for diagnostics
+*   **Cloudflare Workers**: Verify the R2 bucket binding in `wrangler.toml` and ensure the `OTLP2PARQUET_R2_*` environment variables and secrets are correctly set.
+*   **AWS Lambda**: Ensure the function's IAM role has `s3:PutObject` permission for the target bucket.
+*   **Server Mode (Docker)**: If using filesystem storage, ensure the `OTLP2PARQUET_STORAGE_PATH` directory is writable. If using S3 or R2, check your credentials and bucket permissions.
 
 ### Configuration Issues
 
-**Check active configuration:**
-```bash
-# Server mode - check startup logs
-docker-compose logs otlp2parquet | grep -E "(storage|batch|payload)"
+To see the active configuration, check the startup logs for your deployment:
 
-# Lambda - check CloudWatch logs
-cd crates/otlp2parquet-lambda && sam logs --tail
+*   **Server Mode**: `docker-compose logs otlp2parquet | grep -E "(storage|batch|payload)"`
+*   **AWS Lambda**: Check the function's logs in CloudWatch.
+*   **Cloudflare Workers**: Use the `wrangler tail` command.
 
-# Cloudflare Workers - check logs
-cd crates/otlp2parquet-cloudflare && wrangler tail
-```
-
-**Common issues:**
-- Environment variable names must use `OTLP2PARQUET_` prefix
-- Storage backend must match platform (S3 for Lambda, R2 for Cloudflare)
-- Required fields must be set (bucket name, region, credentials)
+**Common Mistakes:**
+*   Forgetting the `OTLP2PARQUET_` prefix for environment variables.
+*   A mismatch between the configured `STORAGE_BACKEND` and the platform (e.g., using `fs` on Lambda).
+*   Missing required fields like bucket names or credentials.

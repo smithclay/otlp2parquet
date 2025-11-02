@@ -8,8 +8,25 @@ name: CI
 on:
   push:
     branches: ["main"]
-#  pull_request:
-#    branches: ["main"]
+    tags: ["v*.*.*"]
+    paths:
+      - "**/*.rs"
+      - "**/Cargo.toml"
+      - "Cargo.lock"
+      - "**/build.rs"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "**/*.rs"
+      - "**/Cargo.toml"
+      - "Cargo.lock"
+      - "**/build.rs"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+      - ".github/workflows/ci.yml"
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,6 +34,8 @@ env:
   CARGO_INCREMENTAL: 0  # Disable incremental compilation for CI (faster clean builds)
   CARGO_PROFILE_DEV_DEBUG: 0  # Reduce debug info to save cache space
   CARGO_NET_GIT_FETCH_WITH_CLI: true  # More reliable git fetching
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   # Check code formatting
@@ -25,109 +44,63 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Configure toolchain
+        uses: ./.github/actions/setup-rust
         with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
           components: rustfmt
+          cache-prefix: fmt
+          cache-key: fmt
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: make fmt-check
 
   # Run clippy lints
   clippy:
-    name: Clippy (${{ matrix.feature-name }})
+    name: Clippy
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - feature-name: "server"
-            target: ""
-          - feature-name: "lambda"
-            package: "otlp2parquet-lambda"
-            target: ""
-          - feature-name: "cloudflare"
-            package: "otlp2parquet-cloudflare"
-            target: "wasm32-unknown-unknown"
     steps:
       - uses: actions/checkout@v5
-      - uses: arduino/setup-protoc@v3
+      - name: Configure toolchain
+        uses: ./.github/actions/setup-rust
         with:
-          version: "32.0"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: dtolnay/rust-toolchain@stable
-        with:
           components: clippy
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: "clippy"
-          key: ${{ matrix.feature-name }}-${{ matrix.target || 'native' }}
-          cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          workspaces: '.'
+          targets: wasm32-unknown-unknown
+          cache-prefix: clippy
+          cache-key: all-targets
       - name: Run clippy
-        run: cargo clippy --all-targets ${{ matrix.package && format('-p {0}', matrix.package) || matrix.features }} ${{ matrix.target && format('--target {0}', matrix.target) || '' }} -- -D warnings
+        run: make clippy
 
   # Run tests
   test:
-    name: Test (${{ matrix.feature-name }})
+    name: Tests
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - feature-name: "server"
-          - feature-name: "lambda"
-            package: "otlp2parquet-lambda"
-          # Note: Cloudflare tests skipped - WASM target has limited test support
-          # and tests are primarily in otlp2parquet-core which is platform-agnostic
     steps:
       - uses: actions/checkout@v5
-      - uses: arduino/setup-protoc@v3
+      - name: Configure toolchain
+        uses: ./.github/actions/setup-rust
         with:
-          version: "32.0"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: "test"
-          key: ${{ matrix.feature-name }}
-          cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          workspaces: '.'
+          cache-prefix: test
+          cache-key: full-suite
       - name: Run tests
-        run: cargo test ${{ matrix.package && format('-p {0}', matrix.package) || matrix.features }}
+        run: make test
 
   # Build for different feature combinations
   build:
-    name: Build (${{ matrix.feature-name }})
+    name: Build
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - feature-name: "server"
-            target: ""
-          - feature-name: "lambda"
-            package: "otlp2parquet-lambda"
-            target: ""
-          - feature-name: "cloudflare"
-            package: "otlp2parquet-cloudflare"
-            target: "wasm32-unknown-unknown"
     steps:
       - uses: actions/checkout@v5
-      - uses: arduino/setup-protoc@v3
+      - name: Configure toolchain
+        uses: ./.github/actions/setup-rust
         with:
-          version: "32.0"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: "build"
-          key: ${{ matrix.feature-name }}-${{ matrix.target || 'native' }}
-          cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          workspaces: '.'
-      - name: Build with features "${{ matrix.feature-name }}"
-        run: cargo build --release ${{ matrix.package && format('-p {0}', matrix.package) || matrix.features }} ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+          targets: wasm32-unknown-unknown
+          cache-prefix: build
+          cache-key: release
+      - name: Build release binaries
+        run: make build-release
 
   # Check WASM build size for Cloudflare Workers
   # Target: <3MB compressed (currently ~1006KB with OpenDAL)
@@ -136,20 +109,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: arduino/setup-protoc@v3
+      - name: Configure toolchain
+        uses: ./.github/actions/setup-rust
         with:
-          version: "32.0"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: dtolnay/rust-toolchain@stable
-        with:
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: "wasm"
-          key: "cloudflare-wasm32"
-          cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          workspaces: '.'
+          cache-prefix: wasm
+          cache-key: size-check
       - name: Cache wasm-opt
         uses: actions/cache@v4
         id: wasm-opt-cache
@@ -165,48 +131,8 @@ jobs:
           cp binaryen-version_116/bin/wasm-opt ~/.local/bin/
       - name: Add wasm-opt to PATH
         run: echo "$HOME/.local/bin" >> $GITHUB_PATH
-      - name: Build WASM (Cloudflare Workers)
-        run: cd crates/otlp2parquet-cloudflare && cargo install -q worker-build && worker-build --release
-      - name: Optimize WASM
-        run: |
-          # Show original size
-          ORIGINAL_SIZE=$(stat -c%s crates/otlp2parquet-cloudflare/build/index_bg.wasm)
-          ORIGINAL_KB=$(echo "scale=1; $ORIGINAL_SIZE / 1024" | bc)
-          ORIGINAL_MB=$(echo "scale=3; $ORIGINAL_SIZE / 1024 / 1024" | bc)
-          echo "Original WASM size: ${ORIGINAL_SIZE} bytes (${ORIGINAL_KB} KB, ${ORIGINAL_MB} MB)"
-
-          # Optimize with wasm-opt
-          wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int -o optimized.wasm crates/otlp2parquet-cloudflare/build/index_bg.wasm
-          OPTIMIZED_SIZE=$(stat -c%s optimized.wasm)
-          OPTIMIZED_KB=$(echo "scale=1; $OPTIMIZED_SIZE / 1024" | bc)
-          OPTIMIZED_MB=$(echo "scale=3; $OPTIMIZED_SIZE / 1024 / 1024" | bc)
-          echo "Optimized WASM size: ${OPTIMIZED_SIZE} bytes (${OPTIMIZED_KB} KB, ${OPTIMIZED_MB} MB)"
-
-          # Compress with gzip (keep original with -k)
-          gzip -9 -k optimized.wasm
-
-          # Check compressed size
-          if [ ! -f optimized.wasm.gz ]; then
-            echo "::error::Failed to create optimized.wasm.gz"
-            exit 1
-          fi
-
-          COMPRESSED_SIZE=$(stat -c%s optimized.wasm.gz)
-          COMPRESSED_KB=$(echo "scale=1; $COMPRESSED_SIZE / 1024" | bc)
-          COMPRESSED_MB=$(echo "scale=3; $COMPRESSED_SIZE / 1024 / 1024" | bc)
-          echo "Compressed WASM size: ${COMPRESSED_SIZE} bytes (${COMPRESSED_KB} KB, ${COMPRESSED_MB} MB)"
-
-          # Check against 3MB limit
-          MAX_SIZE=3145728  # 3MB in bytes
-          if [ $COMPRESSED_SIZE -gt $MAX_SIZE ]; then
-            echo "::error::WASM binary is ${COMPRESSED_MB} MB (${COMPRESSED_SIZE} bytes), exceeds 3MB limit for Cloudflare Workers"
-            exit 1
-          fi
-
-          # Calculate percentage of limit used
-          PERCENT=$(echo "scale=1; ($COMPRESSED_SIZE * 100) / $MAX_SIZE" | bc)
-          echo "::notice::✓ WASM binary size OK: ${COMPRESSED_MB} MB (${COMPRESSED_SIZE} bytes, ${PERCENT}% of 3MB limit)"
-          echo "::notice::Size reduction: ${ORIGINAL_KB} KB → ${OPTIMIZED_KB} KB → ${COMPRESSED_KB} KB"
+      - name: Build & check WASM size
+        run: make wasm-compress
 
   # Security audit
   audit:
@@ -227,19 +153,46 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: arduino/setup-protoc@v3
+      - name: Configure toolchain
+        uses: ./.github/actions/setup-rust
         with:
-          version: "32.0"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: "docs"
-          key: "all-features"
-          cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          workspaces: '.'
+          cache-prefix: docs
+          cache-key: all-features
       - name: Check documentation
         run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+
+  docker-sanity:
+    name: Docker Build Sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+      - name: Build docker image (sanity)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=docker-sanity
+          cache-to: type=gha,scope=docker-sanity,mode=max
+
+  build-artifacts:
+    name: Package Release Artifacts
+    needs:
+      - fmt
+      - clippy
+      - test
+      - build
+      - wasm-size
+      - audit
+      - docs
+      - docker-sanity
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/build-artifacts.yml
+    secrets: inherit

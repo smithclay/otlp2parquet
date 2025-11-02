@@ -19,4 +19,6 @@ pub mod parquet_writer;
 pub mod partition;
 
 // Re-export commonly used types
-pub use parquet_writer::{writer_properties, Blake3Hash, ParquetWriter};
+pub use parquet_writer::{
+    set_parquet_row_group_size, writer_properties, Blake3Hash, ParquetWriter,
+};

@@ -79,6 +79,15 @@ build-server: ## Build server binary only (default mode)
 build-lambda: ## Build Lambda binary only
 	@cargo build --release -p otlp2parquet-lambda
 
+.PHONY: build-lambda-cross
+build-lambda-cross: ## Build Lambda binary for a specific TARGET (set TARGET=...)
+	@if [ -z "$(TARGET)" ]; then \
+		echo "TARGET must be set, e.g. 'make build-lambda-cross TARGET=aarch64-unknown-linux-gnu'"; \
+		exit 1; \
+	fi
+	@echo "==> Building lambda (release) for $(TARGET)..."
+	@cargo build --release -p otlp2parquet-lambda --target $(TARGET)
+
 .PHONY: build-cloudflare
 build-cloudflare: ## Build Cloudflare Workers with worker-build
 	@echo "==> Building WASM for Cloudflare Workers..."
@@ -206,6 +215,30 @@ install-tools: ## Install required development tools
 	fi
 	@echo "==> Installing twiggy..."
 	@cargo install twiggy
+	@echo "==> Installing Cloudflare Wrangler CLI..."
+	@if command -v wrangler >/dev/null 2>&1; then \
+		echo "wrangler already installed."; \
+	elif command -v npm >/dev/null 2>&1; then \
+		npm install -g wrangler; \
+	else \
+		echo "Please install wrangler manually: npm install -g wrangler"; \
+	fi
+	@echo "==> Installing AWS SAM CLI..."
+	@if command -v sam >/dev/null 2>&1; then \
+		echo "aws-sam-cli already installed."; \
+	elif command -v brew >/dev/null 2>&1; then \
+		brew install aws-sam-cli; \
+	elif command -v pipx >/dev/null 2>&1; then \
+		pipx install aws-sam-cli; \
+	else \
+		echo "Please install aws-sam-cli manually: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html"; \
+	fi
+	@echo "==> Installing cargo-lambda..."
+	@if command -v cargo-lambda >/dev/null 2>&1; then \
+		cargo-lambda --version; \
+	else \
+		cargo install --locked cargo-lambda; \
+	fi
 	@echo "==> Installing uv (Python package manager)..."
 	@curl -LsSf https://astral.sh/uv/install.sh | sh
 	@echo "==> Setting up pre-commit hooks..."
@@ -225,6 +258,11 @@ version: ## Show versions of build tools
 	@echo "WASM tools:"
 	@wasm-opt --version 2>/dev/null || echo "wasm-opt: not installed"
 	@twiggy --version 2>/dev/null || echo "twiggy: not installed"
+	@echo ""
+	@echo "Serverless tooling:"
+	@wrangler --version 2>/dev/null || echo "wrangler: not installed"
+	@sam --version 2>/dev/null | head -n 1 || echo "aws-sam-cli: not installed"
+	@cargo-lambda --version 2>/dev/null || echo "cargo-lambda: not installed"
 
 .PHONY: audit
 audit: ## Run security audit on dependencies

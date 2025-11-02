@@ -1,336 +1,104 @@
-# Performance Audit - OTLP to Parquet Pipeline
+# Performance, Benchmarking, and Profiling
 
-This document outlines the comprehensive benchmarking and profiling infrastructure used for measuring and optimizing the OTLP→Arrow→Parquet conversion pipeline.
+This guide covers the tools and workflows for measuring, analyzing, and optimizing the performance of the `otlp2parquet` pipeline.
 
-## Quick Start
+## Measuring Performance
+
+The first step in optimization is measurement. This project uses the [Criterion](https://bheisler.github.io/criterion.rs/book/) benchmarking framework.
+
+### Automated Audit (Recommended)
+
+The easiest way to get a comprehensive performance overview is to run the automated audit script. This script runs all benchmarks and profilers and generates a consolidated report.
 
 ```bash
-# Run complete automated audit (runs benchmarks + profiling + analysis automatically)
+# Run the complete automated audit
 ./scripts/perf_audit.py
-# ↑ This does everything: cargo bench, cargo bloat, analysis, generates findings.json
-
-# Or manually run individual tools if you want finer control
-make bench                  # Just run benchmarks
-make profile-all            # Run all profiling tools
-make flamegraph             # CPU profiling only
 ```
 
-## Infrastructure Overview
+This produces a `findings.json` file with key metrics, hotspots, and potential areas for improvement.
 
-### 1. Benchmarking (Criterion)
+### Manual Benchmarking
 
-**Location**: `benches/`
-- `e2e_pipeline.rs` - Full OTLP→Arrow→Parquet pipeline (most realistic)
-- `decode_otlp.rs` - Protobuf/JSON decoding isolation
-- `transform_arrow.rs` - OTLP→Arrow conversion isolation
-- `parquet_write.rs` - Arrow→Parquet serialization isolation
-- `fixtures/mod.rs` - Synthetic data generators (10k/250k/1M log records)
+For more granular analysis, you can run the benchmark suites directly. This is useful for testing a specific part of the pipeline.
 
-**Workload Matrix**:
-- Sizes: Small (10k), Medium (250k), Large (1M) log records
-- Formats: Protobuf, JSON
-- Compression: None, Gzip
-- Batch sizes: 4k, 16k, 64k rows
-
-**Run benchmarks**:
 ```bash
 # Run all benchmarks
-cargo bench
+make bench
 
-# Run specific benchmark
-cargo bench --bench e2e_pipeline
+# Save a baseline for later comparison
+make bench-baseline
 
-# Save baseline for comparison
-cargo bench -- --save-baseline before
-
-# Compare against baseline
-cargo bench -- --baseline before
+# Compare the current version against the baseline
+make bench-compare
 ```
 
-**Output**: `target/criterion/report/index.html` (HTML dashboard with charts)
+The benchmark output is an HTML dashboard located at `target/criterion/report/index.html`.
 
-### 2. CPU Profiling (Flamegraph)
+## Finding Bottlenecks
 
-**Purpose**: Identify hot functions consuming CPU time
+Once you have performance measurements, the next step is to identify the specific parts of the code that are slow or inefficient.
+
+### CPU Profiling with Flamegraph
+
+To find functions that consume the most CPU time, generate a flamegraph.
 
 ```bash
 make flamegraph
-# Output: flamegraph.svg
 ```
 
-Open `flamegraph.svg` in browser to see:
-- **Width** = % of total CPU time
-- **Self time** = time in function itself (not callees)
-- **Click to zoom** into specific call stacks
+This command generates an `flamegraph.svg` file. Open it in a browser to explore the call stacks. The wider a function appears, the more CPU time it consumed.
 
-**Install dependencies**:
-```bash
-cargo install flamegraph
-```
+### Binary Size Analysis
 
-### 3. Binary Size Analysis
-
-#### cargo-bloat
-Shows which functions/types contribute to binary size:
+For a serverless function, binary size is a key performance metric. Use `cargo-bloat` to see which functions and dependencies contribute most to the binary size.
 
 ```bash
 make bloat
-# Output: bloat.txt (top 20 symbols)
 ```
 
-Example output:
-```
- File  .text     Size Crate
-10.2%  45.0%  500.0KB arrow_array
- 5.1%  22.5%  250.0KB parquet
- 2.3%  10.2%  113.0KB otlp2parquet_core
-```
+### Memory Profiling
 
-#### cargo-llvm-lines
-Shows LLVM IR line counts (correlates with compile time and code size):
+To profile memory allocations, you can build the project with the `dhat-heap` feature. This is useful for finding memory leaks or excessive allocations.
 
-```bash
-make llvm-lines
-# Output: llvm_lines.txt (top 50 generic instantiations)
-```
-
-Useful for finding:
-- Over-monomorphization (too many generic instantiations)
-- Candidates for `#[inline(never)]` to reduce bloat
-
-### 4. Memory Profiling (dhat)
-
-**Status**: Scaffolded but not yet integrated
-
-To enable:
 ```bash
 cargo run --features dhat-heap --bin otlp2parquet-server
 ```
 
-Will output allocation profile showing:
-- Total bytes allocated
-- Peak memory usage
-- Allocation hotspots by call stack
+## Applying and Verifying Optimizations
 
-### 5. Automated Audit Script
+This project contains several [example optimization patches](https://github.com/smithclay/otlp2parquet/tree/main/patches) that demonstrate how bottlenecks were previously identified and fixed. They serve as a good reference.
 
-**Location**: `scripts/perf_audit.py`
+### Optimization Workflow
 
-**Runs complete audit pipeline automatically** (no need to run `make bench` first):
-1. ✅ **Runs `cargo bench`** - All benchmarks (5-10 minutes)
-2. ✅ Parse Criterion JSON results
-3. ✅ **Runs `cargo bloat`** - Binary size analysis
-4. ✅ Static code analysis for performance anti-patterns
-5. ✅ Generate `findings.json` with metrics + recommendations
+When applying a new optimization, follow this workflow to validate its impact:
 
-```bash
-# Run with uv (recommended) - does EVERYTHING automatically
-./scripts/perf_audit.py
+1.  **Establish a Baseline**: Run the benchmarks before applying your change.
 
-# Or with Python directly
-python3 scripts/perf_audit.py
-```
+    ```bash
+    make bench-baseline
+    ```
 
-**Output**: `findings.json` - Structured performance report
+2.  **Apply Your Change**: Apply your optimization patch or make your code changes.
 
-**Note**: The script runs benchmarks for you - you don't need to run `make bench` separately!
+3.  **Verify and Compare**: Run the benchmarks again and compare against the baseline you saved.
 
-```json
-{
-  "summary": {...},
-  "metrics": {
-    "e2e_ms_p50": 45.2,
-    "e2e_ms_p95": 67.8,
-    "throughput_rows_per_s": 221238
-  },
-  "hotspots": [...],
-  "findings": [...],
-  "next_actions": [...]
-}
-```
+    ```bash
+    make bench-compare
+    ```
 
-## Optimization Patches
-
-Three surgical optimizations targeting identified bottlenecks:
-
-### Patch 1: Inline Annotations
-**File**: `patches/001-add-inline-annotations.patch`
-
-Adds `#[inline]` to hot path functions:
-- `append_log_record` (called per log record)
-- `build_resource_context` (called per resource batch)
-- `clamp_nanos` (called 2× per log)
-
-**Expected**: 5-10% latency reduction
-**Rationale**: Reduces cross-crate call overhead
-
-### Patch 2: Builder Capacity Hints
-**File**: `patches/002-add-builder-capacity-hints.patch`
-
-Pre-allocates Arrow builders with expected capacity:
-- Adds `ArrowConverter::with_capacity(usize)`
-- All 19 builders get capacity hints
-- Batch processor passes `max_rows` as hint
-
-**Expected**: 15-20% allocation reduction
-**Rationale**: Avoids reallocation/copy during growth
-
-### Patch 3: Service Name Arc
-**File**: `patches/003-optimize-service-name-extraction.patch`
-
-Replaces `String` with `Arc<str>` for service_name:
-- Eliminates clone on every resource batch
-- Shares service_name across logs in same resource
-
-**Expected**: 10-15% string allocation reduction
-**Rationale**: Service name is immutable, Arc shares ownership
-
-## Applying Patches
-
-```bash
-# Apply all patches
-git apply patches/*.patch
-
-# Apply individually
-git apply patches/001-add-inline-annotations.patch
-
-# Check what would be applied (dry run)
-git apply --check patches/001-add-inline-annotations.patch
-```
-
-## Benchmarking Workflow
-
-### Before Optimization
-```bash
-# Option A: Automated (recommended)
-./scripts/perf_audit.py              # Runs benchmarks + analysis automatically
-cp findings.json findings-before.json
-
-# Option B: Manual control
-cargo bench                          # Run benchmarks manually
-./scripts/perf_audit.py              # Still need this for analysis + findings.json
-cp findings.json findings-before.json
-```
-
-### Apply Optimizations
-```bash
-# Apply patches
-git apply patches/*.patch
-
-# Verify compilation
-cargo check
-cargo test
-```
-
-### After Optimization
-```bash
-# 1. Benchmark with comparison
-cargo bench -- --baseline before
-
-# 2. Record new metrics
-./scripts/perf_audit.py
-cp findings.json findings-after.json
-
-# 3. Compare
-diff findings-before.json findings-after.json
-```
-
-### Validation Criteria
-
-Optimizations must satisfy:
-- ✅ Improve p95 latency OR alloc_bytes on ≥2 workloads
-- ✅ No regressions on any workload
-- ✅ All tests pass
-- ✅ Zero new dependencies (dev-deps OK)
-- ✅ Changes are surgical (< 50 lines per patch)
-
-## Makefile Targets
-
-```bash
-make bench              # Run all benchmarks
-make bench-baseline     # Save baseline
-make bench-compare      # Compare to baseline
-make flamegraph         # CPU profile
-make bloat              # Binary size analysis
-make llvm-lines         # LLVM IR analysis
-make profile-all        # Run all profiling tools
-```
-
-## Architecture Notes
-
-### Why Criterion?
-- Statistical rigor (outlier detection, variance analysis)
-- HTML reports with charts
-- Baseline comparison
-- Industry standard for Rust benchmarking
-
-### Why Synthetic Data?
-- Reproducible (no dependency on external files)
-- Configurable sizes for scaling tests
-- Realistic distribution of log attributes
-
-### Why Not cargo-bench?
-- Criterion provides more rigorous statistics
-- Better reporting (HTML + charts)
-- Baseline comparison built-in
-
-### Hot Path Locations
-
-1. **OTLP Decode**: `otlp2parquet-proto` + `prost::Message::decode`
-2. **Arrow Transform**: `otlp2parquet-core/src/otlp/to_arrow.rs`
-   - `append_log_record` (per-record processing)
-   - Builder append operations
-3. **Parquet Write**: `otlp2parquet-storage/src/parquet_writer.rs`
-   - `parquet::arrow::ArrowWriter::write`
-   - Compression (ZSTD/Snappy)
-
-## Known Bottlenecks (Pre-Optimization)
-
-From initial exploration:
-
-1. **No inline hints** - Hot functions not marked `#[inline]`
-2. **Builder reallocation** - No capacity hints, frequent realloc
-3. **String clones** - service_name cloned unnecessarily
-4. **JSON serialization** - Complex attributes serialized as JSON strings
-5. **No vectorization** - Sequential log processing
+4.  **Validate**: An optimization should improve a key metric (like latency or allocations) without causing regressions in other areas. All tests must continue to pass.
 
 ## Future Work
 
-- [ ] SIMD for timestamp conversion
-- [ ] Arrow native List/Map instead of JSON
-- [ ] Parallel batch processing
-- [ ] Memory pool for builders
-- [ ] PGO (Profile-Guided Optimization)
-- [ ] WASM benchmarking with workerd
-- [ ] Lambda cold/warm start profiling
+Potential future performance improvements include:
+
+*   Using SIMD for timestamp conversion.
+*   Using Arrow-native List/Map types instead of JSON strings for attributes.
+*   Implementing parallel batch processing.
+*   Adding Profile-Guided Optimization (PGO) to the build process.
 
 ## Troubleshooting
 
-### Benchmarks fail to compile
-```bash
-cargo check --benches
-# Fix compilation errors, then retry
-```
-
-### Flamegraph requires root
-```bash
-# On Linux, grant perf permissions
-echo -1 | sudo tee /proc/sys/kernel/perf_event_paranoid
-```
-
-### cargo-bloat not found
-```bash
-cargo install cargo-bloat
-```
-
-### Criterion reports high variance
-- Run on dedicated machine (no other load)
-- Disable CPU frequency scaling
-- Run multiple times and average
-
-## References
-
-- [Criterion.rs Docs](https://bheisler.github.io/criterion.rs/book/)
-- [Flamegraph Guide](https://www.brendangregg.com/flamegraphs.html)
-- [Arrow Performance Best Practices](https://arrow.apache.org/docs/cpp/performance.html)
-- [Parquet Format Spec](https://parquet.apache.org/docs/file-format/)
+*   **Benchmarks fail to compile**: Run `cargo check --benches` to isolate compilation errors.
+*   **Flamegraph requires root**: On some Linux systems, you may need to grant perf permissions: `echo -1 | sudo tee /proc/sys/kernel/perf_event_paranoid`.
+*   **High Variance in Criterion**: Ensure your machine has no other significant load. For best results, disable CPU frequency scaling.

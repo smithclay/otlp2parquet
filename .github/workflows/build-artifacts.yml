@@ -1,0 +1,131 @@
+name: Build Artifacts
+
+on:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+
+jobs:
+  native:
+    name: Native (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            artifact_name: otlp2parquet
+            asset_name: otlp2parquet-linux-amd64
+          - target: aarch64-unknown-linux-gnu
+            artifact_name: otlp2parquet
+            asset_name: otlp2parquet-linux-arm64
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure toolchain
+        uses: ./.github/actions/setup-rust
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          targets: ${{ matrix.target }}
+          cache-prefix: release-native
+          cache-key: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build lambda binary
+        env:
+          TARGET: ${{ matrix.target }}
+        run: make build-lambda-cross
+
+      - name: Strip binary
+        run: |
+          BIN=target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            aarch64-linux-gnu-strip "$BIN"
+          else
+            strip "$BIN"
+          fi
+
+      - name: Package binary
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ${{ matrix.asset_name }}.tar.gz ${{ matrix.artifact_name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.asset_name }}
+          path: target/${{ matrix.target }}/release/${{ matrix.asset_name }}.tar.gz
+
+  wasm:
+    name: Cloudflare WASM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure toolchain
+        uses: ./.github/actions/setup-rust
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          targets: wasm32-unknown-unknown
+          cache-prefix: release-wasm
+          cache-key: cloudflare
+
+      - name: Cache wasm-opt
+        uses: actions/cache@v4
+        id: wasm-opt-cache
+        with:
+          path: ~/.local/bin/wasm-opt
+          key: wasm-opt-version_116
+
+      - name: Install wasm-opt
+        if: steps.wasm-opt-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.local/bin
+          wget https://github.com/WebAssembly/binaryen/releases/download/version_116/binaryen-version_116-x86_64-linux.tar.gz
+          tar xzf binaryen-version_116-x86_64-linux.tar.gz
+          cp binaryen-version_116/bin/wasm-opt ~/.local/bin/
+
+      - name: Add wasm-opt to PATH
+        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Install Wrangler
+        run: npm install -g wrangler
+
+      - name: Package worker with Wrangler
+        run: |
+          rm -rf worker-dist
+          mkdir -p worker-dist
+          cd crates/otlp2parquet-cloudflare
+          wrangler deploy --dry-run --outdir ../../worker-dist
+
+      - name: Optimize packaged WASM
+        run: |
+          WASM_FILES=$(find worker-dist -name "*.wasm")
+          if [ -z "$WASM_FILES" ]; then
+            echo "No WASM files produced by Wrangler packaging" >&2
+            exit 1
+          fi
+          for file in $WASM_FILES; do
+            echo "Optimizing ${file}"
+            wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int -o "${file}.opt" "$file"
+            mv "${file}.opt" "$file"
+          done
+
+      - name: Archive worker bundle
+        run: |
+          mkdir -p dist
+          (cd worker-dist && zip -r ../dist/otlp2parquet-worker.zip .)
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: otlp2parquet-wasm
+          path: dist

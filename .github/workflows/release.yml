@@ -1,170 +1,102 @@
 name: Release
 
-# Builds release artifacts for all platforms:
-# - Native binaries (x86_64, aarch64) for Lambda/Server with OpenDAL
-# - Optimized WASM (<3MB compressed) for Cloudflare Workers with OpenDAL
-
-on:
-  push:
-    branches:
-      - main
-    tags:
-      - "v*.*.*"
-  pull_request:
-    branches:
-      - main
-  workflow_dispatch:
-
 env:
-  CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: 0  # Disable incremental compilation for CI (faster clean builds)
-  CARGO_PROFILE_DEV_DEBUG: 0  # Reduce debug info to save cache space
-  CARGO_NET_GIT_FETCH_WITH_CLI: true  # More reliable git fetching
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: CI workflow run ID to pull artifacts from
+        required: true
+        type: string
+      tag_name:
+        description: Tag to publish (e.g. v1.2.3)
+        required: true
+        type: string
+      commit_sha:
+        description: Commit SHA to attach the release to (defaults to workflow commit)
+        required: false
+        type: string
+
 jobs:
-  # Build native binaries for different platforms
-  build-native:
-    name: Build ${{ matrix.target }}
+  prepare:
+    name: Prepare Metadata
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-    strategy:
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            artifact_name: otlp2parquet
-            asset_name: otlp2parquet-linux-amd64
-          - target: aarch64-unknown-linux-gnu
-            artifact_name: otlp2parquet
-            asset_name: otlp2parquet-linux-arm64
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push') ||
+      github.event_name == 'workflow_dispatch'
+    outputs:
+      run_id: ${{ steps.vars.outputs.run_id }}
+      tag: ${{ steps.vars.outputs.tag }}
+      version: ${{ steps.vars.outputs.version }}
+      commit: ${{ steps.vars.outputs.commit }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: arduino/setup-protoc@v3
-        with:
-          version: "32.0"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
-          shared-key: "release"
-
-      - name: Install cross-compilation tools
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+      - name: Collect release inputs
+        id: vars
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ -z "${{ inputs.run_id }}" ] || [ -z "${{ inputs.tag_name }}" ]; then
+              echo "run_id and tag_name inputs are required" >&2
+              exit 1
+            fi
+            RUN_ID="${{ inputs.run_id }}"
+            TAG="${{ inputs.tag_name }}"
+            COMMIT="${{ inputs.commit_sha != '' && inputs.commit_sha || github.sha }}"
+          else
+            RUN_ID="${{ github.event.workflow_run.id }}"
+            TAG="${{ github.event.workflow_run.head_branch }}"
+            COMMIT="${{ github.event.workflow_run.head_sha }}"
+          fi
 
-      - name: Build
-        run: cargo build --release --target ${{ matrix.target }} -p otlp2parquet-lambda
+          if [ -z "$TAG" ]; then
+            echo "No tag detected for release trigger; downstream jobs will be skipped." >&2
+            echo "run_id=" >> "$GITHUB_OUTPUT"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "version=" >> "$GITHUB_OUTPUT"
+            echo "commit=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-      - name: Strip binary
-        run: strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          if [[ "$TAG" != v* ]]; then
+            echo "Tag '$TAG' does not follow v*.*.* pattern; skipping release." >&2
+            echo "run_id=" >> "$GITHUB_OUTPUT"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "version=" >> "$GITHUB_OUTPUT"
+            echo "commit=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-      - name: Create tarball
-        run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ${{ matrix.asset_name }}.tar.gz ${{ matrix.artifact_name }}
-          cd -
+          VERSION="${TAG#v}"
+          echo "Using CI run: $RUN_ID"
+          echo "Publishing tag: $TAG (version: $VERSION)"
+          echo "Target commit: $COMMIT"
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v5
-        with:
-          name: ${{ matrix.asset_name }}
-          path: target/${{ matrix.target }}/release/${{ matrix.asset_name }}.tar.gz
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
 
-  # Build WASM for Cloudflare Workers
-  # Expected compressed size: ~1006KB (33% of 3MB limit)
-  build-wasm:
-    name: Build WASM
+  docker:
+    name: Publish Docker Image
+    needs: prepare
+    if: needs.prepare.outputs.tag != ''
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-    steps:
-      - uses: actions/checkout@v5
-      - uses: arduino/setup-protoc@v3
-        with:
-          version: "32.0"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "wasm"
-
-      - name: Cache wasm-opt
-        uses: actions/cache@v4
-        id: wasm-opt-cache
-        with:
-          path: ~/.local/bin/wasm-opt
-          key: wasm-opt-version_116
-      - name: Install wasm-opt
-        if: steps.wasm-opt-cache.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p ~/.local/bin
-          wget https://github.com/WebAssembly/binaryen/releases/download/version_116/binaryen-version_116-x86_64-linux.tar.gz
-          tar xzf binaryen-version_116-x86_64-linux.tar.gz
-          cp binaryen-version_116/bin/wasm-opt ~/.local/bin/
-      - name: Add wasm-opt to PATH
-        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
-
-      - name: Build WASM
-        run: cd crates/otlp2parquet-cloudflare && cargo install -q worker-build && worker-build --release
-
-      - name: Optimize WASM
-        run: |
-          wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int -o optimized.wasm crates/otlp2parquet-cloudflare/build/index_bg.wasm
-          gzip -9 -k optimized.wasm
-          SIZE=$(stat -c%s optimized.wasm.gz)
-          SIZE_MB=$(echo "scale=2; $SIZE / 1024 / 1024" | bc)
-          echo "Compressed WASM size: ${SIZE_MB} MB"
-
-      - name: Upload WASM artifacts
-        uses: actions/upload-artifact@v5
-        with:
-          name: otlp2parquet-wasm
-          path: |
-            optimized.wasm
-            optimized.wasm.gz
-
-  # Docker sanity check for PRs and main branch
-  docker-sanity-check:
-    name: Docker Build Sanity Check
-    runs-on: ubuntu-latest
-    if: "!startsWith(github.ref, 'refs/tags/')"
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          install: true
-
-      - name: Build Docker image (single platform)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64
-          push: false
-          cache-from: type=gha,scope=docker-sanity
-          cache-to: type=gha,scope=docker-sanity,mode=max
-
-  # Build Docker images for all platforms (releases only)
-  build-docker:
-    name: Build & Push Docker Image
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: read
       packages: write
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -177,86 +109,90 @@ jobs:
           platforms: linux/amd64,linux/arm64
 
       - name: Log in to GitHub Container Registry
-        if: startsWith(github.ref, 'refs/tags/')
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels)
+      - name: Extract image metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # Tag with 'latest' on version tags
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
-            # Tag with version (v1.0.0)
-            type=semver,pattern={{version}}
-            # Tag with major.minor (v1.0)
-            type=semver,pattern={{major}}.{{minor}}
-            # Tag with major (v1)
-            type=semver,pattern={{major}}
+            type=raw,value=latest
+            type=raw,value=${{ needs.prepare.outputs.tag }}
+            type=semver,pattern={{version}},value=${{ needs.prepare.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare.outputs.version }}
+            type=semver,pattern={{major}},value=${{ needs.prepare.outputs.version }}
           labels: |
             org.opencontainers.image.title=otlp2parquet
             org.opencontainers.image.description=Universal OTel Log Ingestion Pipeline - OTLP HTTP to Parquet
             org.opencontainers.image.vendor=otlp2parquet Contributors
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.commit }}
 
       - name: Build and push Docker image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: ${{ startsWith(github.ref, 'refs/tags/') }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
           build-args: |
-            BUILDTIME=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
-            VERSION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
-            REVISION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}
+            VERSION=${{ needs.prepare.outputs.version }}
+            REVISION=${{ needs.prepare.outputs.commit }}
 
       - name: Generate artifact attestation
-        if: startsWith(github.ref, 'refs/tags/')
         uses: actions/attest-build-provenance@v1
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
-  # Create GitHub release
-  release:
-    name: Create Release
-    needs: [build-native, build-wasm]
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - prepare
+      - docker
+    if: needs.prepare.outputs.tag != ''
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
 
-      - name: Download all artifacts
+      - name: Download build artifacts
         uses: actions/download-artifact@v6
         with:
+          run-id: ${{ needs.prepare.outputs.run_id }}
           path: artifacts
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create checksums
         run: |
           cd artifacts
-          find . -type f \( -name "*.tar.gz" -o -name "*.wasm*" \) -exec sha256sum {} \; > ../checksums.txt
+          find . -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec sha256sum {} \; > ../checksums.txt
           cd ..
 
-      - name: Create Release
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifacts/**/*.tar.gz
-            artifacts/**/*.wasm*
-            checksums.txt
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ needs.prepare.outputs.commit }}
           generate_release_notes: true
           draft: false
           prerelease: false
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.zip
+            checksums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

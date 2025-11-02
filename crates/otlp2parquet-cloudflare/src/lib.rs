@@ -29,7 +29,7 @@ enum SignalKind {
 /// - parquet_opendal uses tokio::spawn which requires Send trait
 /// - Send is not available in single-threaded wasm32-unknown-unknown target
 /// - OpenDAL S3 service DOES work in WASM for R2 uploads
-/// - Solution: Write Parquet synchronously to Vec<u8>, then upload via OpenDAL
+/// - Solution: Write Parquet synchronously to `Vec<u8>`, then upload via OpenDAL
 ///
 /// This is platform-specific "accidental complexity" (storage format + I/O)
 /// and belongs in the platform layer, not core.

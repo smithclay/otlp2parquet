@@ -87,6 +87,8 @@ impl Default for RequestConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
     pub backend: StorageBackend,
+    #[serde(default = "default_parquet_row_group_size")]
+    pub parquet_row_group_size: usize,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fs: Option<FsConfig>,
@@ -114,6 +116,10 @@ impl std::fmt::Display for StorageBackend {
             StorageBackend::R2 => write!(f, "r2"),
         }
     }
+}
+
+fn default_parquet_row_group_size() -> usize {
+    32 * 1024
 }
 
 impl std::str::FromStr for StorageBackend {

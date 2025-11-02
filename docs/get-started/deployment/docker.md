@@ -1,6 +1,6 @@
 # Docker Deployment Guide
 
-This guide provides a focused workflow for running `otlp2parquet` using Docker and Docker Compose, covering both local development and production-like scenarios.
+This guide shows how to run `otlp2parquet` using Docker and Docker Compose for both local development and production.
 
 ## Prerequisites
 
@@ -20,8 +20,8 @@ The recommended setup for local development uses Docker Compose to spin up the `
     ```
 
     This includes:
-    *   `otlp2parquet` HTTP server running on port `4318`.
-    *   MinIO S3-compatible storage with an API on port `9000` and a web console on `9001`.
+    *   An `otlp2parquet` HTTP server on port `4318`.
+    *   A MinIO S3-compatible storage container (API on port `9000`, console on `9001`).
     *   An auto-created S3 bucket named `otlp-logs`.
 
 2.  **Test the Service**:
@@ -36,10 +36,10 @@ The recommended setup for local development uses Docker Compose to spin up the `
 
 3.  **Verify the Output**:
 
-    You can verify that the Parquet file was created in two ways:
+    You can verify the Parquet file was created in two ways:
 
-    *   **MinIO Console**: Open [http://localhost:9001](http://localhost:9001) in your browser and log in with `minioadmin`/`minioadmin` to see the `otlp-logs` bucket.
-    *   **AWS CLI**: Use the AWS CLI configured for a local endpoint.
+    *   **MinIO Console**: Open [http://localhost:9001](http://localhost:9001) and log in with `minioadmin`/`minioadmin`.
+    *   **AWS CLI**: Use the AWS CLI pointed at the local endpoint.
 
         ```bash
         aws s3 ls s3://otlp-logs/logs/ --recursive \
@@ -54,7 +54,7 @@ The recommended setup for local development uses Docker Compose to spin up the `
     docker-compose logs -f otlp2parquet
     ```
 
-*   **Reset Data**: To start fresh, take down the services and remove the data volume.
+*   **Reset Data**: Stop the services and remove the data volume.
 
     ```bash
     docker-compose down -v
@@ -62,9 +62,7 @@ The recommended setup for local development uses Docker Compose to spin up the `
 
 ## 2. Production Deployment (Connecting to Cloud Storage)
 
-For a production environment, you can run the same Docker container but configure it to connect to a managed cloud storage service like AWS S3 or Cloudflare R2.
-
-This is done by overriding the default environment variables in the `docker-compose.yml` file.
+For production, run the same Docker container configured to connect to a managed cloud storage service like AWS S3 or Cloudflare R2 by overriding the default environment variables.
 
 **Example for AWS S3:**
 
@@ -90,7 +88,7 @@ docker-compose up
 
 ### Building from Source
 
-To build the Docker image from the latest source code instead of using a pre-built image, use the `--build` flag.
+To build the Docker image from the latest source code, use the `--build` flag.
 
 ```bash
 docker-compose up --build
@@ -110,6 +108,4 @@ The Docker container is configured entirely through environment variables. Below
 
 ## 4. Kubernetes
 
-For Kubernetes deployment, please refer to the provided [Kubernetes manifests](../../deploy/docker/kubernetes/) for detailed instructions and examples.
-
-```
+For Kubernetes deployment, see the provided [Kubernetes manifests](../../deploy/docker/kubernetes/) for examples.
