@@ -20,21 +20,20 @@ brew install aws-sam-cli
 
 ## 1. Build the Lambda Function
 
-Before testing or deploying, you need to build the Lambda function binary from the `otlp2parquet-lambda` package.
+SAM's beta Rust support handles building the function automatically using cargo-lambda under the hood.
 
 ```bash
-# Build for Lambda using cargo-lambda directly
-cargo lambda build --release --arm64 -p otlp2parquet-lambda
+# Build from the lambda crate directory
+cd crates/otlp2parquet-lambda
+sam build --beta-features
 
-# Copy the binary to SAM's build directory
-mkdir -p .aws-sam/build/OtlpToParquetFunction
-cp target/lambda/otlp2parquet/bootstrap .aws-sam/build/OtlpToParquetFunction/
-
-# The bootstrap binary is now ready at:
-# .aws-sam/build/OtlpToParquetFunction/bootstrap
+# Or from the workspace root
+sam build --beta-features --template crates/otlp2parquet-lambda/template.yaml
 ```
 
-**Why not `sam build`?** SAM's Rust support via `cargo-lambda` is currently a beta feature. Building with `cargo lambda` directly with the `-p` flag ensures the correct package is built.
+The built bootstrap binary will be at `.aws-sam/build/OtlpToParquetFunction/bootstrap`.
+
+**Why `--beta-features`?** SAM's Rust support is currently in beta. The `template.yaml` is already configured with the correct `BuildMethod: rust-cargolambda` metadata to use cargo-lambda automatically.
 
 ## 2. Local Development & Testing
 
@@ -53,6 +52,7 @@ docker-compose up minio minio-init
 
 ```bash
 # Start the SAM local API, connecting it to the Docker network.
+cd crates/otlp2parquet-lambda
 sam local start-api \
   --warm-containers EAGER \
   --docker-network otlp2parquet_default \
@@ -67,6 +67,7 @@ sam local start-api \
 
 ```bash
 # This command watches for code changes and automatically rebuilds the function.
+cd crates/otlp2parquet-lambda
 sam sync --watch --stack-name otlp2parquet-dev
 ```
 
@@ -97,41 +98,33 @@ For testing with binary protobuf data, use `sam local invoke` with pre-built eve
 
 ```bash
 # Build first (if not already built)
-cargo lambda build --release --arm64 -p otlp2parquet-lambda
-mkdir -p .aws-sam/build/OtlpToParquetFunction
-cp target/lambda/otlp2parquet/bootstrap .aws-sam/build/OtlpToParquetFunction/
-
-# IMPORTANT: SAM local invoke requires environment variables in template.yaml
-# The --env-vars flag doesn't work reliably with sam local invoke.
-# You must update .aws-sam/build/template.yaml with actual values:
-#   OTLP2PARQUET_S3_BUCKET: otlp-logs
-#   OTLP2PARQUET_S3_REGION: us-east-1
-#   OTLP2PARQUET_S3_ENDPOINT: http://minio:9000
-#   AWS_ACCESS_KEY_ID: minioadmin
-#   AWS_SECRET_ACCESS_KEY: minioadmin
+cd crates/otlp2parquet-lambda
+sam build --beta-features
 
 # Test with logs (with MinIO)
 sam local invoke OtlpToParquetFunction \
-  -e docs/get-started/deployment/events/logs-protobuf.json \
-  --docker-network otlp2parquet_default
+  -e test-events/logs-protobuf.json \
+  --docker-network otlp2parquet_default \
+  --env-vars local-env.json
 
 # Test with traces
 sam local invoke OtlpToParquetFunction \
-  -e docs/get-started/deployment/events/traces-protobuf.json \
-  --docker-network otlp2parquet_default
+  -e test-events/traces-protobuf.json \
+  --docker-network otlp2parquet_default \
+  --env-vars local-env.json
 
 # Test with metrics
 sam local invoke OtlpToParquetFunction \
-  -e docs/get-started/deployment/events/metrics-gauge-protobuf.json \
-  --docker-network otlp2parquet_default
+  -e test-events/metrics-gauge-protobuf.json \
+  --docker-network otlp2parquet_default \
+  --env-vars local-env.json
 ```
 
 **Why event files?** `sam local start-api` has known issues with binary data (protobuf). Using `sam local invoke` with base64-encoded event files is more reliable for testing binary payloads.
 
 **Important Notes:**
 - The `--docker-network` flag is required for the Lambda container to reach MinIO
-- SAM local invoke doesn't support CloudFormation references (like `!Ref LogsBucket`) in the template
-- You must manually edit `.aws-sam/build/template.yaml` to replace CloudFormation references with actual values for local testing
+- Create `local-env.json` as described in the Configuration section below for local MinIO testing
 
 ## 3. Deploy to AWS
 
@@ -143,6 +136,7 @@ Use the guided deployment process for the first time to configure your stack.
 
 ```bash
 # This command will prompt you for configuration parameters.
+cd crates/otlp2parquet-lambda
 sam deploy --guided
 ```
 
@@ -160,6 +154,7 @@ After the initial setup, deployments are much simpler.
 
 ```bash
 # Deploy using the saved configuration from the first run.
+cd crates/otlp2parquet-lambda
 sam deploy
 
 # Deploy to a specific environment (e.g., staging, production).
@@ -170,10 +165,10 @@ sam deploy --config-env staging
 
 ### Deployment Parameters
 
-Deployment settings are stored in `samconfig.toml`. You can create profiles for different environments (e.g., `staging`, `production`).
+Deployment settings are stored in `crates/otlp2parquet-lambda/samconfig.toml`. You can create profiles for different environments (e.g., `staging`, `production`).
 
 ```toml
-# samconfig.toml
+# crates/otlp2parquet-lambda/samconfig.toml
 [default.deploy.parameters]
 stack_name = "otlp2parquet"
 region = "us-east-1"
@@ -187,10 +182,17 @@ parameter_overrides = [
 
 ### Local Environment Variables
 
-For local testing, create a `local-env.json` file to configure the function.
+For local testing, create a `local-env.json` file in the `crates/otlp2parquet-lambda` directory:
+
+```bash
+# Copy the example file
+cd crates/otlp2parquet-lambda
+cp local-env.json.example local-env.json
+```
+
+The file configures environment variables for `sam local` commands:
 
 ```json
-// local-env.json
 {
   "OtlpToParquetFunction": {
     "RUST_LOG": "debug,otlp2parquet=trace",
@@ -211,7 +213,7 @@ For local testing, create a `local-env.json` file to configure the function.
   - **Why?** Lambda invocations are stateless - if batching is enabled, unflushed batches are lost when the invocation ends
   - Batching thresholds: 200K rows, 128MB, or 10 seconds - with single test records, data will be lost
   - For production, use batching ONLY if you have high-volume, sustained traffic that will trigger flushes
-- **MinIO Testing**: When using `sam local invoke`, you must manually edit `.aws-sam/build/template.yaml` to add environment variables (see Testing with Event Files section)
+- **MinIO Testing**: Use `--env-vars local-env.json` with `sam local invoke` to provide environment variables for local testing
 
 *Note: Add `local-env.json` to your `.gitignore` file.*
 
@@ -241,6 +243,7 @@ All configuration uses the `OTLP2PARQUET_` prefix:
 
 ```bash
 # Tail logs for the deployed stack
+cd crates/otlp2parquet-lambda
 sam logs --tail --stack-name otlp2parquet
 ```
 

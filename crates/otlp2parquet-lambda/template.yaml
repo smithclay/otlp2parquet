@@ -46,7 +46,7 @@ Resources:
         Binary: otlp2parquet
         CargoPackage: otlp2parquet-lambda
     Properties:
-      CodeUri: .
+      CodeUri: ../..  # Points to workspace root for cargo build
       Handler: bootstrap  # Required for custom runtime
       Description: Ingests OTLP logs and writes Parquet to S3
       Environment:

@@ -42,6 +42,7 @@ brew install binaryen
 
     ```bash
     # This command starts a local server that simulates the Cloudflare environment.
+    cd crates/otlp2parquet-cloudflare
     wrangler dev
     ```
 
@@ -85,10 +86,10 @@ The easiest way to deploy is to use the deploy button, which forks the repositor
 
 2.  **Configure `wrangler.toml`**:
 
-    Update your `wrangler.toml` file to link to your R2 bucket.
+    Update the `crates/otlp2parquet-cloudflare/wrangler.toml` file to link to your R2 bucket.
 
     ```toml
-    # wrangler.toml
+    # crates/otlp2parquet-cloudflare/wrangler.toml
     [[r2_buckets]]
     binding = "LOGS_BUCKET"
     bucket_name = "otlp-logs"
@@ -106,6 +107,7 @@ The easiest way to deploy is to use the deploy button, which forks the repositor
 
     ```bash
     # Deploy to your production environment.
+    cd crates/otlp2parquet-cloudflare
     wrangler deploy
     ```
 
@@ -113,14 +115,14 @@ The easiest way to deploy is to use the deploy button, which forks the repositor
 
 ## 3. Configuration
 
-Configuration for your Worker is managed in `wrangler.toml`.
+Configuration for your Worker is managed in `crates/otlp2parquet-cloudflare/wrangler.toml`.
 
 ### Environment Variables
 
 Set non-sensitive configuration, such as batching parameters, in the `[vars]` section.
 
 ```toml
-# wrangler.toml
+# crates/otlp2parquet-cloudflare/wrangler.toml
 [vars]
 OTLP2PARQUET_BATCH_MAX_ROWS = "100000"
 OTLP2PARQUET_BATCHING_ENABLED = "true"
@@ -132,6 +134,7 @@ Use `wrangler secret` to store sensitive credentials like R2 access keys. **Do n
 
 ```bash
 # This will prompt you to enter the secret value securely.
+cd crates/otlp2parquet-cloudflare
 wrangler secret put OTLP2PARQUET_R2_SECRET_ACCESS_KEY
 ```
 
@@ -141,6 +144,7 @@ You can define different environments (e.g., `staging`, `production`) in `wrangl
 
 ```bash
 # Deploy to a specific environment
+cd crates/otlp2parquet-cloudflare
 wrangler deploy --env staging
 ```
 
@@ -152,6 +156,7 @@ Stream logs from your deployed Worker in real-time.
 
 ```bash
 # Tail logs from your worker
+cd crates/otlp2parquet-cloudflare
 wrangler tail
 ```
 

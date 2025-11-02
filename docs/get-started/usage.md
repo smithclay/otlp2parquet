@@ -252,10 +252,10 @@ otel-cli logs --protocol http/protobuf --dry-run
 docker-compose logs otlp2parquet | grep -E "(storage|batch|payload)"
 
 # Lambda - check CloudWatch logs
-sam logs --tail
+cd crates/otlp2parquet-lambda && sam logs --tail
 
 # Cloudflare Workers - check logs
-wrangler tail
+cd crates/otlp2parquet-cloudflare && wrangler tail
 ```
 
 **Common issues:**
