@@ -9,10 +9,14 @@ theme:
   features:
     - navigation.tabs
     - navigation.sections
+    - navigation.top
+    - navigation.tracking
     - search.suggest
     - search.highlight
     - content.tabs.link
     - content.code.annotate
+    - content.code.copy
+    - toc.follow
   palette:
     - scheme: default
       primary: indigo
@@ -32,15 +36,33 @@ theme:
   icon:
     repo: fontawesome/brands/github
 
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - admonition
+  - pymdownx.details
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
 nav:
   - Home: index.md
-  - Get Started:
-      - Quickstart: get-started/quickstart.md
-      - Deployment:
-          - Docker: get-started/deployment/docker.md
-          - Cloudflare Workers: get-started/deployment/cloudflare.md
-          - AWS Lambda: get-started/deployment/aws-lambda.md
-      - Usage: get-started/usage.md
+  - Deployment:
+      - Docker: get-started/deployment/docker.md
+      - Cloudflare Workers: get-started/deployment/cloudflare.md
+      - AWS Lambda: get-started/deployment/aws-lambda.md
+  - Usage & Configuration:
+      - Usage Patterns: get-started/usage.md
+      - Configuration: get-started/configuration.md
       - Querying Data: get-started/querying-data.md
   - Developers:
       - Overview: developers/index.md
@@ -49,5 +71,7 @@ nav:
       - Schema: developers/schema.md
       - Development Setup: developers/development-setup.md
       - Performance Audit: developers/performance.md
-      - Style Guide: style-guide.md
-      - API Reference (Rustdoc): https://smithclay.github.io/otlp2parquet/api/otlp2parquet/index.html # Placeholder, will be generated
+      - Style Guide: developers/style-guide.md
+
+plugins:
+  - search

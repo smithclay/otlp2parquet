@@ -634,3 +634,113 @@ async fn test_traces_with_storage() {
     assert!(!bytes.is_empty(), "Parquet file should not be empty");
     assert_eq!(&bytes[0..4], b"PAR1", "File should be valid Parquet format");
 }
+
+// ============================================================================
+// NEGATIVE TESTS - Invalid Data
+// ============================================================================
+
+#[tokio::test]
+async fn test_invalid_severity_number() {
+    let payload = fs::read("testdata/invalid/log_invalid_severity.json")
+        .expect("Failed to read invalid test file");
+
+    let result =
+        otlp2parquet_core::parse_otlp_to_arrow(&payload, otlp2parquet_core::InputFormat::Json);
+
+    // Should fail because "INVALID_SEVERITY_VALUE" is not a valid severity
+    // The normalizer will return Ok(None) for invalid enum, and prost will fail
+    assert!(
+        result.is_err(),
+        "Expected error for invalid severity number, but got: {:?}",
+        result
+    );
+}
+
+#[tokio::test]
+async fn test_invalid_base64_trace_id() {
+    let payload = fs::read("testdata/invalid/trace_invalid_base64.json")
+        .expect("Failed to read invalid test file");
+
+    let result =
+        otlp2parquet_core::parse_otlp_to_arrow(&payload, otlp2parquet_core::InputFormat::Json);
+
+    // Should fail because "!!!INVALID_BASE64!!!" is not valid base64
+    assert!(
+        result.is_err(),
+        "Expected error for invalid base64 trace ID, but got: {:?}",
+        result
+    );
+    // Error is caught and reported (specific message may vary)
+}
+
+#[tokio::test]
+async fn test_invalid_aggregation_temporality() {
+    let payload = fs::read("testdata/invalid/metrics_invalid_temporality.json")
+        .expect("Failed to read invalid test file");
+
+    let result =
+        otlp2parquet_core::parse_otlp_to_arrow(&payload, otlp2parquet_core::InputFormat::Json);
+
+    // Should fail because "INVALID_TEMPORALITY_VALUE" is not valid
+    assert!(
+        result.is_err(),
+        "Expected error for invalid aggregation temporality, but got: {:?}",
+        result
+    );
+}
+
+#[tokio::test]
+async fn test_malformed_json() {
+    let payload =
+        fs::read("testdata/invalid/malformed.json").expect("Failed to read invalid test file");
+
+    let result =
+        otlp2parquet_core::parse_otlp_to_arrow(&payload, otlp2parquet_core::InputFormat::Json);
+
+    // Should fail because JSON is malformed
+    assert!(
+        result.is_err(),
+        "Expected error for malformed JSON, but got: {:?}",
+        result
+    );
+
+    let error_msg = result.unwrap_err().to_string();
+    assert!(
+        error_msg.contains("JSON") || error_msg.contains("parse") || error_msg.contains("EOF"),
+        "Error message should mention JSON parsing issue: {}",
+        error_msg
+    );
+}
+
+#[tokio::test]
+async fn test_invalid_span_kind() {
+    let payload = fs::read("testdata/invalid/trace_invalid_kind.json")
+        .expect("Failed to read invalid test file");
+
+    let result =
+        otlp2parquet_core::parse_otlp_to_arrow(&payload, otlp2parquet_core::InputFormat::Json);
+
+    // Should fail because "SPAN_KIND_INVALID_TYPE" is not a valid span kind
+    assert!(
+        result.is_err(),
+        "Expected error for invalid span kind, but got: {:?}",
+        result
+    );
+}
+
+#[tokio::test]
+async fn test_invalid_trace_id_encoding() {
+    let payload = fs::read("testdata/invalid/trace_mixed_encoding.json")
+        .expect("Failed to read invalid test file");
+
+    let result =
+        otlp2parquet_core::parse_otlp_to_arrow(&payload, otlp2parquet_core::InputFormat::Json);
+
+    // Should fail because "zzz" is neither valid hex nor valid base64
+    assert!(
+        result.is_err(),
+        "Expected error for invalid trace ID encoding, but got: {:?}",
+        result
+    );
+    // Error is caught and reported (specific message may vary)
+}

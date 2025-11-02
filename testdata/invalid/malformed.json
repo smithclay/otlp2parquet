@@ -1,0 +1,21 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "test-service"
+            }
+          }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {},
+          "logRecords": [
+            {
+              "timeUnixNano": "1705327800000000000",
+              "severityNumber": "SEVERITY_NUMBER_INFO"
+              // Missing comma and closing braces - malformed JSON

@@ -9,6 +9,7 @@
 // - Metrics: All 5 metric types (Gauge, Sum, Histogram, ExponentialHistogram, Summary)
 
 use anyhow::{anyhow, Context, Result};
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use hex::FromHex;
 use serde_json::Value as JsonValue;
 use std::borrow::Cow;
@@ -358,6 +359,16 @@ pub(crate) fn normalise_json_value(value: &mut JsonValue, key_hint: Option<&str>
                     .or_insert_with(|| JsonValue::Array(Vec::new()));
             }
 
+            // Quantile values: add default quantile field (0.0 for minimum)
+            if let Some(otlp::QUANTILE_VALUES) = key_hint {
+                map.entry(otlp::QUANTILE.to_string()).or_insert_with(|| {
+                    JsonValue::Number(serde_json::Number::from_f64(0.0).unwrap())
+                });
+                map.entry("value".to_string()).or_insert_with(|| {
+                    JsonValue::Number(serde_json::Number::from_f64(0.0).unwrap())
+                });
+            }
+
             // Positive/Negative buckets for exponential histogram
             if matches!(key_hint, Some(otlp::POSITIVE) | Some(otlp::NEGATIVE)) {
                 map.entry(otlp::POSITIVE_OFFSET.to_string()) // Both use "offset"
@@ -444,17 +455,26 @@ fn convert_string_field(key: &str, value: &str) -> Result<Option<JsonValue>> {
         return Ok(Some(JsonValue::Number(number)));
     }
 
-    // Convert hex-encoded trace/span IDs to byte arrays
-    if matches!(key, k if k == otlp::TRACE_ID || k == otlp::SPAN_ID || k == otlp::PARENT_SPAN_ID)
-        && value.len().is_multiple_of(2)
-        && value.chars().all(|c| c.is_ascii_hexdigit())
-    {
-        let bytes = Vec::from_hex(value).with_context(|| {
-            format!(
-                "Failed to decode hex string '{}' for field '{}'",
-                value, key
-            )
-        })?;
+    // Convert hex-encoded or base64-encoded trace/span IDs to byte arrays
+    if matches!(key, k if k == otlp::TRACE_ID || k == otlp::SPAN_ID || k == otlp::PARENT_SPAN_ID) {
+        let bytes = if value.len().is_multiple_of(2) && value.chars().all(|c| c.is_ascii_hexdigit())
+        {
+            // Hex-encoded
+            Vec::from_hex(value).with_context(|| {
+                format!(
+                    "Failed to decode hex string '{}' for field '{}'",
+                    value, key
+                )
+            })?
+        } else {
+            // Try base64-encoded
+            BASE64_STANDARD.decode(value).with_context(|| {
+                format!(
+                    "Failed to decode base64 string '{}' for field '{}'",
+                    value, key
+                )
+            })?
+        };
         let json_value =
             serde_json::to_value(bytes).context("Failed to encode OTLP id bytes as JSON array")?;
         return Ok(Some(json_value));
@@ -485,6 +505,48 @@ fn convert_string_field(key: &str, value: &str) -> Result<Option<JsonValue>> {
         };
 
         return Ok(Some(JsonValue::Number(number)));
+    }
+
+    if key == otlp::SEVERITY_NUMBER {
+        let parsed = match value {
+            "SEVERITY_NUMBER_UNSPECIFIED" => 0,
+            "SEVERITY_NUMBER_TRACE" => 1,
+            "SEVERITY_NUMBER_TRACE2" => 2,
+            "SEVERITY_NUMBER_TRACE3" => 3,
+            "SEVERITY_NUMBER_TRACE4" => 4,
+            "SEVERITY_NUMBER_DEBUG" => 5,
+            "SEVERITY_NUMBER_DEBUG2" => 6,
+            "SEVERITY_NUMBER_DEBUG3" => 7,
+            "SEVERITY_NUMBER_DEBUG4" => 8,
+            "SEVERITY_NUMBER_INFO" => 9,
+            "SEVERITY_NUMBER_INFO2" => 10,
+            "SEVERITY_NUMBER_INFO3" => 11,
+            "SEVERITY_NUMBER_INFO4" => 12,
+            "SEVERITY_NUMBER_WARN" => 13,
+            "SEVERITY_NUMBER_WARN2" => 14,
+            "SEVERITY_NUMBER_WARN3" => 15,
+            "SEVERITY_NUMBER_WARN4" => 16,
+            "SEVERITY_NUMBER_ERROR" => 17,
+            "SEVERITY_NUMBER_ERROR2" => 18,
+            "SEVERITY_NUMBER_ERROR3" => 19,
+            "SEVERITY_NUMBER_ERROR4" => 20,
+            "SEVERITY_NUMBER_FATAL" => 21,
+            "SEVERITY_NUMBER_FATAL2" => 22,
+            "SEVERITY_NUMBER_FATAL3" => 23,
+            "SEVERITY_NUMBER_FATAL4" => 24,
+            _ => return Ok(None),
+        };
+        return Ok(Some(JsonValue::Number(serde_json::Number::from(parsed))));
+    }
+
+    if key == otlp::AGGREGATION_TEMPORALITY {
+        let parsed = match value {
+            "AGGREGATION_TEMPORALITY_UNSPECIFIED" => 0,
+            "AGGREGATION_TEMPORALITY_DELTA" => 1,
+            "AGGREGATION_TEMPORALITY_CUMULATIVE" => 2,
+            _ => return Ok(None),
+        };
+        return Ok(Some(JsonValue::Number(serde_json::Number::from(parsed))));
     }
 
     if key == otlp::ARRAY_VALUE && value.is_empty() {
