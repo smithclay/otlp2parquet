@@ -4,6 +4,10 @@ After `otlp2parquet` stores your data as Parquet files, you can use a query engi
 
 This guide shows how to configure DuckDB and run queries against your logs, metrics, and traces.
 
+!!! tip "Try it in your browser"
+    Explore a deterministic sample dataset with DuckDB-Wasm in the interactive [querying demo](query-demo/index.html).
+    Generate the fixtures first with `cargo run -p otlp2parquet-core --example generate_demo_parquet -- docs/query-demo/data`.
+
 ## Setup
 
 First, install the necessary DuckDB extensions and configure access to your S3-compatible object storage (e.g., MinIO, AWS S3, or R2).
