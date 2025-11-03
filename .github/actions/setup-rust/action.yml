@@ -1,0 +1,44 @@
+name: Setup Rust Environment
+description: Reusable steps for configuring Rust toolchain, protoc, and caching.
+inputs:
+  repo-token:
+    description: Token used for authenticated downloads (defaults to github.token).
+    required: false
+    default: ""
+  components:
+    description: Optional comma-separated list of rustup components to install.
+    required: false
+    default: ""
+  targets:
+    description: Optional comma-separated list of compilation targets to install.
+    required: false
+    default: ""
+  cache-prefix:
+    description: Prefix for rust-cache to support multiple pipelines.
+    required: false
+    default: "shared"
+  cache-key:
+    description: Cache key suffix for rust-cache.
+    required: false
+    default: "default"
+runs:
+  using: "composite"
+  steps:
+    - name: Setup protoc
+      uses: arduino/setup-protoc@v3
+      with:
+        version: "32.0"
+        repo-token: ${{ inputs.repo-token != '' && inputs.repo-token || github.token }}
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: ${{ inputs.components }}
+        targets: ${{ inputs.targets }}
+    - name: Configure cargo cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: ${{ inputs.cache-prefix }}
+        key: ${{ inputs.cache-key }}
+        cache-on-failure: true
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+        workspaces: "."

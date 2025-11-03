@@ -1,0 +1,191 @@
+name: Build Artifacts
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: false
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+
+jobs:
+  native:
+    name: Native (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            arch: amd64
+            runner: ubuntu-latest
+            asset_name: otlp2parquet-lambda-linux-amd64
+            server_asset_name: otlp2parquet-server-linux-amd64
+          - target: aarch64-unknown-linux-gnu
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            asset_name: otlp2parquet-lambda-linux-arm64
+            server_asset_name: otlp2parquet-server-linux-arm64
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref && inputs.ref || github.ref }}
+
+      - name: Configure toolchain
+        uses: ./.github/actions/setup-rust
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          targets: ${{ matrix.target }}
+          cache-prefix: release-native
+          cache-key: ${{ matrix.target }}
+
+      - name: Build lambda binary
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo build --release --target "$TARGET" -p otlp2parquet-lambda
+
+      - name: Build server binary
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo build --release --target "$TARGET" --bin otlp2parquet
+
+      - name: Package binary
+        run: |
+          set -euo pipefail
+          LAMBDA_BINARY="target/${{ matrix.target }}/release/bootstrap"
+          SERVER_DIR="target/${{ matrix.target }}/release"
+          TMP_LAMBDA="$(mktemp -d)"
+          cp "$LAMBDA_BINARY" "$TMP_LAMBDA/otlp2parquet-lambda"
+          tar czf "$SERVER_DIR/${{ matrix.asset_name }}.tar.gz" -C "$TMP_LAMBDA" otlp2parquet-lambda
+          rm -rf "$TMP_LAMBDA"
+          mkdir -p dist/linux-${{ matrix.arch }}
+          cp "$SERVER_DIR/otlp2parquet" "dist/linux-${{ matrix.arch }}/otlp2parquet"
+          tar czf "$SERVER_DIR/${{ matrix.server_asset_name }}.tar.gz" -C dist "linux-${{ matrix.arch }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.asset_name }}
+          path: target/${{ matrix.target }}/release/${{ matrix.asset_name }}.tar.gz
+
+      - name: Upload server artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.server_asset_name }}
+          path: target/${{ matrix.target }}/release/${{ matrix.server_asset_name }}.tar.gz
+
+  docker-image:
+    name: Docker Image (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    needs: native
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref && inputs.ref || github.ref }}
+
+      - name: Download server binaries
+        uses: actions/download-artifact@v6
+        with:
+          pattern: otlp2parquet-server-*
+          path: docker-dist
+          merge-multiple: true
+
+      - name: Prepare dist directory
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          shopt -s nullglob
+          found=false
+          for archive in docker-dist/*.tar.gz; do
+            found=true
+            tar xzf "$archive" -C dist
+          done
+          if [ "$found" = false ]; then
+            echo "No server binary archives found for docker build" >&2
+            exit 1
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.arch }} image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          push: false
+          target: runtime-prebuilt
+          outputs: type=docker,dest=dist/otlp2parquet-${{ matrix.arch }}.tar
+          tags: otlp2parquet:${{ matrix.arch }}
+
+      - name: Upload ${{ matrix.arch }} image artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: otlp2parquet-image-${{ matrix.arch }}
+          path: dist/otlp2parquet-${{ matrix.arch }}.tar
+
+  wasm:
+    name: Cloudflare WASM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref && inputs.ref || github.ref }}
+
+      - name: Configure toolchain
+        uses: ./.github/actions/setup-rust
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          targets: wasm32-unknown-unknown
+          cache-prefix: release-wasm
+          cache-key: cloudflare
+
+      - name: Setup wasm-opt
+        uses: ./.github/actions/setup-wasm-opt
+
+      - name: Install Wrangler
+        run: npm install -g wrangler
+
+      - name: Package worker with Wrangler
+        run: |
+          rm -rf worker-dist
+          mkdir -p worker-dist
+          cd crates/otlp2parquet-cloudflare
+          wrangler deploy --dry-run --outdir ../../worker-dist
+
+      - name: Optimize packaged WASM
+        run: |
+          WASM_FILES=$(find worker-dist -name "*.wasm")
+          if [ -z "$WASM_FILES" ]; then
+            echo "No WASM files produced by Wrangler packaging" >&2
+            exit 1
+          fi
+          for file in $WASM_FILES; do
+            echo "Optimizing ${file}"
+            wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int -o "${file}.opt" "$file"
+            mv "${file}.opt" "$file"
+          done
+
+      - name: Archive worker bundle
+        run: |
+          mkdir -p dist
+          (cd worker-dist && zip -r ../dist/otlp2parquet-worker.zip .)
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: otlp2parquet-wasm
+          path: dist

@@ -1,0 +1,29 @@
+name: Setup wasm-opt
+description: Install and cache wasm-opt binary from Binaryen releases
+inputs:
+  version:
+    description: Binaryen version (e.g., version_116)
+    required: false
+    default: "version_116"
+runs:
+  using: "composite"
+  steps:
+    - name: Cache wasm-opt
+      uses: actions/cache@v4
+      id: wasm-opt-cache
+      with:
+        path: ~/.local/bin/wasm-opt
+        key: wasm-opt-${{ inputs.version }}
+
+    - name: Install wasm-opt
+      if: steps.wasm-opt-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        mkdir -p ~/.local/bin
+        wget https://github.com/WebAssembly/binaryen/releases/download/${{ inputs.version }}/binaryen-${{ inputs.version }}-x86_64-linux.tar.gz
+        tar xzf binaryen-${{ inputs.version }}-x86_64-linux.tar.gz
+        cp binaryen-${{ inputs.version }}/bin/wasm-opt ~/.local/bin/
+
+    - name: Add wasm-opt to PATH
+      shell: bash
+      run: echo "$HOME/.local/bin" >> $GITHUB_PATH

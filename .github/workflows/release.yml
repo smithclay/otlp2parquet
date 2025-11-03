@@ -1,0 +1,215 @@
+name: Release
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Tag to publish (e.g. v1.2.3)
+        required: false
+        type: string
+      commit_sha:
+        description: Commit SHA to attach the release to (defaults to tag commit)
+        required: false
+        type: string
+
+jobs:
+  prepare:
+    name: Prepare Metadata
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.vars.outputs.tag }}
+      version: ${{ steps.vars.outputs.version }}
+      commit: ${{ steps.vars.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Collect release inputs
+        id: vars
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG="$(jq -r '.inputs.tag_name // ""' "$GITHUB_EVENT_PATH")"
+            if [ -z "$TAG" ]; then
+              echo "tag_name input is required for manual releases." >&2
+              exit 1
+            fi
+            git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+            COMMIT="$(jq -r '.inputs.commit_sha // ""' "$GITHUB_EVENT_PATH")"
+            if [ -z "$COMMIT" ]; then
+              COMMIT="$(git rev-list -n 1 "$TAG")"
+            fi
+          else
+            TAG="$PUSH_TAG"
+            if [ -z "$TAG" ]; then
+              echo "Unable to determine tag for push event; aborting release." >&2
+              exit 1
+            fi
+            git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+            COMMIT="$(git rev-list -n 1 "$TAG")"
+          fi
+
+          if [ -z "$COMMIT" ]; then
+            echo "Unable to resolve commit for tag '$TAG'." >&2
+            exit 1
+          fi
+
+          if [[ "$TAG" != v* ]]; then
+            echo "Tag '$TAG' does not follow v*.*.* pattern; aborting release." >&2
+            exit 1
+          fi
+
+          VERSION="${TAG#v}"
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+
+  artifacts:
+    name: Build Release Artifacts
+    needs: prepare
+    if: needs.prepare.outputs.tag != ''
+    uses: ./.github/workflows/build-artifacts.yml
+    with:
+      ref: ${{ needs.prepare.outputs.commit }}
+    secrets: inherit
+
+  docker:
+    name: Publish Docker Image
+    needs:
+      - prepare
+      - artifacts
+    if: needs.prepare.outputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download pre-built images
+        uses: actions/download-artifact@v6
+        with:
+          pattern: otlp2parquet-image-*
+          path: images
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Load and push images
+        id: push
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          # Load both platform images
+          docker load -i images/otlp2parquet-amd64.tar
+          docker load -i images/otlp2parquet-arm64.tar
+
+          # Tag and push each platform
+          AMD64_DIGEST=$(docker image inspect otlp2parquet:amd64 -f '{{.Id}}')
+          ARM64_DIGEST=$(docker image inspect otlp2parquet:arm64 -f '{{.Id}}')
+
+          # Generate all tags
+          TAGS=(
+            "${REGISTRY}/${IMAGE_NAME}:latest"
+            "${REGISTRY}/${IMAGE_NAME}:${TAG}"
+            "${REGISTRY}/${IMAGE_NAME}:${VERSION}"
+          )
+
+          # Tag and push amd64
+          for tag in "${TAGS[@]}"; do
+            docker tag otlp2parquet:amd64 "${tag}-amd64"
+            docker push "${tag}-amd64"
+          done
+
+          # Tag and push arm64
+          for tag in "${TAGS[@]}"; do
+            docker tag otlp2parquet:arm64 "${tag}-arm64"
+            docker push "${tag}-arm64"
+          done
+
+          # Create and push manifest lists for all tags
+          for tag in "${TAGS[@]}"; do
+            docker buildx imagetools create -t "${tag}" \
+              "${tag}-amd64" \
+              "${tag}-arm64"
+          done
+
+          # Output the manifest digest for latest tag
+          MANIFEST_DIGEST=$(docker buildx imagetools inspect "${REGISTRY}/${IMAGE_NAME}:latest" --format '{{json .Manifest}}' | jq -r '.digest')
+          echo "digest=${MANIFEST_DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - prepare
+      - artifacts
+      - docker
+    if: needs.prepare.outputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v6
+        with:
+          pattern: otlp2parquet-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create checksums
+        run: |
+          cd artifacts
+          find . -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec sha256sum {} \; > ../checksums.txt
+          cd ..
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ needs.prepare.outputs.commit }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.zip
+            checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

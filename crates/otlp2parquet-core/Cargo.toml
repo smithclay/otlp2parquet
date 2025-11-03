@@ -1,0 +1,29 @@
+[package]
+name = "otlp2parquet-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+# Arrow for data structures only (no Parquet serialization)
+arrow = { workspace = true }
+
+# OTLP Protocol
+otlp2parquet-proto = { path = "../otlp2parquet-proto" }
+prost = { workspace = true }
+
+# Utilities - pure, no async, no I/O
+anyhow = { workspace = true }
+thiserror = "1"
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }  # For JSON/JSONL format support
+hex = { workspace = true }
+base64 = { workspace = true }      # For base64-encoded trace/span IDs
+
+[dev-dependencies]
+# For testing Parquet output
+parquet = { workspace = true, features = ["arrow"] }
+otlp2parquet-storage = { path = "../otlp2parquet-storage", features = ["services-fs"] }
+tokio = { workspace = true, features = ["rt", "macros"] }

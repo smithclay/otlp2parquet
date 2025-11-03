@@ -1,0 +1,90 @@
+name: Deploy Docs to GitHub Pages
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+env:
+  CARGO_TERM_COLOR: always
+  DOC_VERSION: ${{ github.event.release.tag_name }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Inject release version into docs header
+        env:
+          DOC_VERSION: ${{ env.DOC_VERSION }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DOC_VERSION:-}" ]; then
+            echo "DOC_VERSION is not set; ensure this workflow is triggered by a release event." >&2
+            exit 1
+          fi
+          python - <<'PY'
+            import os
+            import pathlib
+            import re
+
+            path = pathlib.Path("mkdocs.yml")
+            content = path.read_text()
+            version = os.environ.get("DOC_VERSION", "").strip()
+            if not version:
+                raise SystemExit("DOC_VERSION missing")
+
+            pattern = re.compile(r'(?m)^site_name: .+$')
+            replacement = f'site_name: otlp2parquet Documentation ({version})'
+            if pattern.search(content):
+                content = pattern.sub(replacement, content, count=1)
+            else:
+                content = replacement + "\n" + content
+            path.write_text(content)
+          PY
+
+      - name: Build MkDocs site
+        run: mkdocs build
+
+      - name: Install protobuf compiler
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "32.0"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Build Rust documentation (cargo doc)
+        run: cargo doc --no-deps --workspace
+
+      - name: Create API directory in site
+        run: mkdir -p site/api
+
+      - name: Copy Rust documentation to site/api
+        run: cp -r target/doc/* site/api/
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          force_orphan: true

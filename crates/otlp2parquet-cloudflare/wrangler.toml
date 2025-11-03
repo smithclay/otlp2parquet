@@ -1,0 +1,76 @@
+# Cloudflare Workers configuration for otlp2parquet
+# Deploy with: wrangler deploy
+
+name = "otlp2parquet"
+main = "build/index.js"
+compatibility_date = "2025-01-15"
+
+# Worker compute settings
+workers_dev = true
+
+# Account information (set via wrangler login or environment)
+# account_id = ""  # Optional: set via CLOUDFLARE_ACCOUNT_ID env var
+
+# R2 bucket binding for log storage
+[[r2_buckets]]
+binding = "LOGS_BUCKET"
+bucket_name = "otlp-logs"  # Change this to your bucket name
+preview_bucket_name = "otlp-logs-preview"  # Optional: separate bucket for dev
+
+# Build configuration
+[build]
+command = "cargo install -q worker-build && worker-build --release"
+
+[limits]
+cpu_ms = 2000  # 2 seconds for local testing
+
+# Environment variables for S3-compatible storage
+# These work with R2, MinIO, AWS S3, or any S3-compatible service
+[vars]
+# S3 bucket name
+OTLP2PARQUET_S3_BUCKET = "otlp-logs"
+
+# S3 region (use "auto" for R2, "us-east-1" for MinIO)
+OTLP2PARQUET_S3_REGION = "us-east-1"
+
+# S3 endpoint (optional - leave commented for AWS S3)
+# For local MinIO: http://localhost:9000
+# For Cloudflare R2: https://[account_id].r2.cloudflarestorage.com
+OTLP2PARQUET_S3_ENDPOINT = "http://localhost:9000"
+
+# S3 credentials (for local testing - use secrets in production)
+OTLP2PARQUET_S3_ACCESS_KEY_ID = "minioadmin"
+OTLP2PARQUET_S3_SECRET_ACCESS_KEY = "minioadmin"
+
+# Secrets (set with: wrangler secret put SECRET_NAME)
+# For production, use secrets instead of vars for credentials:
+# wrangler secret put OTLP2PARQUET_S3_ACCESS_KEY_ID
+# wrangler secret put OTLP2PARQUET_S3_SECRET_ACCESS_KEY
+
+# Development settings
+[env.dev]
+name = "otlp2parquet-dev"
+workers_dev = true
+
+[[env.dev.r2_buckets]]
+binding = "LOGS_BUCKET"
+bucket_name = "otlp-logs-dev"
+
+# Production settings
+[env.production]
+name = "otlp2parquet"
+workers_dev = false
+# route = "logs.example.com/*"  # Set your custom domain
+
+[[env.production.r2_buckets]]
+binding = "LOGS_BUCKET"
+bucket_name = "otlp-logs-production"
+
+# Staging settings
+[env.staging]
+name = "otlp2parquet-staging"
+workers_dev = false
+
+[[env.staging.r2_buckets]]
+binding = "LOGS_BUCKET"
+bucket_name = "otlp-logs-staging"

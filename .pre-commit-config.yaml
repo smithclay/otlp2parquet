@@ -1,0 +1,38 @@
+repos:
+  - repo: https://github.com/doublify/pre-commit-rust
+    rev: v1.0
+    hooks:
+      - id: fmt
+        name: cargo fmt
+        description: Format Rust code with rustfmt
+        args: ['--manifest-path=Cargo.toml', '--']
+
+      - id: clippy
+        name: cargo clippy
+        description: Lint Rust code with clippy
+        args: ['--manifest-path=Cargo.toml', '--workspace', '--all-targets', '--', '-D', 'warnings']
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: check-yaml
+        name: Check YAML files
+        exclude: ^(.*template\.yaml|\.aws-sam/.*\.yaml)$
+      - id: check-toml
+        name: Check TOML files
+      - id: end-of-file-fixer
+        name: Fix end of files
+      - id: trailing-whitespace
+        name: Trim trailing whitespace
+      - id: check-added-large-files
+        name: Check for large files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+        name: Check for merge conflicts
+
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v3.6.0
+    hooks:
+      - id: conventional-pre-commit
+        name: Conventional Commits
+        stages: [commit-msg]

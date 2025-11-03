@@ -1,0 +1,18 @@
+[package]
+name = "otlp2parquet-config"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+
+# TOML config file support
+toml = { workspace = true }
+
+[features]
+default = []

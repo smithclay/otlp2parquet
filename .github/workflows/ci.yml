@@ -1,0 +1,158 @@
+name: CI
+
+# Validates all three platform targets:
+# - Cloudflare Workers (WASM with OpenDAL S3→R2)
+# - AWS Lambda (native binary with OpenDAL S3)
+# - Server (default mode - native binary with OpenDAL multi-backend)
+
+on:
+  push:
+    branches: ["main"]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "**/*.rs"
+      - "**/Cargo.toml"
+      - "Cargo.lock"
+      - "**/build.rs"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+      - ".github/workflows/ci.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0  # Disable incremental compilation for CI (faster clean builds)
+  CARGO_PROFILE_DEV_DEBUG: 0  # Reduce debug info to save cache space
+  CARGO_NET_GIT_FETCH_WITH_CLI: true  # More reliable git fetching
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Check code formatting
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure toolchain
+        uses: ./.github/actions/setup-rust
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          components: rustfmt
+          cache-prefix: fmt
+          cache-key: fmt
+      - name: Check formatting
+        run: make fmt-check
+
+  # Run clippy lints
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure toolchain
+        uses: ./.github/actions/setup-rust
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          components: clippy
+          targets: wasm32-unknown-unknown
+          cache-prefix: clippy
+          cache-key: all-targets
+      - name: Run clippy
+        run: make clippy
+
+  # Run tests
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure toolchain
+        uses: ./.github/actions/setup-rust
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          cache-prefix: test
+          cache-key: full-suite
+      - name: Run tests
+        run: make test
+
+  # Build for different feature combinations
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure toolchain
+        uses: ./.github/actions/setup-rust
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          targets: wasm32-unknown-unknown
+          cache-prefix: build
+          cache-key: release
+      - name: Build release binaries
+        run: make build-release
+
+  # Check WASM build size for Cloudflare Workers
+  # Target: <3MB compressed (currently ~1006KB with OpenDAL)
+  wasm-size:
+    name: WASM Size Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure toolchain
+        uses: ./.github/actions/setup-rust
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          targets: wasm32-unknown-unknown
+          cache-prefix: wasm
+          cache-key: size-check
+      - name: Setup wasm-opt
+        uses: ./.github/actions/setup-wasm-opt
+      - name: Build & check WASM size
+        run: make wasm-compress
+
+  # Security audit
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Check documentation builds
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure toolchain
+        uses: ./.github/actions/setup-rust
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          cache-prefix: docs
+          cache-key: all-features
+      - name: Check documentation
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  build-artifacts:
+    name: Package Release Artifacts
+    needs:
+      - fmt
+      - clippy
+      - test
+      - build
+      - wasm-size
+      - audit
+      - docs
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/build-artifacts.yml
+    secrets: inherit

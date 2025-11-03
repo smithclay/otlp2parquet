@@ -1,0 +1,120 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "multi-service"
+            }
+          },
+          {
+            "key": "service.version",
+            "value": {
+              "stringValue": "1.0.0"
+            }
+          },
+          {
+            "key": "deployment.environment",
+            "value": {
+              "stringValue": "staging"
+            }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {
+            "name": "system-instrumentation",
+            "version": "1.0.0"
+          },
+          "metrics": [
+            {
+              "name": "system.cpu.utilization",
+              "description": "CPU utilization",
+              "unit": "1",
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "timeUnixNano": "1705327800000000000",
+                    "asDouble": 0.42,
+                    "attributes": [
+                      {
+                        "key": "cpu",
+                        "value": {
+                          "intValue": "0"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "name": "system.network.io",
+              "description": "Network bytes transferred",
+              "unit": "bytes",
+              "sum": {
+                "dataPoints": [
+                  {
+                    "timeUnixNano": "1705327800000000000",
+                    "asInt": "123456789",
+                    "attributes": [
+                      {
+                        "key": "direction",
+                        "value": {
+                          "stringValue": "transmit"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "aggregationTemporality": "AGGREGATION_TEMPORALITY_CUMULATIVE",
+                "isMonotonic": true
+              }
+            },
+            {
+              "name": "http.server.request.duration",
+              "description": "HTTP request duration",
+              "unit": "ms",
+              "histogram": {
+                "dataPoints": [
+                  {
+                    "timeUnixNano": "1705327800000000000",
+                    "count": "100",
+                    "sum": 5000.0,
+                    "bucketCounts": [
+                      "10",
+                      "30",
+                      "40",
+                      "15",
+                      "5"
+                    ],
+                    "explicitBounds": [
+                      10.0,
+                      50.0,
+                      100.0,
+                      500.0
+                    ],
+                    "attributes": [
+                      {
+                        "key": "http.method",
+                        "value": {
+                          "stringValue": "GET"
+                        }
+                      }
+                    ],
+                    "min": 5.0,
+                    "max": 1000.0
+                  }
+                ],
+                "aggregationTemporality": "AGGREGATION_TEMPORALITY_CUMULATIVE"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

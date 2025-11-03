@@ -1,0 +1,140 @@
+version: '3.9'
+
+# otlp2parquet with MinIO - S3-compatible local storage
+# One command: docker-compose up
+
+services:
+  # MinIO - S3-compatible object storage
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Create bucket automatically
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin};
+      /usr/bin/mc mb myminio/${S3_BUCKET:-otlp-logs} --ignore-existing;
+      /usr/bin/mc anonymous set download myminio/${S3_BUCKET:-otlp-logs};
+      echo 'MinIO bucket ready';
+      "
+
+  # otlp2parquet
+  otlp2parquet:
+    # image: ghcr.io/smithclay/otlp2parquet:latest
+    # For local development:
+    build: .
+    depends_on:
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    ports:
+      - "${HTTP_PORT:-4318}:4318"
+    environment:
+      # Storage (override for cloud: OTLP2PARQUET_STORAGE_BACKEND=s3 OTLP2PARQUET_S3_ENDPOINT= OTLP2PARQUET_S3_REGION=us-east-1)
+      OTLP2PARQUET_STORAGE_BACKEND: ${STORAGE_BACKEND:-s3}
+      OTLP2PARQUET_S3_BUCKET: ${S3_BUCKET:-otlp-logs}
+      OTLP2PARQUET_S3_REGION: ${S3_REGION:-us-east-1}
+      OTLP2PARQUET_S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+
+      # Credentials (override for cloud: AWS_ACCESS_KEY_ID=xxx AWS_SECRET_ACCESS_KEY=xxx)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
+
+      # Server (OTLP HTTP port)
+      OTLP2PARQUET_HTTP_PORT: 4318
+      OTLP2PARQUET_HTTP_HOST: 0.0.0.0
+      RUST_LOG: ${RUST_LOG:-info}
+
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4318/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  # Telemetrygen - Generate sample OTLP logs, metrics, and traces
+  telemetrygen-traces:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
+    depends_on:
+      - otlp2parquet
+    command:
+      - traces
+      - --otlp-endpoint=otlp2parquet:4318
+      - --otlp-http
+      - --otlp-insecure
+      - --duration=inf  # Run continuously
+      - --rate=2        # 2 spans per second
+      - --service=telemetrygen-traces
+      - --status-code=Ok
+    restart: unless-stopped
+
+  telemetrygen-metrics:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
+    depends_on:
+      - otlp2parquet
+    command:
+      - metrics
+      - --otlp-endpoint=otlp2parquet:4318
+      - --otlp-http
+      - --otlp-insecure
+      - --duration=inf  # Run continuously
+      - --rate=2        # 2 metrics per second
+      - --service=telemetrygen-metrics
+    restart: unless-stopped
+
+  telemetrygen-logs:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
+    depends_on:
+      - otlp2parquet
+    command:
+      - logs
+      - --otlp-endpoint=otlp2parquet:4318
+      - --otlp-http
+      - --otlp-insecure
+      - --duration=inf  # Run continuously
+      - --rate=2        # 2 logs per second
+      - --service=telemetrygen-logs
+    restart: unless-stopped
+
+volumes:
+  minio-data:
+
+# Usage:
+#
+# Local (MinIO):
+#   docker-compose up
+#   OTLP endpoint: http://localhost:4318/v1/logs (OpenTelemetry HTTP)
+#   MinIO console: http://localhost:9001 (minioadmin/minioadmin)
+#
+# AWS S3:
+#   STORAGE_BACKEND=s3 S3_REGION=us-east-1 AWS_ACCESS_KEY_ID=xxx AWS_SECRET_ACCESS_KEY=xxx docker-compose up
+#
+# Cloudflare R2:
+#   STORAGE_BACKEND=s3 S3_ENDPOINT=https://ACCOUNT_ID.r2.cloudflarestorage.com AWS_ACCESS_KEY_ID=xxx AWS_SECRET_ACCESS_KEY=xxx docker-compose up
+#
+# Query with DuckDB:
+#   duckdb -c "INSTALL httpfs; LOAD httpfs;
+#   SET s3_endpoint='localhost:9000'; SET s3_url_style='path'; SET s3_use_ssl=false;
+#   SET s3_access_key_id='minioadmin'; SET s3_secret_access_key='minioadmin';
+#   SELECT * FROM read_parquet('s3://otlp-logs/logs/**/*.parquet') LIMIT 10;"

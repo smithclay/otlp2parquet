@@ -1,0 +1,138 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "api-gateway"
+            }
+          },
+          {
+            "key": "service.version",
+            "value": {
+              "stringValue": "2.1.0"
+            }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {
+            "name": "http-instrumentation",
+            "version": "1.2.0"
+          },
+          "metrics": [
+            {
+              "name": "http.requests.total",
+              "description": "Total number of HTTP requests",
+              "unit": "1",
+              "sum": {
+                "dataPoints": [
+                  {
+                    "timeUnixNano": "1705327800000000000",
+                    "asInt": "15234",
+                    "attributes": [
+                      {
+                        "key": "http.method",
+                        "value": {
+                          "stringValue": "GET"
+                        }
+                      },
+                      {
+                        "key": "http.status_code",
+                        "value": {
+                          "intValue": "200"
+                        }
+                      },
+                      {
+                        "key": "http.route",
+                        "value": {
+                          "stringValue": "/api/users"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "timeUnixNano": "1705327800000000000",
+                    "asInt": "3421",
+                    "attributes": [
+                      {
+                        "key": "http.method",
+                        "value": {
+                          "stringValue": "POST"
+                        }
+                      },
+                      {
+                        "key": "http.status_code",
+                        "value": {
+                          "intValue": "201"
+                        }
+                      },
+                      {
+                        "key": "http.route",
+                        "value": {
+                          "stringValue": "/api/users"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "timeUnixNano": "1705327800000000000",
+                    "asInt": "152",
+                    "attributes": [
+                      {
+                        "key": "http.method",
+                        "value": {
+                          "stringValue": "GET"
+                        }
+                      },
+                      {
+                        "key": "http.status_code",
+                        "value": {
+                          "intValue": "404"
+                        }
+                      },
+                      {
+                        "key": "http.route",
+                        "value": {
+                          "stringValue": "/api/users"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "aggregationTemporality": "AGGREGATION_TEMPORALITY_CUMULATIVE",
+                "isMonotonic": true
+              }
+            },
+            {
+              "name": "http.request.bytes",
+              "description": "Total bytes received in requests",
+              "unit": "bytes",
+              "sum": {
+                "dataPoints": [
+                  {
+                    "timeUnixNano": "1705327800000000000",
+                    "asInt": "45892134",
+                    "attributes": [
+                      {
+                        "key": "http.route",
+                        "value": {
+                          "stringValue": "/api/users"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "aggregationTemporality": "AGGREGATION_TEMPORALITY_CUMULATIVE",
+                "isMonotonic": true
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

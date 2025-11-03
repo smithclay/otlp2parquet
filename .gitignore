@@ -1,0 +1,50 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Build artifacts
+*.wasm
+*.wasm.gz
+optimized.wasm
+
+# Generated files
+/crates/quill-proto/proto/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+
+# Cloudflare Workers
+.wrangler/
+worker-build/
+build/
+
+# AWS
+.aws-sam/
+
+# Local storage (standalone mode)
+/data/
+/logs/
+
+# Testing
+coverage/
+*.profraw
+*.profdata
+
+node_modules
+
+# Kubernetes secrets (use secret.yaml.example as template)
+**/secret.yaml
+!**/secret.yaml.example

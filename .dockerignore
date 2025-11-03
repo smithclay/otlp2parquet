@@ -1,0 +1,54 @@
+# Build artifacts
+target/
+**/*.rs.bk
+*.pdb
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Documentation
+*.md
+!CLAUDE.md
+docs/
+
+# Test files
+tests/
+# benches/ - Keep benches for Cargo.toml manifest validation (won't be in final image)
+
+# Local development
+.env
+.env.local
+*.log
+tmp/
+temp/
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Deployment configs
+deploy/
+wrangler.toml
+template.yaml
+samconfig.toml
+cdk/
+
+# Misc
+LICENSE
+NOTICE
+.pre-commit-config.yaml
+Makefile

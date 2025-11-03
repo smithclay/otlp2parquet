@@ -1,0 +1,43 @@
+[package]
+name = "otlp2parquet-storage"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+# Storage abstraction
+opendal = { version = "0.54", default-features = false }
+
+# Arrow for data structures
+arrow = { workspace = true }
+
+# Utilities
+anyhow = { workspace = true }
+chrono = { workspace = true }
+blake3 = { workspace = true }
+hex = { workspace = true }
+once_cell = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# WASM-specific: Snappy compression only
+parquet = { workspace = true, features = ["arrow", "async", "snap"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Native: ZSTD compression + Snappy
+parquet = { workspace = true, features = ["arrow", "async", "snap", "zstd"] }
+# Async utilities for OpenDAL list operations (native only)
+futures-util = "0.3"
+# Tokio needed for filesystem backend
+tokio = { workspace = true, optional = true, features = ["rt", "macros"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
+opendal = { version = "0.54", default-features = false, features = ["services-memory"] }
+bytes = "1.10"
+
+[features]
+default = []
+# Feature flags for different storage backends
+services-s3 = ["opendal/services-s3"]
+services-fs = ["opendal/services-fs", "tokio"]

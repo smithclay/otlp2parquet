@@ -1,0 +1,136 @@
+[workspace]
+members = [
+    "crates/otlp2parquet-core",
+    "crates/otlp2parquet-batch",
+    "crates/otlp2parquet-config",
+    "crates/otlp2parquet-storage",
+    "crates/otlp2parquet-proto",
+    "crates/otlp2parquet-cloudflare",
+    "crates/otlp2parquet-lambda",
+    "crates/otlp2parquet-server",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["otlp2parquet Contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/smithclay/otlp2parquet"
+
+[profile.release]
+opt-level = "z"           # Optimize for size
+lto = true                # Link-time optimization
+codegen-units = 1         # Better optimization
+strip = true              # Strip symbols
+panic = "abort"           # Smaller panic handler
+
+[profile.release.package."*"]
+opt-level = "z"
+
+[profile.release.package.otlp2parquet-core]
+opt-level = 3
+
+[profile.release.package.otlp2parquet-batch]
+opt-level = 3
+
+[profile.release.package.otlp2parquet-storage]
+opt-level = 3
+
+[profile.release.package.otlp2parquet-cloudflare]
+opt-level = "z"
+
+[profile.release.package.otlp2parquet-lambda]
+opt-level = 3
+
+[profile.release.package.otlp2parquet-server]
+opt-level = 3
+
+[workspace.dependencies]
+# Arrow/Parquet - MINIMAL features only
+arrow = { version = "54.2", default-features = false, features = ["ipc"] }
+parquet = { version = "54.2", default-features = false }
+
+# OTLP Protocol - minimal
+prost = { version = "0.13", default-features = false, features = ["std"] }
+
+# Core utilities - minimal, no tokio (platforms provide their own runtimes)
+serde = { version = "1", default-features = false, features = ["derive"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+toml = { version = "0.8", default-features = false, features = ["parse"] }
+anyhow = "1"
+thiserror = "2.0"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros"] }
+blake3 = "1"
+once_cell = "1.19"
+hex = "0.4"
+base64 = "0.22"
+
+# Build dependencies
+prost-build = "0.13"
+
+[package]
+name = "otlp2parquet"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+otlp2parquet-core = { path = "crates/otlp2parquet-core" }
+otlp2parquet-batch = { path = "crates/otlp2parquet-batch" }
+otlp2parquet-storage = { path = "crates/otlp2parquet-storage" }
+otlp2parquet-server = { path = "crates/otlp2parquet-server" }
+
+# Runtime
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+# Utilities
+anyhow = { workspace = true }
+
+# Memory profiling (optional, enable with --features dhat-heap)
+dhat = { version = "0.3", optional = true }
+
+[dev-dependencies]
+# Benchmarking infrastructure
+criterion = { version = "0.5", default-features = false, features = ["html_reports"] }
+otlp2parquet-proto = { path = "crates/otlp2parquet-proto" }
+flate2 = "1.0"
+serde_json = { workspace = true }
+prost = { workspace = true }
+# Integration tests
+opendal = { version = "0.54", default-features = false, features = ["services-memory"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[features]
+default = []
+dhat-heap = ["dep:dhat"]
+
+[[bin]]
+name = "otlp2parquet"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[build-dependencies]
+prost-build = { workspace = true }
+
+# Benchmark targets
+[[bench]]
+name = "e2e_pipeline"
+harness = false
+
+[[bench]]
+name = "decode_otlp"
+harness = false
+
+[[bench]]
+name = "transform_arrow"
+harness = false
+
+[[bench]]
+name = "parquet_write"
+harness = false
