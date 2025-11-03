@@ -1,8 +1,6 @@
 # otlp2parquet
 
 [![CI](https://github.com/smithclay/otlp2parquet/actions/workflows/ci.yml/badge.svg)](https://github.com/smithclay/otlp2parquet/actions/workflows/ci.yml)
-[![Build Artifacts](https://github.com/smithclay/otlp2parquet/actions/workflows/build-artifacts.yml/badge.svg)](https://github.com/smithclay/otlp2parquet/actions/workflows/build-artifacts.yml)
-[![Docs](https://github.com/smithclay/otlp2parquet/actions/workflows/docs.yml/badge.svg)](https://github.com/smithclay/otlp2parquet/actions/workflows/docs.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 > Put your observability data in cheap object storage, servers optional.
