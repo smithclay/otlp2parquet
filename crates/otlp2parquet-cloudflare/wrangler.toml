@@ -42,10 +42,17 @@ OTLP2PARQUET_S3_ENDPOINT = "http://localhost:9000"
 OTLP2PARQUET_S3_ACCESS_KEY_ID = "minioadmin"
 OTLP2PARQUET_S3_SECRET_ACCESS_KEY = "minioadmin"
 
+# Basic Authentication (optional)
+# Set to "true" to enable HTTP Basic Authentication for all OTLP endpoints
+# OTLP2PARQUET_BASIC_AUTH_ENABLED = "false"
+# OTLP2PARQUET_BASIC_AUTH_USERNAME = "otlp-user"
+# OTLP2PARQUET_BASIC_AUTH_PASSWORD = "your-password-here"
+
 # Secrets (set with: wrangler secret put SECRET_NAME)
 # For production, use secrets instead of vars for credentials:
 # wrangler secret put OTLP2PARQUET_S3_ACCESS_KEY_ID
 # wrangler secret put OTLP2PARQUET_S3_SECRET_ACCESS_KEY
+# wrangler secret put OTLP2PARQUET_BASIC_AUTH_PASSWORD
 
 # Development settings
 [env.dev]

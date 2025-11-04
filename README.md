@@ -29,6 +29,8 @@ _Note: If you want to query or convert existing OTLP files, you can use the [otl
 | OTLP Metrics | ✅ | ✅ | ✅ |
 | OTLP Traces | ✅ | ✅ | ✅ |
 | OTLP Profiles | ❌ | ❌ | ❌ |
+| **Security*** | | | |
+| Basic Auth Header | ❌ | ✅ | ❌ |
 | **Advanced Features** | | | |
 | In-Memory Batching | ✅ | ❌** | ❌** |
 

@@ -35,7 +35,7 @@ Use `wrangler dev` to run the Worker locally, with support for hot-reloading and
 
 2.  **Configure `wrangler.toml`**:
 
-    Update `crates/otlp2parquet-cloudflare/wrangler.toml` to link point to a local instance of minio. See the `docker-compose.yml` for an example of starting a minio on port 9000. You can also point the worker to R2 using the R3 [S3-compatible API](https://developers.cloudflare.com/r2/api/s3/api/).
+    Update `crates/otlp2parquet-cloudflare/wrangler.toml` to link point to a local instance of minio (start with docker-compose with the command `docker-compose up minio minio-init`). You can also point the worker to R2 using the R3 [S3-compatible API](https://developers.cloudflare.com/r2/api/s3/api/).
 
     ```toml
     # S3 region (use "auto" for R2, "us-east-1" for MinIO)
@@ -87,7 +87,7 @@ Use `wrangler dev` to run the Worker locally, with support for hot-reloading and
 
 ## Deployment to Cloudflare
 
-After local testing, you can deploy the Worker to the Cloudflare global network.
+After local testing, you can deploy the Worker to the Cloudflare global network. By default, the Cloudflare worker has no authentication enabled: implement your own authentication or set `OTLP2PARQUET_BASIC_AUTH_ENABLED` in `wrangler.toml`.
 
 ### Option A: Quick Start (Deploy Button)
 

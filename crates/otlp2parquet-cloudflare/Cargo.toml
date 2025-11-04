@@ -24,6 +24,7 @@ serde_json = { workspace = true }
 blake3 = { workspace = true }
 hex = { workspace = true }
 anyhow = { workspace = true }
+base64 = "0.22"
 
 # Arrow and Parquet for WASM-specific synchronous writing
 arrow = { workspace = true }
