@@ -1,0 +1,33 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Parse OTLP log data and convert to Arrow RecordBatch"><title>parse_otlp_to_arrow in otlp2parquet_core - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-e56847b5.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="otlp2parquet_core" data-themes="" data-resource-suffix="" data-rustdoc-version="1.91.0 (f8297e351 2025-10-28)" data-channel="1.91.0" data-search-js="search-e256b49e.js" data-stringdex-js="stringdex-c3e638e9.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="sidebar-items.js"></script><script defer src="../static.files/main-6dc2a7f3.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc fn"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">parse_otlp_to_arrow</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../otlp2parquet_core/index.html">otlp2parquet_<wbr>core</a><span class="version">0.1.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">parse_<wbr>otlp_<wbr>to_<wbr>arrow</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#arguments" title="Arguments">Arguments</a></li><li><a href="#returns" title="Returns">Returns</a></li><li><a href="#philosophy" title="Philosophy">Philosophy</a></li><li><a href="#example" title="Example">Example</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="index.html">In crate otlp2parquet_<wbr>core</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="index.html">otlp2parquet_core</a></div><h1>Function <span class="fn">parse_<wbr>otlp_<wbr>to_<wbr>arrow</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/otlp2parquet_core/lib.rs.html#55-62">Source</a> </span></div><pre class="rust item-decl"><code>pub fn parse_otlp_to_arrow(
+    otlp_bytes: &amp;[<a class="primitive" href="https://doc.rust-lang.org/1.91.0/std/primitive.u8.html">u8</a>],
+    format: <a class="enum" href="otlp/common/format/enum.InputFormat.html" title="enum otlp2parquet_core::otlp::common::format::InputFormat">InputFormat</a>,
+) -&gt; <a class="type" href="https://docs.rs/anyhow/1.0.100/anyhow/type.Result.html" title="type anyhow::Result">Result</a>&lt;(RecordBatch, <a class="struct" href="otlp/logs/to_arrow/struct.LogMetadata.html" title="struct otlp2parquet_core::otlp::logs::to_arrow::LogMetadata">LogMetadata</a>)&gt;</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Parse OTLP log data and convert to Arrow RecordBatch</p>
+<p>This is the PURE core transformation logic: OTLP bytes → Arrow RecordBatch + metadata.
+No I/O, no side effects, deterministic for the same input.</p>
+<h2 id="arguments"><a class="doc-anchor" href="#arguments">§</a>Arguments</h2>
+<ul>
+<li><code>otlp_bytes</code> - Raw OTLP data in the specified format</li>
+<li><code>format</code> - Input format (Protobuf, JSON, or JSONL)</li>
+</ul>
+<h2 id="returns"><a class="doc-anchor" href="#returns">§</a>Returns</h2>
+<ul>
+<li><code>Ok((RecordBatch, LogMetadata))</code> - Arrow batch and extracted metadata</li>
+<li><code>Err</code> - If parsing or conversion fails</li>
+</ul>
+<h2 id="philosophy"><a class="doc-anchor" href="#philosophy">§</a>Philosophy</h2>
+<p>“Show me your tables, and I won’t usually need your flowcharts; they’ll be obvious.”</p>
+<ul>
+<li>Fred Brooks</li>
+</ul>
+<p>This function preserves information flow: we extract metadata during parsing
+and return it alongside the Arrow data. No information is lost.</p>
+<h2 id="example"><a class="doc-anchor" href="#example">§</a>Example</h2>
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">use </span>otlp2parquet_core::{parse_otlp_to_arrow, InputFormat};
+
+<span class="comment">// Protobuf input (most common)
+</span><span class="kw">let </span>protobuf_bytes = <span class="comment">/* ... */</span>;
+<span class="kw">let </span>(batch, metadata) = parse_otlp_to_arrow(protobuf_bytes, InputFormat::Protobuf)<span class="question-mark">?</span>;
+
+<span class="comment">// JSON input
+</span><span class="kw">let </span>json_bytes = <span class="string">br#"{"resourceLogs":[...]}"#</span>;
+<span class="kw">let </span>(batch, metadata) = parse_otlp_to_arrow(json_bytes, InputFormat::Json)<span class="question-mark">?</span>;</code></pre></div></div></details></section></div></main></body></html>

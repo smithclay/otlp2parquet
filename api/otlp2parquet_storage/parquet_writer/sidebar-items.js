@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["set_parquet_row_group_size","write_batches_to_parquet","write_batches_with_hash","writer_properties"],"struct":["Blake3Hash","ParquetWriter"]};

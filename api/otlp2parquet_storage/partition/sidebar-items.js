@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["generate_partition_path","generate_partition_path_with_signal"]};

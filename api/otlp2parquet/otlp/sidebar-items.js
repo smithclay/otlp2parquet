@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["InputFormat"],"fn":["parse_otlp_request"],"mod":["common","logs","metrics","traces"],"struct":["ArrowConverter","LogMetadata"]};

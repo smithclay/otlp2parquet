@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["BatchConfig","BatchManager","CompletedBatch","LogSignalProcessor","PassthroughBatcher","TraceSignalProcessor"],"trait":["BatchMetadata","SignalProcessor"]};

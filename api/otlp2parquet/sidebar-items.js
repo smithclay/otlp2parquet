@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["InputFormat"],"fn":["convert_request_to_arrow","convert_request_to_arrow_with_capacity","estimate_request_row_count","otel_logs_schema","parse_otlp_to_arrow"],"mod":["otlp","schema"],"struct":["LogMetadata"]};

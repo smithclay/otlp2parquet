@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["opendal_storage","parquet_writer","partition"]};
