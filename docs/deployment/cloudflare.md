@@ -33,14 +33,32 @@ Use `wrangler dev` to run the Worker locally, with support for hot-reloading and
     wrangler login
     ```
 
-2.  **Create a Preview R2 Bucket**:
+2.  **Configure `wrangler.toml`**:
+
+    Update `crates/otlp2parquet-cloudflare/wrangler.toml` to link point to a local instance of minio. See the `docker-compose.yml` for an example of starting a minio on port 9000. You can also point the worker to R2 using the R3 [S3-compatible API](https://developers.cloudflare.com/r2/api/s3/api/).
+
+    ```toml
+    # S3 region (use "auto" for R2, "us-east-1" for MinIO)
+    OTLP2PARQUET_S3_REGION = "us-east-1"
+
+    # S3 endpoint (optional - leave commented for AWS S3)
+    # For local MinIO: http://localhost:9000
+    # For Cloudflare R2: https://[account_id].r2.cloudflarestorage.com
+    OTLP2PARQUET_S3_ENDPOINT = "http://localhost:9000"
+
+    # S3 credentials (for local testing - use secrets in production)
+    OTLP2PARQUET_S3_ACCESS_KEY_ID = "minioadmin"
+    OTLP2PARQUET_S3_SECRET_ACCESS_KEY = "minioadmin"
+    ```
+
+3.  **Create a Preview R2 Bucket** (optional, only if pointing the local worker to R2):
 
     ```bash
     # This bucket is used by `wrangler dev` for local testing.
     wrangler r2 bucket create otlp-logs-preview
     ```
 
-3.  **Start the Local Server**:
+4.  **Start the Local Server**:
 
     ```bash
     # This command starts a local server that simulates the Cloudflare environment.
@@ -49,7 +67,7 @@ Use `wrangler dev` to run the Worker locally, with support for hot-reloading and
 
     Your Worker is now available at `http://localhost:8787`.
 
-4.  **Test Locally**:
+5.  **Test Locally**:
 
     Send a test request to your local Worker.
 
@@ -59,7 +77,7 @@ Use `wrangler dev` to run the Worker locally, with support for hot-reloading and
       --data-binary @testdata/logs.pb
     ```
 
-5.  **Verify Output**:
+6.  **Verify Output**:
 
     Check the contents of your preview R2 bucket.
 
@@ -75,7 +93,7 @@ After local testing, you can deploy the Worker to the Cloudflare global network.
 
 The easiest way to deploy is with the deploy button, which forks the repository and handles the initial setup automatically.
 
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/smithclay/otlp2parquet)
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://github.com/smithclay/otlp2parquet/tree/main/crates/otlp2parquet-cloudflare)
 
 ### Option B: Manual Deployment
 

@@ -33,7 +33,7 @@ OTLP2PARQUET_S3_BUCKET = "otlp-logs"
 # S3 region (use "auto" for R2, "us-east-1" for MinIO)
 OTLP2PARQUET_S3_REGION = "us-east-1"
 
-# S3 endpoint (optional - leave commented for AWS S3)
+# S3-compatible endpoint (including R2)
 # For local MinIO: http://localhost:9000
 # For Cloudflare R2: https://[account_id].r2.cloudflarestorage.com
 OTLP2PARQUET_S3_ENDPOINT = "http://localhost:9000"
