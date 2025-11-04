@@ -34,13 +34,8 @@
             <span>Trace spans with events, links, and status metadata.</span>
           </li>
         </ul>
-        <p class="note">
-          Missing the fixtures? Generate them with
-          <code>cargo run -p otlp2parquet-core --example generate_demo_parquet -- docs/query-demo/data</code>
-          and refresh this page.
-        </p>
         <div class="status" id="status">
-          <span id="status-text">Initialising…</span>
+          <span id="status-text">Initializing…</span>
         </div>
       </section>
 
@@ -48,9 +43,18 @@
         <h2>2. Compose a query</h2>
         <p>Pick an example or write your own DuckDB SQL using <code>read_parquet('file.parquet')</code>.</p>
         <div class="examples">
-          <button class="example" data-query="SELECT Timestamp, ServiceName, SeverityText, Body\nFROM read_parquet('logs.parquet')\nORDER BY Timestamp DESC\nLIMIT 5;">Logs: latest entries</button>
-          <button class="example" data-query="SELECT MetricName, Attributes['host'] AS host, Value\nFROM read_parquet('metrics_gauge.parquet')\nORDER BY Timestamp\nLIMIT 5;">Metrics: CPU gauge samples</button>
-          <button class="example" data-query="SELECT ServiceName, SpanName, Duration/1e6 AS duration_ms\nFROM read_parquet('traces.parquet')\nORDER BY duration_ms DESC\nLIMIT 5;">Traces: longest spans</button>
+          <button class="example" data-query="SELECT Timestamp, ServiceName, SeverityText, Body
+FROM read_parquet('logs.parquet')
+ORDER BY Timestamp DESC
+LIMIT 5;">Logs: latest entries</button>
+          <button class="example" data-query="SELECT MetricName, Attributes['host'] AS host, Value
+FROM read_parquet('metrics_gauge.parquet')
+ORDER BY Timestamp
+LIMIT 5;">Metrics: CPU gauge samples</button>
+          <button class="example" data-query="SELECT ServiceName, SpanName, Duration/1e6 AS duration_ms
+FROM read_parquet('traces.parquet')
+ORDER BY duration_ms DESC
+LIMIT 5;">Traces: longest spans</button>
         </div>
         <textarea id="sql" spellcheck="false">SELECT Timestamp, ServiceName, SeverityText, Body
 FROM read_parquet('logs.parquet')

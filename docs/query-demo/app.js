@@ -1,4 +1,4 @@
-import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0/+esm';
+import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.31.0/+esm';
 
 const statusEl = document.getElementById('status');
 const statusTextEl = document.getElementById('status-text');
@@ -41,12 +41,12 @@ async function initDuckDB() {
     updateStatus('Loading DuckDB-Wasm…');
     const bundle = await duckdb.selectBundle({
       mvp: {
-        mainModule: 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0/dist/duckdb-mvp.wasm',
-        mainWorker: 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0/dist/duckdb-browser-mvp.worker.js'
+        mainModule: 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.31.0/dist/duckdb-mvp.wasm',
+        mainWorker: 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.31.0/dist/duckdb-browser-mvp.worker.js'
       },
       eh: {
-        mainModule: 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0/dist/duckdb-eh.wasm',
-        mainWorker: 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0/dist/duckdb-browser-eh.worker.js'
+        mainModule: 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.31.0/dist/duckdb-eh.wasm',
+        mainWorker: 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.31.0/dist/duckdb-browser-eh.worker.js'
       }
     });
 
@@ -143,7 +143,7 @@ async function runQuery() {
 
   try {
     const result = await conn.query(sql);
-    const rows = result.toRows();
+    const rows = result.toArray();
     const columns = result.schema?.fields?.map((field) => field.name) ?? (rows[0] ? Object.keys(rows[0]) : []);
 
     renderTable(columns, rows);
