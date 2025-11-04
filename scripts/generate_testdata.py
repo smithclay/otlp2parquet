@@ -15,10 +15,12 @@ for reproducibility. Supports logs, metrics (all 5 types), and traces in JSON,
 JSONL, and Protobuf formats.
 
 Usage:
-    ./scripts/generate_testdata.py              # Generate all testdata
-    ./scripts/generate_testdata.py --only logs  # Only logs
-    ./scripts/generate_testdata.py --only metrics-gauge  # Specific metric type
-    ./scripts/generate_testdata.py --verbose    # Verbose output
+    ./scripts/generate_testdata.py                      # Generate all testdata
+    ./scripts/generate_testdata.py --only logs          # Only logs
+    ./scripts/generate_testdata.py --only metrics-gauge # Specific metric type
+    ./scripts/generate_testdata.py --verbose            # Verbose output
+    ./scripts/generate_testdata.py --size-mb 50         # Generate ~50MB files (uses _large suffix)
+    ./scripts/generate_testdata.py --size-mb 100 --only logs  # 100MB logs only
 """
 
 import argparse
@@ -78,6 +80,18 @@ class GenerationConfig:
     seed: int = SEED
     verbose: bool = False
     only: Optional[str] = None
+    size_mb: Optional[float] = None  # Target file size in MB (estimates record count)
+
+
+def get_output_path(base_name: str, config: GenerationConfig) -> Path:
+    """Get output path with _large suffix when --size-mb is specified."""
+    if config.size_mb:
+        # Always add _large suffix when size is specified to distinguish from checked-in testdata
+        name_parts = base_name.rsplit(".", 1)
+        if len(name_parts) == 2:
+            return TESTDATA_DIR / f"{name_parts[0]}_large.{name_parts[1]}"
+        return TESTDATA_DIR / f"{base_name}_large"
+    return TESTDATA_DIR / base_name
 
 
 # Helper functions for building protobuf structures
@@ -232,6 +246,14 @@ class LogsGenerator:
 
     def generate_batch_logs(self, count: int = 81) -> List[LogsData]:
         """Generate multiple log records (for logs.jsonl) - varied realistic logs."""
+        # If size_mb is specified, estimate count based on ~1.5KB per log record
+        if self.config.size_mb:
+            estimated_bytes = self.config.size_mb * 1024 * 1024
+            avg_record_size = 1500  # Average bytes per log record (conservative estimate)
+            count = max(1, int(estimated_bytes / avg_record_size))
+            if self.config.verbose:
+                print(f"  Generating ~{count} log records to reach ~{self.config.size_mb}MB")
+
         logs_list = []
 
         # Generate varied logs from different services
@@ -305,6 +327,18 @@ class MetricsGenerator:
         self.rng = random.Random(config.seed)
         self.base_time_ns = 1705327800000000000  # Base timestamp from spec
 
+    def _scale_datapoints(self, base_count: int) -> int:
+        """Scale number of data points based on target size."""
+        if not self.config.size_mb:
+            return base_count
+        # Estimate ~800 bytes per metric data point (conservative)
+        estimated_bytes = self.config.size_mb * 1024 * 1024
+        avg_size = 800
+        scaled = max(1, int(estimated_bytes / avg_size))
+        if self.config.verbose:
+            print(f"  Scaling from {base_count} to ~{scaled} data points for ~{self.config.size_mb}MB")
+        return scaled
+
     def generate_gauge(self) -> MetricsData:
         """Generate gauge metrics (instant measurements)."""
         resource = Resource(attributes=[
@@ -314,24 +348,18 @@ class MetricsGenerator:
         ])
 
         # CPU usage gauge with multiple data points
-        cpu_gauge = Gauge(data_points=[
-            NumberDataPoint(
+        num_points = self._scale_datapoints(2)
+        cpu_data_points = []
+        for i in range(num_points):
+            cpu_data_points.append(NumberDataPoint(
                 attributes=[
-                    make_attribute("host", "web-01"),
-                    make_attribute("cpu", 0),
+                    make_attribute("host", f"web-{i // 8 + 1:02d}"),
+                    make_attribute("cpu", i % 8),
                 ],
-                time_unix_nano=self.base_time_ns,
-                as_double=45.2,
-            ),
-            NumberDataPoint(
-                attributes=[
-                    make_attribute("host", "web-01"),
-                    make_attribute("cpu", 1),
-                ],
-                time_unix_nano=self.base_time_ns,
-                as_double=52.8,
-            ),
-        ])
+                time_unix_nano=self.base_time_ns + (i * 1_000_000_000),
+                as_double=self.rng.uniform(20.0, 95.0),
+            ))
+        cpu_gauge = Gauge(data_points=cpu_data_points)
 
         # Memory available gauge
         memory_gauge = Gauge(data_points=[
@@ -858,6 +886,14 @@ class TracesGenerator:
 
     def generate_batch_traces(self, count: int = 19) -> List[TracesData]:
         """Generate multiple trace spans (for traces.jsonl)."""
+        # If size_mb is specified, estimate count based on ~2KB per trace span
+        if self.config.size_mb:
+            estimated_bytes = self.config.size_mb * 1024 * 1024
+            avg_record_size = 2000  # Average bytes per trace span (conservative estimate)
+            count = max(1, int(estimated_bytes / avg_record_size))
+            if self.config.verbose:
+                print(f"  Generating ~{count} trace spans to reach ~{self.config.size_mb}MB")
+
         traces_list = []
 
         # Generate varied traces from different services
@@ -1001,18 +1037,22 @@ def generate_all_logs(config: GenerationConfig):
     print("Generating logs...")
     generator = LogsGenerator(config)
 
-    # log.json - single log record
-    single_log = generator.generate_single_log()
-    export_to_json(single_log, TESTDATA_DIR / "log.json")
+    if config.size_mb:
+        # For size-specified generation, only generate batch logs
+        batch_logs = generator.generate_batch_logs()
+        export_to_jsonl(batch_logs, get_output_path("logs.jsonl", config))
+        export_to_protobuf(batch_logs, get_output_path("logs.pb", config))
+        print(f"  ✓ logs_large.{{jsonl,pb}} (~{config.size_mb}MB)")
+    else:
+        # Standard small testdata
+        single_log = generator.generate_single_log()
+        export_to_json(single_log, TESTDATA_DIR / "log.json")
 
-    # logs.jsonl - 81 log records
-    batch_logs = generator.generate_batch_logs(81)
-    export_to_jsonl(batch_logs, TESTDATA_DIR / "logs.jsonl")
+        batch_logs = generator.generate_batch_logs(81)
+        export_to_jsonl(batch_logs, TESTDATA_DIR / "logs.jsonl")
+        export_to_protobuf(batch_logs, TESTDATA_DIR / "logs.pb")
 
-    # logs.pb - protobuf version of logs.jsonl
-    export_to_protobuf(batch_logs, TESTDATA_DIR / "logs.pb")
-
-    print("  ✓ log.json, logs.jsonl, logs.pb")
+        print("  ✓ log.json, logs.jsonl, logs.pb")
 
 
 def generate_all_metrics(config: GenerationConfig):
@@ -1051,17 +1091,23 @@ def generate_all_traces(config: GenerationConfig):
     print("Generating traces...")
     generator = TracesGenerator(config)
 
-    # trace.json - single trace with 2 spans
-    single_trace = generator.generate_single_trace()
-    export_to_json(single_trace, TESTDATA_DIR / "trace.json")
-    export_to_protobuf(single_trace, TESTDATA_DIR / "trace.pb")
+    if config.size_mb:
+        # For size-specified generation, only generate batch traces
+        batch_traces = generator.generate_batch_traces()
+        export_to_jsonl(batch_traces, get_output_path("traces.jsonl", config))
+        export_to_protobuf(batch_traces, get_output_path("traces.pb", config))
+        print(f"  ✓ traces_large.{{jsonl,pb}} (~{config.size_mb}MB)")
+    else:
+        # Standard small testdata
+        single_trace = generator.generate_single_trace()
+        export_to_json(single_trace, TESTDATA_DIR / "trace.json")
+        export_to_protobuf(single_trace, TESTDATA_DIR / "trace.pb")
 
-    # traces.jsonl - 19 trace spans
-    batch_traces = generator.generate_batch_traces(19)
-    export_to_jsonl(batch_traces, TESTDATA_DIR / "traces.jsonl")
-    export_to_protobuf(batch_traces, TESTDATA_DIR / "traces.pb")
+        batch_traces = generator.generate_batch_traces(19)
+        export_to_jsonl(batch_traces, TESTDATA_DIR / "traces.jsonl")
+        export_to_protobuf(batch_traces, TESTDATA_DIR / "traces.pb")
 
-    print("  ✓ trace.json, trace.pb, traces.jsonl, traces.pb")
+        print("  ✓ trace.json, trace.pb, traces.jsonl, traces.pb")
 
 
 def main():
@@ -1083,12 +1129,19 @@ def main():
         action="store_true",
         help="Enable verbose output"
     )
+    parser.add_argument(
+        "--size-mb",
+        type=float,
+        help="Target file size in MB (generates enough records to approximate this size). "
+             "Files are named with _large suffix and excluded from git via .gitignore"
+    )
 
     args = parser.parse_args()
     config = GenerationConfig(
         seed=SEED,
         verbose=args.verbose,
-        only=args.only
+        only=args.only,
+        size_mb=args.size_mb
     )
 
     print(f"🔧 Generating OpenTelemetry test data (seed={SEED})")

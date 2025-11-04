@@ -48,3 +48,8 @@ node_modules
 # Kubernetes secrets (use secret.yaml.example as template)
 **/secret.yaml
 !**/secret.yaml.example
+
+# Large test data files (generated with --size-mb flag)
+# These files always use _large suffix and should not be committed
+testdata/*_large.*
+testdata/**/*_large.*
