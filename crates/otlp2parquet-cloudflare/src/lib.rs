@@ -177,12 +177,9 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
         return Response::error("Payload too large", 413);
     }
 
+    // Handle traces separately
     if matches!(signal, SignalKind::Traces) {
-        let response = Response::from_json(&json!({
-            "error": "OTLP trace ingestion not implemented yet",
-        }))?
-        .with_status(501);
-        return Ok(response);
+        return handle_traces_request(&body_bytes, format, content_type, &storage).await;
     }
 
     // Handle metrics separately
@@ -248,6 +245,76 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
         "records_processed": metadata.record_count,
         "flush_count": uploaded_paths.len(),
         "partitions": uploaded_paths,
+    });
+
+    Response::from_json(&response_body)
+}
+
+/// Handle traces request
+async fn handle_traces_request(
+    body_bytes: &[u8],
+    format: otlp2parquet_core::InputFormat,
+    content_type: Option<&str>,
+    storage: &Arc<otlp2parquet_storage::opendal_storage::OpenDalStorage>,
+) -> Result<Response> {
+    // Parse OTLP traces request
+    let request = otlp::traces::parse_otlp_trace_request(body_bytes, format).map_err(|e| {
+        console_error!(
+            "Failed to parse OTLP traces (format: {:?}, content-type: {:?}): {:?}",
+            format,
+            content_type,
+            e
+        );
+        worker::Error::RustError(format!("Processing error: {}", e))
+    })?;
+
+    // Convert to Arrow
+    let (batches, metadata) =
+        otlp::traces::TraceArrowConverter::convert(&request).map_err(|e| {
+            console_error!("Failed to convert OTLP traces to Arrow: {:?}", e);
+            worker::Error::RustError(format!("Encoding error: {}", e))
+        })?;
+
+    if batches.is_empty() || metadata.span_count == 0 {
+        let response = Response::from_json(&json!({
+            "status": "ok",
+            "message": "No trace spans to process",
+        }))?;
+        return Ok(response);
+    }
+
+    // Write Parquet synchronously (WASM-compatible)
+    let parquet_bytes = wasm_parquet::write_batches_to_parquet(&batches).map_err(|e| {
+        console_error!("Failed to serialize traces Parquet: {:?}", e);
+        worker::Error::RustError(format!("Parquet serialization error: {}", e))
+    })?;
+
+    // Compute Blake3 hash
+    let hash_bytes = blake3::hash(&parquet_bytes);
+    let hash_hex = hex::encode(hash_bytes.as_bytes());
+
+    // Generate partition path for traces
+    let partition_path = otlp2parquet_storage::partition::generate_partition_path_with_signal(
+        "traces",
+        metadata.service_name.as_ref(),
+        metadata.first_timestamp_nanos,
+        &hash_hex,
+        None, // No subdirectory for traces (unlike metrics)
+    );
+
+    // Upload to R2
+    storage
+        .write(&partition_path, parquet_bytes)
+        .await
+        .map_err(|e| {
+            console_error!("Failed to write traces to R2: {:?}", e);
+            worker::Error::RustError(format!("Storage error: {}", e))
+        })?;
+
+    let response_body = json!({
+        "status": "ok",
+        "spans_processed": metadata.span_count,
+        "partitions": vec![partition_path],
     });
 
     Response::from_json(&response_body)
