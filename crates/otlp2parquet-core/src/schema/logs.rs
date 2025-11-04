@@ -11,6 +11,7 @@ use arrow::datatypes::{DataType, Field, Fields, Schema, TimeUnit};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
+use super::helpers::field_with_id;
 use crate::otlp::field_names::{arrow as field, semconv};
 
 /// Returns the Arrow schema for OpenTelemetry logs compatible with ClickHouse
@@ -25,41 +26,51 @@ pub fn otel_logs_schema_arc() -> Arc<Schema> {
 }
 
 fn build_schema() -> Schema {
+    let mut id = 1;
+
     let fields = vec![
         // Timestamps - nanosecond precision, UTC
-        Field::new(
+        field_with_id(
             field::TIMESTAMP,
             DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())),
             false,
+            &mut id,
         ),
-        Field::new(
+        field_with_id(
             field::TIMESTAMP_TIME,
             DataType::Timestamp(TimeUnit::Second, Some("UTC".into())),
             false,
+            &mut id,
         ),
-        Field::new(
+        field_with_id(
             field::OBSERVED_TIMESTAMP,
             DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())),
             false,
+            &mut id,
         ),
         // Trace context
-        Field::new(field::TRACE_ID, DataType::FixedSizeBinary(16), false),
-        Field::new(field::SPAN_ID, DataType::FixedSizeBinary(8), false),
-        Field::new(field::TRACE_FLAGS, DataType::UInt32, false),
+        field_with_id(
+            field::TRACE_ID,
+            DataType::FixedSizeBinary(16),
+            false,
+            &mut id,
+        ),
+        field_with_id(field::SPAN_ID, DataType::FixedSizeBinary(8), false, &mut id),
+        field_with_id(field::TRACE_FLAGS, DataType::UInt32, false, &mut id),
         // Severity
-        Field::new(field::SEVERITY_TEXT, DataType::Utf8, false),
-        Field::new(field::SEVERITY_NUMBER, DataType::Int32, false),
+        field_with_id(field::SEVERITY_TEXT, DataType::Utf8, false, &mut id),
+        field_with_id(field::SEVERITY_NUMBER, DataType::Int32, false, &mut id),
         // Body as structured AnyValue
-        any_value_field(field::BODY, true),
+        any_value_field(field::BODY, true, &mut id),
         // Resource attributes - extracted common fields
-        Field::new(field::SERVICE_NAME, DataType::Utf8, false),
-        Field::new(field::SERVICE_NAMESPACE, DataType::Utf8, true),
-        Field::new(field::SERVICE_INSTANCE_ID, DataType::Utf8, true),
-        Field::new(field::RESOURCE_SCHEMA_URL, DataType::Utf8, true),
+        field_with_id(field::SERVICE_NAME, DataType::Utf8, false, &mut id),
+        field_with_id(field::SERVICE_NAMESPACE, DataType::Utf8, true, &mut id),
+        field_with_id(field::SERVICE_INSTANCE_ID, DataType::Utf8, true, &mut id),
+        field_with_id(field::RESOURCE_SCHEMA_URL, DataType::Utf8, true, &mut id),
         // Scope
-        Field::new(field::SCOPE_NAME, DataType::Utf8, false),
-        Field::new(field::SCOPE_VERSION, DataType::Utf8, true),
-        Field::new(
+        field_with_id(field::SCOPE_NAME, DataType::Utf8, false, &mut id),
+        field_with_id(field::SCOPE_VERSION, DataType::Utf8, true, &mut id),
+        field_with_id(
             field::SCOPE_ATTRIBUTES,
             DataType::Map(
                 Arc::new(Field::new(
@@ -67,7 +78,7 @@ fn build_schema() -> Schema {
                     DataType::Struct(
                         vec![
                             Field::new(field::KEY, DataType::Utf8, false),
-                            any_value_field(field::VALUE, true),
+                            any_value_field_no_id(field::VALUE, true),
                         ]
                         .into(),
                     ),
@@ -76,10 +87,11 @@ fn build_schema() -> Schema {
                 false,
             ),
             false,
+            &mut id,
         ),
-        Field::new(field::SCOPE_SCHEMA_URL, DataType::Utf8, true),
+        field_with_id(field::SCOPE_SCHEMA_URL, DataType::Utf8, true, &mut id),
         // Remaining attributes as Map<String, AnyValue>
-        Field::new(
+        field_with_id(
             field::RESOURCE_ATTRIBUTES,
             DataType::Map(
                 Arc::new(Field::new(
@@ -87,7 +99,7 @@ fn build_schema() -> Schema {
                     DataType::Struct(
                         vec![
                             Field::new(field::KEY, DataType::Utf8, false),
-                            any_value_field(field::VALUE, true),
+                            any_value_field_no_id(field::VALUE, true),
                         ]
                         .into(),
                     ),
@@ -96,8 +108,9 @@ fn build_schema() -> Schema {
                 false,
             ),
             false,
+            &mut id,
         ),
-        Field::new(
+        field_with_id(
             field::LOG_ATTRIBUTES,
             DataType::Map(
                 Arc::new(Field::new(
@@ -105,7 +118,7 @@ fn build_schema() -> Schema {
                     DataType::Struct(
                         vec![
                             Field::new(field::KEY, DataType::Utf8, false),
-                            any_value_field(field::VALUE, true),
+                            any_value_field_no_id(field::VALUE, true),
                         ]
                         .into(),
                     ),
@@ -114,6 +127,7 @@ fn build_schema() -> Schema {
                 false,
             ),
             false,
+            &mut id,
         ),
     ];
 
@@ -152,7 +166,11 @@ pub(crate) fn any_value_fields() -> Fields {
     .into()
 }
 
-fn any_value_field(name: &str, nullable: bool) -> Field {
+fn any_value_field(name: &str, nullable: bool, id: &mut i32) -> Field {
+    field_with_id(name, DataType::Struct(any_value_fields()), nullable, id)
+}
+
+fn any_value_field_no_id(name: &str, nullable: bool) -> Field {
     Field::new(name, DataType::Struct(any_value_fields()), nullable)
 }
 
@@ -181,5 +199,41 @@ mod tests {
         assert_eq!(schema.field(12).name(), field::RESOURCE_SCHEMA_URL);
         assert_eq!(schema.field(16).name(), field::SCOPE_SCHEMA_URL);
         assert_eq!(schema.field(15).name(), field::SCOPE_ATTRIBUTES);
+    }
+
+    #[test]
+    fn test_field_ids_present() {
+        let schema = otel_logs_schema();
+
+        // Verify all top-level fields have Parquet field IDs
+        for field in schema.fields() {
+            assert!(
+                field.metadata().contains_key("PARQUET:field_id"),
+                "Field '{}' is missing PARQUET:field_id metadata",
+                field.name()
+            );
+        }
+    }
+
+    #[test]
+    fn test_field_ids_sequential() {
+        let schema = otel_logs_schema();
+
+        // Verify field IDs are sequential starting from 1
+        for (idx, field) in schema.fields().iter().enumerate() {
+            let field_id = field
+                .metadata()
+                .get("PARQUET:field_id")
+                .expect("Field should have PARQUET:field_id");
+            let expected_id = (idx + 1).to_string();
+            assert_eq!(
+                field_id,
+                &expected_id,
+                "Field '{}' has ID {} but expected {}",
+                field.name(),
+                field_id,
+                expected_id
+            );
+        }
     }
 }
