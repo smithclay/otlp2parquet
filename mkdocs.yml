@@ -63,7 +63,7 @@ nav:
           - AWS Lambda: deployment/aws-lambda.md
       - Sending Data: sending-data.md
       - Configuration: configuration.md
-  - Querying Data: querying-data.md
+      - Querying Data: querying-data.md
   - Developers:
       - Overview: developers/index.md
       - Architecture: developers/architecture.md
@@ -71,6 +71,7 @@ nav:
       - Development Setup: developers/development-setup.md
       - Performance Audit: developers/performance.md
       - Style Guide: developers/style-guide.md
+  - DuckDB Query Demo ↗: https://smithclay.github.io/otlp2parquet/query-demo/
 
 plugins:
   - search

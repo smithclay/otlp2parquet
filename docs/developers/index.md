@@ -11,8 +11,7 @@ This section provides an overview of the project's mission, architecture, and de
 The project operates under several critical constraints:
 
 *   **Minimal Binary Size**: The compressed WASM binary must be under 3MB for Cloudflare Workers.
-*   **Schema Compatibility**: The output Parquet schema is ClickHouse-compatible.
-*   **Automatic Platform Detection**: The binary adapts its behavior by auto-detecting its runtime environment (Server, Lambda, or Cloudflare).
+*   **Schema Compatibility**: The output Parquet schema is ClickHouse exporter-compatible. It will evolve with breaking changes as the OTAP standard evolves.
 *   **Unified Storage**: [Apache OpenDAL](https://opendal.apache.org/) provides a consistent storage API across all platforms (S3, R2, Filesystem, etc.).
 
 The core philosophy separates the **essence** (pure OTLP→Parquet conversion) from the **accident** (platform-specific I/O and networking). This results in a pure, deterministic core logic adapted by platform-specific entry points.

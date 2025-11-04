@@ -105,7 +105,3 @@ The Docker container is configured entirely through environment variables. Below
 | `OTLP2PARQUET_S3_ENDPOINT` | - | Custom S3 endpoint for S3-compatible services like MinIO. |
 | `OTLP2PARQUET_LISTEN_ADDR` | `0.0.0.0:4318` | The listen address for the HTTP server. |
 | `OTLP2PARQUET_LOG_LEVEL` | `info` | Log level: `trace`, `debug`, `info`, `warn`, `error`. |
-
-## Kubernetes
-
-For Kubernetes deployment, see the provided [Kubernetes manifests](../../deploy/docker/kubernetes/) for examples.

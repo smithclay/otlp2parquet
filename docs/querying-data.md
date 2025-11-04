@@ -6,7 +6,6 @@ This guide shows how to configure DuckDB and run queries against your logs, metr
 
 !!! tip "Try it in your browser"
     Explore a deterministic sample dataset with DuckDB-Wasm in the interactive [querying demo](query-demo/index.html).
-    Generate the fixtures first with `cargo run -p otlp2parquet-core --example generate_demo_parquet -- docs/query-demo/data`.
 
 ## Setup
 
