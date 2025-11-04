@@ -16,6 +16,7 @@ use worker::*;
 
 static STORAGE: OnceCell<Arc<otlp2parquet_storage::opendal_storage::OpenDalStorage>> =
     OnceCell::new();
+static CONFIG: OnceCell<otlp2parquet_config::RuntimeConfig> = OnceCell::new();
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum SignalKind {
@@ -50,6 +51,14 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
     if let Err(response) = auth::check_basic_auth(&req, &env) {
         return Ok(response);
     }
+
+    // Load config once (with platform detection and env var overrides)
+    let config = CONFIG.get_or_try_init(|| {
+        otlp2parquet_config::RuntimeConfig::load().map_err(|e| {
+            console_error!("Failed to load configuration: {:?}", e);
+            worker::Error::RustError(format!("Config error: {}", e))
+        })
+    })?;
 
     let storage = if let Some(existing) = STORAGE.get() {
         existing.clone()
@@ -116,7 +125,19 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
         instance
     };
 
-    let max_payload_bytes = 1024 * 1024; // 1MB max payload
+    // Use configurable max payload size (default 10MB for CF Workers)
+    // Can be overridden via OTLP2PARQUET_MAX_PAYLOAD_BYTES env var
+    let max_payload_bytes = config.request.max_payload_bytes;
+
+    console_log!(
+        "Processing {} request (max payload: {} MB)",
+        match signal {
+            SignalKind::Logs => "logs",
+            SignalKind::Traces => "traces",
+            SignalKind::Metrics => "metrics",
+        },
+        max_payload_bytes / (1024 * 1024)
+    );
 
     let content_type_header = req.headers().get("content-type").ok().flatten();
     let content_type = content_type_header.as_deref();
@@ -128,7 +149,20 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
     })?;
 
     if body_bytes.len() > max_payload_bytes {
-        return Response::error("Payload too large", 413);
+        console_error!(
+            "Payload too large: {} bytes (max: {} bytes / {} MB)",
+            body_bytes.len(),
+            max_payload_bytes,
+            max_payload_bytes / (1024 * 1024)
+        );
+        return Response::error(
+            format!(
+                "Payload too large: {} bytes exceeds limit of {} MB",
+                body_bytes.len(),
+                max_payload_bytes / (1024 * 1024)
+            ),
+            413,
+        );
     }
 
     // Route to appropriate handler based on signal type

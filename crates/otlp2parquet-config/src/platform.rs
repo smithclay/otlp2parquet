@@ -47,7 +47,7 @@ impl Platform {
                 batch_max_rows: 100_000,
                 batch_max_bytes: 64 * 1024 * 1024, // 64 MB
                 batch_max_age_secs: 5,
-                max_payload_bytes: 1024 * 1024, // 1 MB
+                max_payload_bytes: 10 * 1024 * 1024, // 10 MB
                 storage_backend: "r2",
             },
         }

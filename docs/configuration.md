@@ -31,6 +31,14 @@ export OTLP2PARQUET_STORAGE_BACKEND=s3
 export OTLP2PARQUET_LOG_LEVEL=debug
 ```
 
+#### Common Environment Variables
+
+*   `OTLP2PARQUET_MAX_PAYLOAD_BYTES` - Maximum request body size in bytes (default varies by platform)
+*   `OTLP2PARQUET_STORAGE_BACKEND` - Storage backend: `fs`, `s3`, or `r2`
+*   `OTLP2PARQUET_S3_BUCKET` - S3/R2 bucket name
+*   `OTLP2PARQUET_S3_REGION` - S3 region (default: `auto` for R2)
+*   `OTLP2PARQUET_S3_ENDPOINT` - Custom S3 endpoint (for MinIO, R2, etc.)
+
 Specific variables for each platform are shown in the corresponding deployment guides.
 
 ### Using a TOML File (Recommended)
@@ -43,6 +51,10 @@ The application automatically looks for `config.toml` or `.otlp2parquet.toml` in
 
 ```toml
 # config.toml
+
+# Request handling settings
+[request]
+max_payload_bytes = 10485760  # 10 MiB (10 * 1024 * 1024)
 
 # Settings for the in-memory batch processor
 [batch]
@@ -85,5 +97,5 @@ Each platform has different defaults optimized for its constraints.
 ### Cloudflare Workers
 
 *   **Batching**: 100k rows, 64 MiB, 5 seconds
-*   **Max Payload**: 1 MiB
+*   **Max Payload**: 10 MiB
 *   **Storage**: R2 (required)

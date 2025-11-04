@@ -3,16 +3,16 @@
 [![CI](https://github.com/smithclay/otlp2parquet/actions/workflows/ci.yml/badge.svg)](https://github.com/smithclay/otlp2parquet/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-> Put your observability data in cheap object storage, servers optional.
+> Put your observability data in cost-effective cloud object storage, servers optional.
 
-`otlp2parquet` ingests OpenTelemetry logs, metrics, and traces and stores them in object storage in Parquet format. It can run natively in serverless runtimes like AWS Lambda and Cloudflare Workers.
+`otlp2parquet` ingests OpenTelemetry logs, metrics, and traces and stores them in object storage as Parquet files. It runs natively in serverless runtimes like AWS Lambda and Cloudflare Workers. With [some optimization](#notes-on-batch-sizes) and using a duckdb client, this is likely one of the cheapest ways to store and query structured observability data in the cloud with long-term retention.
 
-While functional, the project is experimental as the [API and schema are evolving](#notes-on-the-schema). It is _not_ a telemetry pipeline: in production scenarios, it would be paired with [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/), [Vector](https://vector.dev/), Cribl, or similar to perform transformations, routing, and batching. See [other projects](#other-projects) for related work in this space.
+While functional, the project is experimental as the [API and schema are evolving](#parquet-schema-for-logs-metrics-and-traces). It is _not_ a telemetry pipeline: in production scenarios, it would be paired with [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/), [Vector](https://vector.dev/), Cribl, or similar to perform transformations, routing, and batching.
 
 **Key Features:**
 *   Ingests OTLP HTTP (protobuf, JSON, or JSONL) for logs, metrics, and traces.
 *   Writes Parquet files for [easy and efficient querying in duckdb](https://duckdb.org/docs/stable/data/parquet/overview).**
-*   Supports Docker, Cloudflare Workers (WASM), and AWS Lambda deployments.
+*   Supports Docker, Cloudflare Workers (WASM, paid-tier), and AWS Lambda deployments.
 *   Small and fast: written in Rust, uncompressed binary size is ~5 MB.
 
 _Note: If you want to query or convert existing OTLP files, you can use the [otlp-duckdb](https://github.com/smithclay/duckdb-otlp) extension. This project is focused on converting streaming OTLP data._
@@ -34,17 +34,19 @@ _Note: If you want to query or convert existing OTLP files, you can use the [otl
 | **Advanced Features** | | | |
 | In-Memory Batching | ✅ | ❌** | ❌** |
 
-** In serverless environments, batching must be handled by an upstream agent like the [OpenTelemetry Collector](https://github.com/open-telemetry/opentelemetry-collector) or [Vector](https://github.com/vectordotdev/vector) to optimize performance and cost ([see example configuration](docs/get-started/usage.md#batching-with-opentelemetry-collector)).
-
 ## Documentation
 
 For deployment instructions, usage examples, and detailed guides:
 
 ➡️ [**View Documentation**](https://smithclay.github.io/otlp2parquet/)
 
-## Notes on the schema
+## Notes on batch sizes
 
-This is a proof-of-concept to make storing OpenTelemetry data in object storage more accessible.
+Lots of small writes to cloud object storage will explode your bill: proceed with caution.
+
+In serverless environments, batching must be handled by an upstream agent like the [OpenTelemetry Collector](https://github.com/open-telemetry/opentelemetry-collector) or [Vector](https://github.com/vectordotdev/vector) to optimize performance and cost ([see example configuration](docs/get-started/usage.md#batching-with-opentelemetry-collector)).
+
+## Parquet Schema for logs, metrics, and traces
 
 The current schema is based on the ClickHouse OpenTelemetry exporter schema, similar to the [duckdb-otlp extension](https://github.com/smithclay/duckdb-otlp). This project serves as a bridge to the official [OpenTelemetry Arrow Protocol](https://github.com/open-telemetry/otel-arrow) (OTAP) protocol under active development.
 
@@ -52,7 +54,7 @@ We plan to converge with the official protocol once it becomes generally availab
 
 ## Related projects
 
-Below are other projects that have support for converting OTLP to Parquet format.
+Below are other projects that also have support for converting OTLP to Parquet format.
 
 - https://github.com/open-telemetry/opentelemetry-rust
 - https://github.com/Mooncake-Labs/moonlink

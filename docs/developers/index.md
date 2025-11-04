@@ -34,8 +34,8 @@ The project has completed its foundational phases, including the workspace struc
 
 Future development includes:
 
-*   Support for JSON and JSONL input formats.
-*   Kubernetes manifests and Helm charts.
+*   Batch size tuning suggestions.
+*   Cost analysis per provider.
 *   Load testing and performance benchmarks.
 
 For more detail, see the [Architecture](architecture.md) and [Performance](performance.md) documentation.
