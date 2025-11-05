@@ -2510,7 +2510,6 @@ dependencies = [
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "worker",
 ]
 
 [[package]]

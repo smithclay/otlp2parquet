@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use crate::{
-    catalog::NamespaceIdent, IcebergCatalog, IcebergCommitter, IcebergRestConfig, NativeHttpClient,
+    catalog::NamespaceIdent, IcebergCatalog, IcebergCommitter, IcebergRestConfig, ReqwestHttpClient,
 };
 
 /// Result of Iceberg initialization.
@@ -82,7 +82,7 @@ pub async fn initialize_committer() -> InitResult {
     };
 
     // Create HTTP client
-    let http_client = match NativeHttpClient::new(&config.rest_uri).await {
+    let http_client = match ReqwestHttpClient::new(&config.rest_uri).await {
         Ok(client) => client,
         Err(e) => return InitResult::CatalogError(format!("Failed to create HTTP client: {}", e)),
     };

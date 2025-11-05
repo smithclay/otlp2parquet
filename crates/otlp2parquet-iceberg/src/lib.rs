@@ -100,21 +100,9 @@ pub mod validation;
 // Re-export commonly used types
 pub use arrow_convert::arrow_to_iceberg_schema;
 pub use catalog::IcebergCatalog;
+pub use http::ReqwestHttpClient;
 pub use validation::validate_schema_compatibility;
 // Note: datafile_convert::build_data_file conflicts with old build_data_file, so not re-exported
-
-// Platform-specific HTTP implementations
-#[cfg(not(target_arch = "wasm32"))]
-pub mod http_native;
-
-#[cfg(not(target_arch = "wasm32"))]
-pub use http_native::NativeHttpClient;
-
-#[cfg(target_arch = "wasm32")]
-pub mod http_wasm;
-
-#[cfg(target_arch = "wasm32")]
-pub use http_wasm::WasmHttpClient;
 
 use std::collections::HashMap;
 use std::env;
@@ -304,12 +292,12 @@ impl IcebergRestConfig {
 /// 3. Implements warn-and-succeed pattern
 #[cfg(not(target_arch = "wasm32"))]
 pub struct IcebergCommitter {
-    catalog: Arc<IcebergCatalog<NativeHttpClient>>,
+    catalog: Arc<IcebergCatalog<ReqwestHttpClient>>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl IcebergCommitter {
-    pub fn new(catalog: Arc<IcebergCatalog<NativeHttpClient>>) -> Self {
+    pub fn new(catalog: Arc<IcebergCatalog<ReqwestHttpClient>>) -> Self {
         Self { catalog }
     }
 
