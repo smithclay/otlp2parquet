@@ -3,7 +3,7 @@
 // Serializes Arrow RecordBatches, computes a Blake3 content hash while
 // encoding, and uploads the resulting Parquet bytes to OpenDAL storage.
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use arrow::array::RecordBatch;
 use arrow::datatypes::SchemaRef;
 use chrono::{DateTime, Utc};
@@ -223,19 +223,26 @@ impl ParquetWriter {
         let mut sink = HashingBuffer::new();
         let props = writer_properties().clone();
         let schema: SchemaRef = batches[0].schema();
-        let metadata: ParquetMetaData = {
+        {
             let mut writer =
                 parquet::arrow::ArrowWriter::try_new(&mut sink, schema.clone(), Some(props))?;
 
             for batch in batches {
                 writer.write(batch)?;
             }
-            writer.close()?
-        };
+            writer.close()?;
+        }
 
         let (buffer, hash) = sink.finish();
         let file_size = buffer.len() as u64;
-        let parquet_metadata = Arc::new(metadata);
+
+        // Parse the parquet bytes to extract full metadata
+        use bytes::Bytes;
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+        let bytes = Bytes::from(buffer.clone());
+        let reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
+            .context("failed to parse parquet metadata from bytes")?;
+        let parquet_metadata = Arc::new(reader.metadata().as_ref().clone());
         let row_count = parquet_metadata.file_metadata().num_rows();
         let completed_at = Utc::now();
 

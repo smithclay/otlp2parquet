@@ -1,0 +1,30 @@
+[package]
+name = "otlp2parquet-iceberg"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+# Internal dependencies
+otlp2parquet-storage = { path = "../otlp2parquet-storage" }
+
+# Iceberg (core) - using git version to match catalog-rest dependency
+iceberg = { git = "https://github.com/apache/iceberg-rust", rev = "4a6ea15a7dd73e7c68b0a24441820b13bdd22a92", default-features = false, features = ["storage-s3"] }
+
+# Iceberg REST catalog (generic - works with S3 Tables and other REST endpoints)
+iceberg-catalog-rest = { git = "https://github.com/apache/iceberg-rust", rev = "4a6ea15a7dd73e7c68b0a24441820b13bdd22a92" }
+
+# Utilities
+anyhow = { workspace = true }
+async-trait = "0.1"
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+
+# Parquet metadata access
+parquet = { workspace = true, features = ["arrow"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

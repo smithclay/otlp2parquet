@@ -14,7 +14,6 @@
 // Core transformation is in: otlp2parquet-core (OTLP → Arrow)
 // Batching utilities are in: otlp2parquet-batch
 
-pub mod iceberg;
 pub mod opendal_storage;
 pub mod parquet_writer;
 pub mod partition;
