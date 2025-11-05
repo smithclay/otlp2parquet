@@ -37,6 +37,14 @@ services:
       echo 'MinIO bucket ready';
       "
 
+  # Iceberg REST catalog
+  nessie:
+    image: ghcr.io/projectnessie/nessie:latest
+    environment:
+      QUARKUS_HTTP_PORT: "19120"
+      # enable Iceberg REST catalog endpoints
+      QUARKUS_PROFILE: "iceberg-rest"
+
   # otlp2parquet
   otlp2parquet:
     # image: ghcr.io/smithclay/otlp2parquet:latest

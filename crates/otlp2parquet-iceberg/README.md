@@ -45,15 +45,38 @@ Set these environment variables (following the `OTLP2PARQUET_` prefix convention
 ```bash
 # Required
 OTLP2PARQUET_ICEBERG_REST_URI="https://s3tables.us-east-1.amazonaws.com/iceberg"
-OTLP2PARQUET_ICEBERG_TABLE="otel_logs"
 
-# Optional
-OTLP2PARQUET_ICEBERG_WAREHOUSE="s3://my-warehouse"  # Warehouse location
-OTLP2PARQUET_ICEBERG_NAMESPACE="otel.production"  # Dot-separated namespace
-OTLP2PARQUET_ICEBERG_CATALOG_NAME="rest"  # Catalog name (default: "rest")
-OTLP2PARQUET_ICEBERG_STAGING_PREFIX="data/incoming"  # Staging prefix (default: "data/incoming")
-OTLP2PARQUET_ICEBERG_TARGET_FILE_SIZE_BYTES="536870912"  # Target file size (default: 512MB)
+# Optional - Table names per signal type (defaults shown)
+# Each signal type writes to its own table for optimal query performance
+OTLP2PARQUET_ICEBERG_TABLE_LOGS="otel_logs"                                          # Logs table
+OTLP2PARQUET_ICEBERG_TABLE_TRACES="otel_traces"                                      # Traces table
+OTLP2PARQUET_ICEBERG_TABLE_METRICS_GAUGE="otel_metrics_gauge"                        # Gauge metrics
+OTLP2PARQUET_ICEBERG_TABLE_METRICS_SUM="otel_metrics_sum"                            # Sum metrics
+OTLP2PARQUET_ICEBERG_TABLE_METRICS_HISTOGRAM="otel_metrics_histogram"                # Histogram metrics
+OTLP2PARQUET_ICEBERG_TABLE_METRICS_EXPONENTIAL_HISTOGRAM="otel_metrics_exponential_histogram"  # Exponential histogram metrics
+OTLP2PARQUET_ICEBERG_TABLE_METRICS_SUMMARY="otel_metrics_summary"                    # Summary metrics
+
+# Optional - Catalog settings
+OTLP2PARQUET_ICEBERG_WAREHOUSE="s3://my-warehouse"           # Warehouse location
+OTLP2PARQUET_ICEBERG_NAMESPACE="otel.production"             # Dot-separated namespace
+OTLP2PARQUET_ICEBERG_CATALOG_NAME="rest"                     # Catalog name (default: "rest")
+OTLP2PARQUET_ICEBERG_STAGING_PREFIX="data/incoming"          # Staging prefix (default: "data/incoming")
+OTLP2PARQUET_ICEBERG_TARGET_FILE_SIZE_BYTES="536870912"      # Target file size (default: 512MB)
 ```
+
+### Multi-Table Architecture
+
+The integration writes each signal type to a dedicated table:
+- **Logs** → `otel_logs` (default)
+- **Traces** → `otel_traces` (default)
+- **Metrics** → 5 separate tables by metric type:
+  - Gauge → `otel_metrics_gauge`
+  - Sum → `otel_metrics_sum`
+  - Histogram → `otel_metrics_histogram`
+  - Exponential Histogram → `otel_metrics_exponential_histogram`
+  - Summary → `otel_metrics_summary`
+
+This provides schema homogeneity within each table for optimal query performance and allows independent schema evolution per signal type.
 
 ## Usage
 
@@ -65,6 +88,7 @@ The Lambda and Server runtimes automatically initialize the Iceberg committer if
 use otlp2parquet_iceberg::{
     create_rest_catalog, IcebergCommitter, IcebergTableIdentifier, IcebergRestConfig,
 };
+use std::collections::HashMap;
 
 // Load config from environment
 let config = IcebergRestConfig::from_env()?;
@@ -72,17 +96,29 @@ let config = IcebergRestConfig::from_env()?;
 // Create REST catalog
 let catalog = create_rest_catalog(&config).await?;
 
-// Create table identifier
-let table_ident = IcebergTableIdentifier::new(
-    config.namespace_ident()?,
-    config.table.clone(),
-);
+// Build table map from config
+let namespace = config.namespace_ident()?;
+let mut tables = HashMap::new();
+for (signal_key, table_name) in &config.tables {
+    let table_ident = IcebergTableIdentifier::new(
+        namespace.clone(),
+        table_name.clone(),
+    );
+    tables.insert(signal_key.clone(), table_ident);
+}
 
 // Create committer
-let committer = IcebergCommitter::new(catalog, table_ident, config);
+let committer = IcebergCommitter::new(catalog, tables, config);
 
 // Commit Parquet files (writes already in S3/storage)
-committer.commit(&parquet_results).await?;
+// For logs:
+committer.commit_with_signal("logs", None, &parquet_results).await?;
+
+// For traces:
+committer.commit_with_signal("traces", None, &parquet_results).await?;
+
+// For metrics (specify metric type):
+committer.commit_with_signal("metrics", Some("gauge"), &parquet_results).await?;
 ```
 
 ### Error Handling

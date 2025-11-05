@@ -171,8 +171,11 @@ async fn process_logs(
 
         // Commit to Iceberg catalog if configured (warn-and-succeed on error)
         if let Some(committer) = &state.iceberg_committer {
-            if let Err(e) = committer.commit(&[write_result]).await {
-                warn!("Failed to commit to Iceberg catalog: {}", e);
+            if let Err(e) = committer
+                .commit_with_signal("logs", None, &[write_result])
+                .await
+            {
+                warn!("Failed to commit logs to Iceberg catalog: {}", e);
                 // Continue - files are in storage even if catalog commit failed
             }
         }
@@ -248,7 +251,10 @@ async fn process_traces(
 
     // Commit to Iceberg catalog if configured (warn-and-succeed on error)
     if let Some(committer) = &state.iceberg_committer {
-        if let Err(e) = committer.commit(&[write_result]).await {
+        if let Err(e) = committer
+            .commit_with_signal("traces", None, &[write_result])
+            .await
+        {
             warn!("Failed to commit traces to Iceberg catalog: {}", e);
             // Continue - files are in storage even if catalog commit failed
         }
@@ -336,7 +342,10 @@ async fn process_metrics(
 
         // Commit to Iceberg catalog if configured (warn-and-succeed on error)
         if let Some(committer) = &state.iceberg_committer {
-            if let Err(e) = committer.commit(&[write_result]).await {
+            if let Err(e) = committer
+                .commit_with_signal("metrics", Some(&metric_type), &[write_result])
+                .await
+            {
                 warn!(
                     "Failed to commit {} metrics to Iceberg catalog: {}",
                     metric_type, e

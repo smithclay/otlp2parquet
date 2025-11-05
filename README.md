@@ -5,7 +5,7 @@
 
 > Put your observability data in cost-effective cloud object storage, servers optional.
 
-`otlp2parquet` ingests OpenTelemetry logs, metrics, and traces and stores them in object storage as Parquet files. It runs natively in serverless runtimes like AWS Lambda and Cloudflare Workers. With [some optimization](#notes-on-batch-sizes) and using a duckdb client, this is likely one of the cheapest ways to store and query structured observability data in the cloud with long-term retention.
+`otlp2parquet` ingests OpenTelemetry logs, metrics, and traces and stores them in object storage as regular parquet files (with or without Apache Iceberg). It runs natively in serverless runtimes like AWS Lambda and Cloudflare Workers. With [some optimization](#notes-on-batch-sizes) and using a duckdb client, this is likely one of the cheapest ways to store and query structured observability data in the cloud with long-term retention.
 
 While functional, the project is experimental as the [API and schema are evolving](#parquet-schema-for-logs-metrics-and-traces). It is _not_ a telemetry pipeline: in production scenarios, it would be paired with [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/), [Vector](https://vector.dev/), Cribl, or similar to perform transformations, routing, and batching.
 
@@ -29,6 +29,9 @@ _Note: If you want to query or convert existing OTLP files, you can use the [otl
 | OTLP Metrics | ✅ | ✅ | ✅ |
 | OTLP Traces | ✅ | ✅ | ✅ |
 | OTLP Profiles | ❌ | ❌ | ❌ |
+| **Storage Support** | | | |
+| Parquet | ✅ | ✅ | ✅ |
+| Iceberg (REST Catalog API) | ✅ | ✅ | ✅ |
 | **Security*** | | | |
 | Basic Auth Header | ❌ | ✅ | ❌ |
 | **Advanced Features** | | | |
@@ -40,9 +43,9 @@ For deployment instructions, usage examples, and detailed guides:
 
 ➡️ [**View Documentation**](https://smithclay.github.io/otlp2parquet/)
 
-## Notes on batch sizes
+## Notes on file sizes
 
-Lots of small writes to cloud object storage will explode your bill: proceed with caution.
+Lots of small files written to cloud object storage will explode your bill and impact perforamnce: proceed with caution. Depending on your platform, some Apache Iceberg-compatible solutions (like [S3 table buckets](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-tables-tables.html)) can be configured to [compact parquet files automatically](https://aws.amazon.com/blogs/storage/how-amazon-s3-tables-use-compaction-to-improve-query-performance-by-up-to-3-times/) to improve performance.
 
 In serverless environments, batching must be handled by an upstream agent like the [OpenTelemetry Collector](https://github.com/open-telemetry/opentelemetry-collector) or [Vector](https://github.com/vectordotdev/vector) to optimize performance and cost ([see example configuration](docs/get-started/usage.md#batching-with-opentelemetry-collector)).
 

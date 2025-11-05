@@ -167,16 +167,25 @@ pub async fn run() -> Result<()> {
         Ok(config) => match otlp2parquet_iceberg::create_rest_catalog(&config).await {
             Ok(catalog) => match config.namespace_ident() {
                 Ok(namespace) => {
-                    let table_ident = otlp2parquet_iceberg::IcebergTableIdentifier::new(
-                        namespace,
-                        config.table.clone(),
-                    );
+                    // Build table map from config
+                    let mut tables = std::collections::HashMap::new();
+                    for (signal_key, table_name) in &config.tables {
+                        let table_ident = otlp2parquet_iceberg::IcebergTableIdentifier::new(
+                            namespace.clone(),
+                            table_name.clone(),
+                        );
+                        tables.insert(signal_key.clone(), table_ident);
+                    }
+
                     let committer = otlp2parquet_iceberg::IcebergCommitter::new(
                         catalog,
-                        table_ident,
+                        tables.clone(),
                         config.clone(),
                     );
-                    info!("Iceberg catalog integration enabled");
+                    info!(
+                        "Iceberg catalog integration enabled with {} tables",
+                        tables.len()
+                    );
                     Some(Arc::new(committer))
                 }
                 Err(e) => {

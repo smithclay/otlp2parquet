@@ -34,9 +34,17 @@
 //! ```bash
 //! # Required
 //! OTLP2PARQUET_ICEBERG_REST_URI="https://s3tables.us-east-1.amazonaws.com/iceberg"
-//! OTLP2PARQUET_ICEBERG_TABLE="otel_logs"
 //!
-//! # Optional
+//! # Optional - Table names (defaults shown)
+//! OTLP2PARQUET_ICEBERG_TABLE_LOGS="otel_logs"
+//! OTLP2PARQUET_ICEBERG_TABLE_TRACES="otel_traces"
+//! OTLP2PARQUET_ICEBERG_TABLE_METRICS_GAUGE="otel_metrics_gauge"
+//! OTLP2PARQUET_ICEBERG_TABLE_METRICS_SUM="otel_metrics_sum"
+//! OTLP2PARQUET_ICEBERG_TABLE_METRICS_HISTOGRAM="otel_metrics_histogram"
+//! OTLP2PARQUET_ICEBERG_TABLE_METRICS_EXPONENTIAL_HISTOGRAM="otel_metrics_exponential_histogram"
+//! OTLP2PARQUET_ICEBERG_TABLE_METRICS_SUMMARY="otel_metrics_summary"
+//!
+//! # Optional - Catalog settings
 //! OTLP2PARQUET_ICEBERG_NAMESPACE="otel.production"
 //! OTLP2PARQUET_ICEBERG_WAREHOUSE="s3://my-warehouse"
 //! ```
@@ -48,6 +56,7 @@
 //!     create_rest_catalog, IcebergCommitter, IcebergTableIdentifier,
 //!     IcebergRestConfig,
 //! };
+//! use std::collections::HashMap;
 //!
 //! # async fn example() -> anyhow::Result<()> {
 //! // Load config from environment
@@ -56,17 +65,22 @@
 //! // Create REST catalog
 //! let catalog = create_rest_catalog(&config).await?;
 //!
-//! // Create table identifier
-//! let table_ident = IcebergTableIdentifier::new(
-//!     config.namespace_ident()?,
-//!     config.table.clone(),
-//! );
+//! // Build table map from config
+//! let namespace = config.namespace_ident()?;
+//! let mut tables = HashMap::new();
+//! for (signal_key, table_name) in &config.tables {
+//!     let table_ident = IcebergTableIdentifier::new(
+//!         namespace.clone(),
+//!         table_name.clone(),
+//!     );
+//!     tables.insert(signal_key.clone(), table_ident);
+//! }
 //!
 //! // Create committer
-//! let committer = IcebergCommitter::new(catalog, table_ident, config);
+//! let committer = IcebergCommitter::new(catalog, tables, config);
 //!
 //! // Commit Parquet files (after writing to storage)
-//! // committer.commit(&parquet_results).await?;
+//! // committer.commit_with_signal("logs", None, &parquet_results).await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -87,7 +101,7 @@ use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use iceberg::spec::{
@@ -122,8 +136,8 @@ pub struct IcebergRestConfig {
     pub warehouse: Option<String>,
     /// Namespace for the table (dot-separated, e.g., "otel.logs")
     pub namespace: Vec<String>,
-    /// Table name
-    pub table: String,
+    /// Table names per signal type (key: "logs", "traces", "metrics:gauge", etc.)
+    pub tables: HashMap<String, String>,
     /// Catalog name (defaults to "rest")
     #[serde(default = "default_catalog_name")]
     pub catalog_name: String,
@@ -161,7 +175,7 @@ impl Default for IcebergRestConfig {
             rest_uri: String::new(),
             warehouse: None,
             namespace: Vec::new(),
-            table: String::new(),
+            tables: HashMap::new(),
             catalog_name: default_catalog_name(),
             format_version: default_format_version(),
             target_file_size_bytes: default_target_file_size_bytes(),
@@ -175,7 +189,6 @@ impl IcebergRestConfig {
     ///
     /// Required:
     /// - `OTLP2PARQUET_ICEBERG_REST_URI`: REST catalog endpoint
-    /// - `OTLP2PARQUET_ICEBERG_TABLE`: Table name
     ///
     /// Optional:
     /// - `OTLP2PARQUET_ICEBERG_WAREHOUSE`: Warehouse location
@@ -183,6 +196,14 @@ impl IcebergRestConfig {
     /// - `OTLP2PARQUET_ICEBERG_CATALOG_NAME`: Catalog name (default: "rest")
     /// - `OTLP2PARQUET_ICEBERG_STAGING_PREFIX`: Staging prefix for data files
     /// - `OTLP2PARQUET_ICEBERG_TARGET_FILE_SIZE_BYTES`: Target file size
+    /// - Table names (with defaults):
+    ///   - `OTLP2PARQUET_ICEBERG_TABLE_LOGS` (default: "otel_logs")
+    ///   - `OTLP2PARQUET_ICEBERG_TABLE_TRACES` (default: "otel_traces")
+    ///   - `OTLP2PARQUET_ICEBERG_TABLE_METRICS_GAUGE` (default: "otel_metrics_gauge")
+    ///   - `OTLP2PARQUET_ICEBERG_TABLE_METRICS_SUM` (default: "otel_metrics_sum")
+    ///   - `OTLP2PARQUET_ICEBERG_TABLE_METRICS_HISTOGRAM` (default: "otel_metrics_histogram")
+    ///   - `OTLP2PARQUET_ICEBERG_TABLE_METRICS_EXPONENTIAL_HISTOGRAM` (default: "otel_metrics_exponential_histogram")
+    ///   - `OTLP2PARQUET_ICEBERG_TABLE_METRICS_SUMMARY` (default: "otel_metrics_summary")
     pub fn from_env() -> Result<Self> {
         let rest_uri = env::var("OTLP2PARQUET_ICEBERG_REST_URI").context(
             "OTLP2PARQUET_ICEBERG_REST_URI must be set (e.g., https://s3tables.us-east-1.amazonaws.com/iceberg)",
@@ -197,8 +218,49 @@ impl IcebergRestConfig {
             .map(|segment| segment.trim().to_string())
             .collect::<Vec<_>>();
 
-        let table = env::var("OTLP2PARQUET_ICEBERG_TABLE")
-            .context("OTLP2PARQUET_ICEBERG_TABLE must be set for Iceberg catalog access")?;
+        // Build table map with defaults for each signal type
+        let mut tables = HashMap::new();
+
+        tables.insert(
+            "logs".to_string(),
+            env::var("OTLP2PARQUET_ICEBERG_TABLE_LOGS").unwrap_or_else(|_| "otel_logs".to_string()),
+        );
+
+        tables.insert(
+            "traces".to_string(),
+            env::var("OTLP2PARQUET_ICEBERG_TABLE_TRACES")
+                .unwrap_or_else(|_| "otel_traces".to_string()),
+        );
+
+        tables.insert(
+            "metrics:gauge".to_string(),
+            env::var("OTLP2PARQUET_ICEBERG_TABLE_METRICS_GAUGE")
+                .unwrap_or_else(|_| "otel_metrics_gauge".to_string()),
+        );
+
+        tables.insert(
+            "metrics:sum".to_string(),
+            env::var("OTLP2PARQUET_ICEBERG_TABLE_METRICS_SUM")
+                .unwrap_or_else(|_| "otel_metrics_sum".to_string()),
+        );
+
+        tables.insert(
+            "metrics:histogram".to_string(),
+            env::var("OTLP2PARQUET_ICEBERG_TABLE_METRICS_HISTOGRAM")
+                .unwrap_or_else(|_| "otel_metrics_histogram".to_string()),
+        );
+
+        tables.insert(
+            "metrics:exponential_histogram".to_string(),
+            env::var("OTLP2PARQUET_ICEBERG_TABLE_METRICS_EXPONENTIAL_HISTOGRAM")
+                .unwrap_or_else(|_| "otel_metrics_exponential_histogram".to_string()),
+        );
+
+        tables.insert(
+            "metrics:summary".to_string(),
+            env::var("OTLP2PARQUET_ICEBERG_TABLE_METRICS_SUMMARY")
+                .unwrap_or_else(|_| "otel_metrics_summary".to_string()),
+        );
 
         let catalog_name = env::var("OTLP2PARQUET_ICEBERG_CATALOG_NAME")
             .unwrap_or_else(|_| DEFAULT_CATALOG_NAME.to_string());
@@ -215,7 +277,7 @@ impl IcebergRestConfig {
             rest_uri,
             warehouse,
             namespace,
-            table,
+            tables,
             catalog_name,
             format_version: default_format_version(),
             target_file_size_bytes,
@@ -462,42 +524,68 @@ pub fn build_data_file(
 /// 4. Commit the transaction
 pub struct IcebergCommitter {
     catalog: Arc<dyn Catalog>,
-    table_ident: IcebergTableIdentifier,
+    tables: HashMap<String, IcebergTableIdentifier>,
     config: IcebergRestConfig,
 }
 
 impl IcebergCommitter {
     pub fn new(
         catalog: Arc<dyn Catalog>,
-        table_ident: IcebergTableIdentifier,
+        tables: HashMap<String, IcebergTableIdentifier>,
         config: IcebergRestConfig,
     ) -> Self {
         Self {
             catalog,
-            table_ident,
+            tables,
             config,
         }
     }
 
-    /// Commit Parquet files to the Iceberg table.
+    /// Commit Parquet files to the appropriate Iceberg table based on signal type.
     ///
     /// This:
-    /// 1. Loads the current table state
-    /// 2. Builds DataFile descriptors from Parquet metadata
-    /// 3. Creates a transaction with append operation
-    /// 4. Commits atomically
-    #[instrument(skip(self, parquet_results), fields(num_files = parquet_results.len()))]
-    pub async fn commit(&self, parquet_results: &[ParquetWriteResult]) -> Result<()> {
+    /// 1. Selects the correct table based on signal_type and metric_type
+    /// 2. Loads the current table state
+    /// 3. Builds DataFile descriptors from Parquet metadata
+    /// 4. Creates a transaction with append operation
+    /// 5. Commits atomically
+    ///
+    /// # Parameters
+    /// - `signal_type`: "logs", "traces", or "metrics"
+    /// - `metric_type`: For metrics only - "gauge", "sum", "histogram", "exponential_histogram", or "summary"
+    /// - `parquet_results`: Parquet files to commit
+    #[instrument(skip(self, parquet_results), fields(num_files = parquet_results.len(), signal_type, metric_type))]
+    pub async fn commit_with_signal(
+        &self,
+        signal_type: &str,
+        metric_type: Option<&str>,
+        parquet_results: &[ParquetWriteResult],
+    ) -> Result<()> {
         if parquet_results.is_empty() {
             debug!("No files to commit");
             return Ok(());
         }
 
+        // Build table key and look up table identifier
+        let table_key = if let Some(mt) = metric_type {
+            format!("metrics:{}", mt)
+        } else {
+            signal_type.to_string()
+        };
+
+        let table_ident = self.tables.get(&table_key).ok_or_else(|| {
+            anyhow!(
+                "No table configured for signal_type='{}', metric_type='{:?}'",
+                signal_type,
+                metric_type
+            )
+        })?;
+
         // Load the table
-        let table_ident = self.table_ident.to_table_ident();
+        let table_ident_native = table_ident.to_table_ident();
         let table = self
             .catalog
-            .load_table(&table_ident)
+            .load_table(&table_ident_native)
             .await
             .context("failed to load Iceberg table")?;
 
@@ -519,8 +607,10 @@ impl IcebergCommitter {
             .sum::<u64>();
 
         debug!(
-            table = %self.table_ident.name,
-            namespace = ?self.table_ident.namespace,
+            table = %table_ident.name,
+            namespace = ?table_ident.namespace,
+            signal_type = signal_type,
+            metric_type = ?metric_type,
             num_files = data_files.len(),
             total_rows = total_rows,
             total_bytes = total_bytes,
@@ -536,7 +626,9 @@ impl IcebergCommitter {
             Ok(txn) => txn,
             Err(e) => {
                 warn!(
-                    table = %self.table_ident.name,
+                    table = %table_ident.name,
+                    signal_type = signal_type,
+                    metric_type = ?metric_type,
                     error = %e,
                     "failed to apply append action to transaction - files written to storage but not cataloged"
                 );
@@ -547,7 +639,9 @@ impl IcebergCommitter {
         // Commit transaction
         if let Err(e) = txn.commit(&*self.catalog).await {
             warn!(
-                table = %self.table_ident.name,
+                table = %table_ident.name,
+                signal_type = signal_type,
+                metric_type = ?metric_type,
                 error = %e,
                 "failed to commit transaction to catalog - files written to storage but not cataloged"
             );
@@ -555,7 +649,9 @@ impl IcebergCommitter {
         }
 
         info!(
-            table = %self.table_ident.name,
+            table = %table_ident.name,
+            signal_type = signal_type,
+            metric_type = ?metric_type,
             num_files = parquet_results.len(),
             total_rows = total_rows,
             total_bytes = total_bytes,
@@ -583,22 +679,56 @@ mod tests {
             "OTLP2PARQUET_ICEBERG_REST_URI",
             "https://test.example.com/iceberg",
         );
-        std::env::set_var("OTLP2PARQUET_ICEBERG_TABLE", "test_table");
         std::env::set_var("OTLP2PARQUET_ICEBERG_NAMESPACE", "otel.logs");
+
+        // Set custom table names for some signals
+        std::env::set_var("OTLP2PARQUET_ICEBERG_TABLE_LOGS", "custom_logs_table");
+        std::env::set_var("OTLP2PARQUET_ICEBERG_TABLE_TRACES", "custom_traces_table");
 
         let config = IcebergRestConfig::from_env().unwrap();
 
         assert_eq!(config.rest_uri, "https://test.example.com/iceberg");
-        assert_eq!(config.table, "test_table");
         assert_eq!(config.namespace, vec!["otel", "logs"]);
         assert_eq!(config.catalog_name, DEFAULT_CATALOG_NAME);
         assert_eq!(config.staging_prefix, DEFAULT_STAGING_PREFIX);
         assert_eq!(config.target_file_size_bytes, DEFAULT_TARGET_FILE_SIZE);
 
+        // Verify table map contains all 7 signal types
+        assert_eq!(config.tables.len(), 7);
+        assert_eq!(
+            config.tables.get("logs"),
+            Some(&"custom_logs_table".to_string())
+        );
+        assert_eq!(
+            config.tables.get("traces"),
+            Some(&"custom_traces_table".to_string())
+        );
+        assert_eq!(
+            config.tables.get("metrics:gauge"),
+            Some(&"otel_metrics_gauge".to_string())
+        ); // default
+        assert_eq!(
+            config.tables.get("metrics:sum"),
+            Some(&"otel_metrics_sum".to_string())
+        ); // default
+        assert_eq!(
+            config.tables.get("metrics:histogram"),
+            Some(&"otel_metrics_histogram".to_string())
+        ); // default
+        assert_eq!(
+            config.tables.get("metrics:exponential_histogram"),
+            Some(&"otel_metrics_exponential_histogram".to_string())
+        ); // default
+        assert_eq!(
+            config.tables.get("metrics:summary"),
+            Some(&"otel_metrics_summary".to_string())
+        ); // default
+
         // Clean up
         std::env::remove_var("OTLP2PARQUET_ICEBERG_REST_URI");
-        std::env::remove_var("OTLP2PARQUET_ICEBERG_TABLE");
         std::env::remove_var("OTLP2PARQUET_ICEBERG_NAMESPACE");
+        std::env::remove_var("OTLP2PARQUET_ICEBERG_TABLE_LOGS");
+        std::env::remove_var("OTLP2PARQUET_ICEBERG_TABLE_TRACES");
     }
 
     #[test]
@@ -609,7 +739,6 @@ mod tests {
             "OTLP2PARQUET_ICEBERG_REST_URI",
             "https://test.example.com/iceberg",
         );
-        std::env::set_var("OTLP2PARQUET_ICEBERG_TABLE", "test_table");
         std::env::set_var("OTLP2PARQUET_ICEBERG_WAREHOUSE", "s3://my-bucket/warehouse");
 
         let config = IcebergRestConfig::from_env().unwrap();
@@ -621,17 +750,19 @@ mod tests {
 
         // Clean up
         std::env::remove_var("OTLP2PARQUET_ICEBERG_REST_URI");
-        std::env::remove_var("OTLP2PARQUET_ICEBERG_TABLE");
         std::env::remove_var("OTLP2PARQUET_ICEBERG_WAREHOUSE");
     }
 
     #[test]
     fn test_namespace_ident_parsing() {
+        let mut tables = HashMap::new();
+        tables.insert("logs".to_string(), "test_table".to_string());
+
         let config = IcebergRestConfig {
             rest_uri: "https://test.example.com/iceberg".to_string(),
             warehouse: None,
             namespace: vec!["otel".to_string(), "logs".to_string()],
-            table: "test_table".to_string(),
+            tables,
             catalog_name: DEFAULT_CATALOG_NAME.to_string(),
             format_version: 2,
             target_file_size_bytes: DEFAULT_TARGET_FILE_SIZE,
