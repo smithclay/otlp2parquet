@@ -349,7 +349,7 @@ impl IcebergConfig {
         map
     }
 
-    /// Parse namespace string into Vec<String>
+    /// Parse namespace string into `Vec<String>`
     pub fn namespace_vec(&self) -> Vec<String> {
         self.namespace
             .as_ref()

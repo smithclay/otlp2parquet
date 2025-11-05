@@ -1,6 +1,6 @@
 //! Iceberg REST API response types
 //!
-//! Based on: https://iceberg.apache.org/docs/latest/rest-api/
+//! Based on: <https://iceberg.apache.org/docs/latest/rest-api/>
 
 use serde::{Deserialize, Serialize};
 

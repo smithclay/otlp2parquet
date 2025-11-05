@@ -1,7 +1,7 @@
 //! Iceberg table metadata types
 //!
 //! Minimal implementation of Iceberg table metadata for REST API compatibility.
-//! Based on Iceberg Table Spec v2: https://iceberg.apache.org/spec/#table-metadata
+//! Based on Iceberg Table Spec v2: <https://iceberg.apache.org/spec/#table-metadata>
 
 use super::schema::Schema;
 use serde::{Deserialize, Serialize};

@@ -325,8 +325,8 @@ impl IcebergCommitter {
     /// - `parquet_results`: Parquet files to commit
     ///
     /// # Note
-    /// The catalog's commit_with_signal now expects Vec<DataFile>, but we pass ParquetWriteResult.
-    /// We need to add a conversion method that takes ParquetWriteResult and converts to DataFile.
+    /// The catalog's commit_with_signal now expects `Vec<DataFile>`, but we pass `ParquetWriteResult`.
+    /// We need to add a conversion method that takes `ParquetWriteResult` and converts to `DataFile`.
     /// For now, we'll build DataFiles using the Arrow schema from the results.
     #[instrument(skip(self, parquet_results), fields(num_files = parquet_results.len(), signal_type, metric_type))]
     pub async fn commit_with_signal(

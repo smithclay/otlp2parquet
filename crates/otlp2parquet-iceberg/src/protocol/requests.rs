@@ -1,6 +1,6 @@
 //! Iceberg REST API request types
 //!
-//! Based on: https://iceberg.apache.org/docs/latest/rest-api/
+//! Based on: <https://iceberg.apache.org/docs/latest/rest-api/>
 
 use crate::types::DataFile;
 use serde::{Deserialize, Serialize};

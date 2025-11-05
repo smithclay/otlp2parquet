@@ -1,7 +1,7 @@
 //! Iceberg DataFile types
 //!
 //! Minimal implementation of Iceberg DataFile for commit transactions.
-//! Based on Iceberg Table Spec v2: https://iceberg.apache.org/spec/#manifests
+//! Based on Iceberg Table Spec v2: <https://iceberg.apache.org/spec/#manifests>
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

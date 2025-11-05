@@ -43,7 +43,7 @@ impl NamespaceIdent {
 pub struct IcebergCatalog<T: HttpClient> {
     /// HTTP client for making requests
     http: T,
-    /// Base URL of the REST catalog (e.g., "https://s3tables.us-east-1.amazonaws.com/iceberg")
+    /// Base URL of the REST catalog (e.g., "<https://s3tables.us-east-1.amazonaws.com/iceberg>")
     base_url: String,
     /// Namespace for tables
     namespace: NamespaceIdent,

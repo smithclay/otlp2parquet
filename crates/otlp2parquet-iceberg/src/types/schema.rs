@@ -1,7 +1,7 @@
 //! Iceberg schema types
 //!
 //! Minimal implementation of Iceberg schema types for REST API compatibility.
-//! Based on Iceberg Table Spec v2: https://iceberg.apache.org/spec/#schemas
+//! Based on Iceberg Table Spec v2: <https://iceberg.apache.org/spec/#schemas>
 
 use serde::{Deserialize, Serialize};
 
