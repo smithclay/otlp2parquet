@@ -104,13 +104,32 @@ fn convert_field(field: &Field) -> Result<NestedField> {
 }
 
 /// Convert Arrow DataType to Iceberg Type.
+///
+/// # Unsigned Integer Handling
+///
+/// Iceberg does not have native unsigned integer types. We handle unsigned integers as follows:
+/// - `UInt8/UInt16` → Not expected in OTLP schema (error if encountered)
+/// - `UInt32` → `Long` (64-bit signed can safely represent all 32-bit unsigned values)
+/// - `UInt64` → **Error** - Cannot be safely represented in Iceberg
+///
+/// OTLP spec uses unsigned integers for some fields (e.g., InstrumentationScope.dropped_attributes_count).
+/// These are mapped to Long in our Arrow schema, so UInt types should be rare in practice.
 fn convert_data_type(data_type: &DataType, field_name: &str) -> Result<Type> {
     let iceberg_type = match data_type {
         DataType::Boolean => Type::Primitive(PrimitiveType::Boolean),
         DataType::Int32 => Type::Primitive(PrimitiveType::Int),
         DataType::Int64 => Type::Primitive(PrimitiveType::Long),
-        DataType::UInt32 => Type::Primitive(PrimitiveType::Int), // Map to signed int
-        DataType::UInt64 => Type::Primitive(PrimitiveType::Long), // Map to signed long
+        // Safe: UInt32 max (4,294,967,295) fits in Long (9,223,372,036,854,775,807)
+        DataType::UInt32 => Type::Primitive(PrimitiveType::Long),
+        // Unsafe: UInt64 values >= 2^63 would be misrepresented as negative in Iceberg
+        DataType::UInt64 => {
+            return Err(anyhow!(
+                "Field '{}' has type UInt64 which cannot be safely represented in Iceberg. \
+                 Values >= 2^63 would appear as negative numbers. \
+                 Consider using Int64 in the Arrow schema if the data range allows.",
+                field_name
+            ))
+        }
         DataType::Float32 => Type::Primitive(PrimitiveType::Float),
         DataType::Float64 => Type::Primitive(PrimitiveType::Double),
         DataType::Utf8 | DataType::LargeUtf8 => Type::Primitive(PrimitiveType::String),

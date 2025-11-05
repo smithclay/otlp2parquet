@@ -163,54 +163,37 @@ pub async fn run() -> Result<()> {
     info!("Max payload size set to {} bytes", max_payload_bytes);
 
     // Initialize Iceberg committer if configured
-    let iceberg_committer = match otlp2parquet_iceberg::IcebergRestConfig::from_env() {
-        Ok(config) => match otlp2parquet_iceberg::create_rest_catalog(&config).await {
-            Ok(catalog) => match config.namespace_ident() {
-                Ok(namespace) => {
-                    // Build table map from config
-                    let mut tables = std::collections::HashMap::new();
-                    for (signal_key, table_name) in &config.tables {
-                        let table_ident = otlp2parquet_iceberg::IcebergTableIdentifier::new(
-                            namespace.clone(),
-                            table_name.clone(),
-                        );
-                        tables.insert(signal_key.clone(), table_ident);
-                    }
-
-                    let committer = otlp2parquet_iceberg::IcebergCommitter::new(
-                        catalog,
-                        tables.clone(),
-                        config.clone(),
-                    );
-                    info!(
-                        "Iceberg catalog integration enabled with {} tables",
-                        tables.len()
-                    );
-                    Some(Arc::new(committer))
-                }
-                Err(e) => {
-                    info!(
-                        "Failed to parse Iceberg namespace: {} - continuing without Iceberg",
-                        e
-                    );
-                    None
-                }
-            },
-            Err(e) => {
+    let iceberg_committer = {
+        use otlp2parquet_iceberg::init::{initialize_committer, InitResult};
+        match initialize_committer().await {
+            InitResult::Success {
+                committer,
+                table_count,
+            } => {
+                info!(
+                    "Iceberg catalog integration enabled with {} tables",
+                    table_count
+                );
+                Some(committer)
+            }
+            InitResult::NotConfigured(msg) => {
+                info!("Iceberg catalog not configured: {}", msg);
+                None
+            }
+            InitResult::CatalogError(msg) => {
                 info!(
                     "Failed to create Iceberg catalog: {} - continuing without Iceberg",
-                    e
+                    msg
                 );
                 None
             }
-        },
-        Err(e) => {
-            // Not configured or failed to load config - log and continue without Iceberg
-            info!(
-                "Iceberg catalog not configured (OTLP2PARQUET_ICEBERG_REST_URI not set): {}",
-                e
-            );
-            None
+            InitResult::NamespaceError(msg) => {
+                info!(
+                    "Failed to parse Iceberg namespace: {} - continuing without Iceberg",
+                    msg
+                );
+                None
+            }
         }
     };
 

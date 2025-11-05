@@ -52,32 +52,24 @@
 //! # Example Usage
 //!
 //! ```no_run
-//! use otlp2parquet_iceberg::{
-//!     create_rest_catalog, IcebergCommitter, IcebergTableIdentifier,
-//!     IcebergRestConfig,
-//! };
-//! use std::collections::HashMap;
+//! use otlp2parquet_iceberg::init::{initialize_committer, InitResult};
 //!
 //! # async fn example() -> anyhow::Result<()> {
-//! // Load config from environment
-//! let config = IcebergRestConfig::from_env()?;
-//!
-//! // Create REST catalog
-//! let catalog = create_rest_catalog(&config).await?;
-//!
-//! // Build table map from config
-//! let namespace = config.namespace_ident()?;
-//! let mut tables = HashMap::new();
-//! for (signal_key, table_name) in &config.tables {
-//!     let table_ident = IcebergTableIdentifier::new(
-//!         namespace.clone(),
-//!         table_name.clone(),
-//!     );
-//!     tables.insert(signal_key.clone(), table_ident);
-//! }
-//!
-//! // Create committer
-//! let committer = IcebergCommitter::new(catalog, tables, config);
+//! // Initialize committer from environment variables
+//! let committer = match initialize_committer().await {
+//!     InitResult::Success { committer, table_count } => {
+//!         println!("Initialized with {} tables", table_count);
+//!         committer
+//!     }
+//!     InitResult::NotConfigured(msg) => {
+//!         println!("Not configured: {}", msg);
+//!         return Ok(());
+//!     }
+//!     InitResult::CatalogError(msg) | InitResult::NamespaceError(msg) => {
+//!         println!("Init failed: {}", msg);
+//!         return Ok(());
+//!     }
+//! };
 //!
 //! // Commit Parquet files (after writing to storage)
 //! // committer.commit_with_signal("logs", None, &parquet_results).await?;
@@ -94,6 +86,7 @@
 //!
 //! This ensures ingestion is never blocked by catalog availability.
 
+pub mod init;
 pub mod partition;
 pub mod schema;
 
@@ -364,12 +357,14 @@ pub async fn create_rest_catalog(config: &IcebergRestConfig) -> Result<Arc<dyn C
 }
 
 /// Convert a written Parquet file into an Iceberg DataFile descriptor.
-pub fn build_data_file(
-    result: &ParquetWriteResult,
-    _table_config: &IcebergRestConfig,
-    _schema: &Schema,
-    _partition_spec: &Arc<iceberg::spec::PartitionSpec>,
-) -> Result<DataFile> {
+///
+/// Extracts metadata from Parquet file statistics to build an Iceberg DataFile
+/// descriptor that can be committed to the catalog.
+///
+/// # Parameters
+/// - `result`: Parquet write result with metadata
+/// - `schema`: Iceberg schema for field ID mapping
+pub fn build_data_file(result: &ParquetWriteResult, schema: &Schema) -> Result<DataFile> {
     let parquet_metadata: &ParquetMetaData = &result.parquet_metadata;
 
     debug!(
@@ -441,7 +436,7 @@ pub fn build_data_file(
         let column_name = column_descriptor.name();
 
         // Get field ID from Iceberg schema - this ensures proper mapping across schema evolution
-        let field_id = match _schema.field_by_name(column_name) {
+        let field_id = match schema.field_by_name(column_name) {
             Some(field_ref) => field_ref.id,
             None => {
                 // Column not found in Iceberg schema - skip statistics for this column
@@ -525,20 +520,11 @@ pub fn build_data_file(
 pub struct IcebergCommitter {
     catalog: Arc<dyn Catalog>,
     tables: HashMap<String, IcebergTableIdentifier>,
-    config: IcebergRestConfig,
 }
 
 impl IcebergCommitter {
-    pub fn new(
-        catalog: Arc<dyn Catalog>,
-        tables: HashMap<String, IcebergTableIdentifier>,
-        config: IcebergRestConfig,
-    ) -> Self {
-        Self {
-            catalog,
-            tables,
-            config,
-        }
+    pub fn new(catalog: Arc<dyn Catalog>, tables: HashMap<String, IcebergTableIdentifier>) -> Self {
+        Self { catalog, tables }
     }
 
     /// Commit Parquet files to the appropriate Iceberg table based on signal type.
@@ -589,14 +575,11 @@ impl IcebergCommitter {
             .await
             .context("failed to load Iceberg table")?;
 
-        let table_metadata = table.metadata();
-        let schema = table_metadata.current_schema();
-        let partition_spec = table_metadata.default_partition_spec();
-
         // Build DataFile descriptors from Parquet results
+        let schema = table.metadata().current_schema();
         let mut data_files = Vec::with_capacity(parquet_results.len());
         for result in parquet_results {
-            let data_file = build_data_file(result, &self.config, schema.as_ref(), partition_spec)?;
+            let data_file = build_data_file(result, schema.as_ref())?;
             data_files.push(data_file);
         }
 
