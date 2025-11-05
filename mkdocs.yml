@@ -57,12 +57,16 @@ markdown_extensions:
 nav:
   - Getting Started:
       - Overview: index.md
-      - Deployment:
-          - Docker: deployment/docker.md
-          - Cloudflare Workers: deployment/cloudflare.md
-          - AWS Lambda: deployment/aws-lambda.md
       - Sending Data: sending-data.md
       - Configuration: configuration.md
+  - Deployment:
+      - Docker: deployment/docker.md
+      - Cloudflare Workers: deployment/cloudflare.md
+      - AWS Lambda: deployment/aws-lambda.md
+  - Storage & Querying:
+      - Overview: storage/index.md
+      - Object Storage (Parquet): storage/object-storage.md
+      - Table Format (Apache Iceberg): storage/iceberg.md
       - Querying Data: querying-data.md
   - Developers:
       - Overview: developers/index.md

@@ -45,6 +45,8 @@ Specific variables for each platform are shown in the corresponding deployment g
 
 For managing multiple environments or more complex setups, a TOML file is the recommended approach.
 
+> **Note:** Apache Iceberg is configured exclusively via environment variables. See the [Apache Iceberg documentation](../storage/iceberg.md#configuration) for a complete list of settings.
+
 The application automatically looks for `config.toml` or `.otlp2parquet.toml` in the current directory. You can also specify a path via the `OTLP2PARQUET_CONFIG` environment variable.
 
 **Example `config.toml`:**
