@@ -1,30 +1,26 @@
 # otlp2parquet-iceberg
 
-Apache Iceberg catalog integration for S3 Tables.
+Apache Iceberg catalog integration via REST API.
 
-## Status: Work in Progress
+## Status: MVP Complete
 
-This crate provides S3 Tables (Iceberg) catalog integration for committing Parquet files written by `otlp2parquet-storage` into Iceberg tables.
+This crate provides Iceberg REST catalog integration for committing Parquet files written by `otlp2parquet-storage` into Iceberg tables. Works with any Iceberg REST catalog including AWS S3 Tables, AWS Glue Data Catalog, Tabular, Polaris, and others.
 
-**Current Status**: Scaffolding complete, pending API stabilization.
+### Features
 
-### What's Implemented
-
+- ✅ Generic Iceberg REST catalog integration (not S3 Tables specific)
 - ✅ Configuration loading from environment variables
-- ✅ S3 Tables catalog builder using official `iceberg-catalog-s3tables` crate
-- ✅ DataFile metadata extraction from Parquet files (column stats, bounds, split offsets)
-- ✅ IcebergCommitter structure for transaction-based commits
-
-### Pending Work
-
-- ⏳ **API Compatibility**: The `iceberg-catalog-s3tables` crate is not yet published to crates.io and the git version has unstable APIs
-- ⏳ **Type Conversions**: Need to convert Parquet statistics to Iceberg `Datum` types
-- ⏳ **Table Operations**: Update to match latest `Table` transaction API
-- ⏳ **Testing**: Integration tests with S3 Tables
+- ✅ Transaction-based commits with ACID guarantees
+- ✅ Arrow to Iceberg schema conversion with field ID preservation
+- ✅ DataFile metadata extraction from Parquet (column stats, bounds, row counts)
+- ✅ Field ID mapping from Arrow metadata (`PARQUET:field_id`)
+- ✅ Unpartitioned tables (MVP - partitioning planned for future)
+- ✅ Warn-and-succeed error handling (catalog failures don't fail ingestion)
+- ✅ Integrated into Lambda and Server runtimes
 
 ### Why Git Dependency?
 
-The `iceberg-catalog-s3tables` crate exists in the Apache Iceberg Rust project but hasn't been published to crates.io yet. We're using a git dependency as a placeholder. Once published, we'll switch to a stable version.
+The `iceberg` and `iceberg-catalog-rest` crates use a git dependency because we need features from the latest `main` branch that aren't yet published to crates.io. Once the next version is published, we'll switch to a stable crates.io version.
 
 ### Architecture
 
@@ -33,11 +29,13 @@ This crate is **only** used by Lambda and Server runtimes - not Cloudflare Worke
 ```
 otlp2parquet-storage (Parquet writing, OpenDAL)
          ↓
-otlp2parquet-iceberg (S3 Tables catalog) ← THIS CRATE
+otlp2parquet-iceberg (REST catalog) ← THIS CRATE
          ↓
     ┌────┴────┐
     ↓         ↓
  lambda     server
+
+(Not used by Cloudflare Workers to keep WASM binary small)
 ```
 
 ## Configuration
@@ -57,18 +55,22 @@ OTLP2PARQUET_ICEBERG_STAGING_PREFIX="data/incoming"  # Staging prefix (default: 
 OTLP2PARQUET_ICEBERG_TARGET_FILE_SIZE_BYTES="536870912"  # Target file size (default: 512MB)
 ```
 
-## Usage (Planned)
+## Usage
+
+The Lambda and Server runtimes automatically initialize the Iceberg committer if the required environment variables are set. No code changes needed - just configure the environment variables.
+
+### Manual Usage Example
 
 ```rust
 use otlp2parquet_iceberg::{
-    create_s3tables_catalog, IcebergCommitter, IcebergTableIdentifier, S3TablesConfig,
+    create_rest_catalog, IcebergCommitter, IcebergTableIdentifier, IcebergRestConfig,
 };
 
 // Load config from environment
-let config = S3TablesConfig::from_env()?;
+let config = IcebergRestConfig::from_env()?;
 
-// Create catalog
-let catalog = create_s3tables_catalog(&config).await?;
+// Create REST catalog
+let catalog = create_rest_catalog(&config).await?;
 
 // Create table identifier
 let table_ident = IcebergTableIdentifier::new(
@@ -79,12 +81,39 @@ let table_ident = IcebergTableIdentifier::new(
 // Create committer
 let committer = IcebergCommitter::new(catalog, table_ident, config);
 
-// Commit Parquet files
+// Commit Parquet files (writes already in S3/storage)
 committer.commit(&parquet_results).await?;
 ```
 
+### Error Handling
+
+The integration uses a **warn-and-succeed** pattern:
+- If Iceberg is not configured, the runtime continues without catalog integration
+- If catalog operations fail, errors are logged as warnings but requests succeed
+- Parquet files are always written to storage (S3/R2/FS) regardless of catalog status
+
+This ensures that ingestion is never blocked by catalog availability issues.
+
+## Catalog Compatibility
+
+This crate uses the generic Iceberg REST catalog API, so it works with:
+
+- **AWS S3 Tables**: `https://s3tables.<region>.amazonaws.com/iceberg`
+- **AWS Glue Data Catalog**: `https://glue.<region>.amazonaws.com/iceberg`
+- **Tabular**: `https://<org>.tabular.io/ws`
+- **Polaris**: Self-hosted or Snowflake Polaris
+- **Any REST-compatible catalog**: Following the Iceberg REST spec
+
+## Future Enhancements
+
+- **Partitioning**: Time-based partitioning (year/month/day/hour) to match storage layout
+- **Schema Evolution**: Automatic schema updates when new fields are added
+- **Table Creation**: Automatic table creation if it doesn't exist
+- **Statistics**: More detailed Parquet statistics conversion to Iceberg Datum types
+- **Compaction**: Integration with Iceberg compaction for optimizing file sizes
+
 ## References
 
-- [S3 Tables Documentation](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-tables-buckets.html)
 - [Apache Iceberg Rust](https://github.com/apache/iceberg-rust)
-- [S3 Tables Iceberg REST API](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-tables-integrating-open-source.html)
+- [Iceberg REST Catalog Spec](https://iceberg.apache.org/docs/latest/rest-catalog/)
+- [AWS S3 Tables Documentation](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-tables-buckets.html)

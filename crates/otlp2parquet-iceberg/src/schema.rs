@@ -1,10 +1,39 @@
-// Arrow to Iceberg schema conversion
-//
-// This module converts Arrow schemas to Iceberg schemas, preserving field IDs
-// from Arrow metadata (PARQUET:field_id).
-//
-// Field IDs provide stable field identification across schema evolution.
-// They must match between the Parquet files and the Iceberg table schema.
+//! Arrow to Iceberg schema conversion.
+//!
+//! This module converts Arrow schemas to Iceberg schemas while preserving field IDs
+//! from Arrow metadata (`PARQUET:field_id`).
+//!
+//! Field IDs provide stable field identification across schema evolution and must
+//! match between the Parquet file metadata and the Iceberg table schema.
+//!
+//! # Field ID Preservation
+//!
+//! When Parquet files are written, each Arrow field has a `PARQUET:field_id` metadata
+//! entry. This module reads those IDs and creates an Iceberg schema with matching
+//! field IDs, ensuring:
+//!
+//! - Schema evolution can add/remove fields without breaking existing queries
+//! - Column pruning works correctly across Parquet files and Iceberg metadata
+//! - Statistics and data types remain consistent
+//!
+//! # Example
+//!
+//! ```no_run
+//! use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
+//! use std::collections::HashMap;
+//! use otlp2parquet_iceberg::schema::arrow_to_iceberg_schema;
+//!
+//! # fn example() -> anyhow::Result<()> {
+//! // Create Arrow field with field ID in metadata
+//! let metadata = HashMap::from([("PARQUET:field_id".to_string(), "1".to_string())]);
+//! let field = Field::new("timestamp", DataType::Int64, false).with_metadata(metadata);
+//! let arrow_schema = ArrowSchema::new(vec![field]);
+//!
+//! // Convert to Iceberg schema (preserves field ID = 1)
+//! let iceberg_schema = arrow_to_iceberg_schema(&arrow_schema, "logs")?;
+//! # Ok(())
+//! # }
+//! ```
 
 use anyhow::{anyhow, Context, Result};
 use arrow::datatypes::{DataType, Field, Schema as ArrowSchema, TimeUnit};

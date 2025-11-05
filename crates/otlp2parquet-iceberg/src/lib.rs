@@ -1,10 +1,84 @@
-// otlp2parquet-iceberg - Apache Iceberg catalog integration
-//
-// This crate provides Iceberg table catalog integration for S3 Tables.
-// It builds DataFile descriptors from Parquet metadata and commits them
-// to Iceberg tables via the S3 Tables catalog.
-//
-// Only used by Lambda and Server runtimes (not Cloudflare Workers).
+//! Apache Iceberg catalog integration for otlp2parquet.
+//!
+//! This crate provides generic Iceberg REST catalog integration for committing
+//! Parquet files to Iceberg tables. Works with any Iceberg REST catalog including
+//! AWS S3 Tables, AWS Glue, Tabular, Polaris, and others.
+//!
+//! # Features
+//!
+//! - Generic REST catalog support (not vendor-specific)
+//! - Transaction-based commits with ACID guarantees
+//! - Arrow to Iceberg schema conversion with field ID preservation
+//! - DataFile metadata extraction from Parquet statistics
+//! - Warn-and-succeed error handling (catalog failures don't block ingestion)
+//!
+//! # Architecture
+//!
+//! This crate is **only** used by Lambda and Server runtimes, not Cloudflare Workers.
+//! This keeps the WASM binary size minimal.
+//!
+//! ```text
+//! otlp2parquet-storage (Parquet writing)
+//!          ↓
+//! otlp2parquet-iceberg (Catalog commits)
+//!          ↓
+//!     ┌────┴────┐
+//!     ↓         ↓
+//!  lambda     server
+//! ```
+//!
+//! # Configuration
+//!
+//! Set environment variables with the `OTLP2PARQUET_ICEBERG_` prefix:
+//!
+//! ```bash
+//! # Required
+//! OTLP2PARQUET_ICEBERG_REST_URI="https://s3tables.us-east-1.amazonaws.com/iceberg"
+//! OTLP2PARQUET_ICEBERG_TABLE="otel_logs"
+//!
+//! # Optional
+//! OTLP2PARQUET_ICEBERG_NAMESPACE="otel.production"
+//! OTLP2PARQUET_ICEBERG_WAREHOUSE="s3://my-warehouse"
+//! ```
+//!
+//! # Example Usage
+//!
+//! ```no_run
+//! use otlp2parquet_iceberg::{
+//!     create_rest_catalog, IcebergCommitter, IcebergTableIdentifier,
+//!     IcebergRestConfig,
+//! };
+//!
+//! # async fn example() -> anyhow::Result<()> {
+//! // Load config from environment
+//! let config = IcebergRestConfig::from_env()?;
+//!
+//! // Create REST catalog
+//! let catalog = create_rest_catalog(&config).await?;
+//!
+//! // Create table identifier
+//! let table_ident = IcebergTableIdentifier::new(
+//!     config.namespace_ident()?,
+//!     config.table.clone(),
+//! );
+//!
+//! // Create committer
+//! let committer = IcebergCommitter::new(catalog, table_ident, config);
+//!
+//! // Commit Parquet files (after writing to storage)
+//! // committer.commit(&parquet_results).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Error Handling
+//!
+//! The integration uses a **warn-and-succeed** pattern:
+//! - If not configured, runtimes continue without catalog integration
+//! - If catalog operations fail, errors are logged as warnings
+//! - Parquet files are always written to storage regardless of catalog status
+//!
+//! This ensures ingestion is never blocked by catalog availability.
 
 pub mod partition;
 pub mod schema;
@@ -41,8 +115,8 @@ use tracing::{debug, info, instrument, warn};
 pub struct IcebergRestConfig {
     /// REST catalog endpoint URI
     /// Examples:
-    /// - S3 Tables: https://s3tables.<region>.amazonaws.com/iceberg
-    /// - Glue: https://glue.<region>.amazonaws.com/iceberg
+    /// - S3 Tables: `https://s3tables.<region>.amazonaws.com/iceberg`
+    /// - Glue: `https://glue.<region>.amazonaws.com/iceberg`
     pub rest_uri: String,
     /// Warehouse location (optional, depends on catalog)
     pub warehouse: Option<String>,
