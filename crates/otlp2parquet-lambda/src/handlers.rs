@@ -130,8 +130,8 @@ async fn process_logs(
             )
             .await
         {
-            Ok((partition_path, _hash)) => {
-                uploaded_paths.push(partition_path);
+            Ok(write_result) => {
+                uploaded_paths.push(write_result.path);
             }
             Err(err) => {
                 eprintln!("Failed to write Parquet to storage: {}", err);
@@ -224,8 +224,8 @@ async fn process_metrics(
             )
             .await
         {
-            Ok((partition_path, _hash)) => {
-                uploaded_paths.push(partition_path);
+            Ok(write_result) => {
+                uploaded_paths.push(write_result.path);
             }
             Err(err) => {
                 eprintln!("Failed to write {} metrics Parquet: {}", metric_type, err);

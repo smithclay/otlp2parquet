@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 # Storage abstraction
-opendal = { version = "0.54", default-features = false }
+opendal = { version = "0.54.1", default-features = false }
 
 # Arrow for data structures
 arrow = { workspace = true }
@@ -18,6 +18,16 @@ chrono = { workspace = true }
 blake3 = { workspace = true }
 hex = { workspace = true }
 once_cell = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+aws-sigv4 = { version = "1.3", default-features = false, features = ["sign-http"] }
+aws-credential-types = { version = "1.2", default-features = false }
+aws-smithy-runtime-api = { version = "1.8", default-features = false }
+iceberg = { version = "0.7", default-features = false, features = ["storage-s3"] }
+uuid = { version = "1", default-features = false, features = ["v4"] }
+tracing = { version = "0.1", default-features = false, features = ["std"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # WASM-specific: Snappy compression only
@@ -33,8 +43,10 @@ tokio = { workspace = true, optional = true, features = ["rt", "macros"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
-opendal = { version = "0.54", default-features = false, features = ["services-memory"] }
+opendal = { version = "0.54.1", default-features = false, features = ["services-memory"] }
 bytes = "1.10"
+httpmock = "0.7"
+serde_json = { workspace = true }
 
 [features]
 default = []

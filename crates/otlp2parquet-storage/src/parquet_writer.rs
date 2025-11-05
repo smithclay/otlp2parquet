@@ -5,11 +5,14 @@
 
 use anyhow::{bail, Result};
 use arrow::array::RecordBatch;
+use arrow::datatypes::SchemaRef;
+use chrono::{DateTime, Utc};
 use opendal::Operator;
+use parquet::file::metadata::ParquetMetaData;
 use parquet::file::properties::{EnabledStatistics, WriterProperties};
 use parquet::format::KeyValue;
 use std::io::{self, Write};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 #[cfg(target_arch = "wasm32")]
 use parquet::basic::Compression;
@@ -144,6 +147,18 @@ impl Blake3Hash {
     }
 }
 
+/// Rich metadata describing a Parquet file persisted by this writer.
+#[derive(Debug, Clone)]
+pub struct ParquetWriteResult {
+    pub path: String,
+    pub hash: Blake3Hash,
+    pub file_size: u64,
+    pub row_count: i64,
+    pub arrow_schema: SchemaRef,
+    pub parquet_metadata: Arc<ParquetMetaData>,
+    pub completed_at: DateTime<Utc>,
+}
+
 /// Parquet writer that streams directly to OpenDAL storage
 pub struct ParquetWriter {
     operator: Operator,
@@ -169,7 +184,7 @@ impl ParquetWriter {
         batch: &RecordBatch,
         service_name: &str,
         timestamp_nanos: i64,
-    ) -> Result<(String, Blake3Hash)> {
+    ) -> Result<ParquetWriteResult> {
         self.write_batches_with_hash(std::slice::from_ref(batch), service_name, timestamp_nanos)
             .await
     }
@@ -180,7 +195,7 @@ impl ParquetWriter {
         batches: &[RecordBatch],
         service_name: &str,
         timestamp_nanos: i64,
-    ) -> Result<(String, Blake3Hash)> {
+    ) -> Result<ParquetWriteResult> {
         self.write_batches_with_signal(batches, service_name, timestamp_nanos, "logs", None)
             .await
     }
@@ -200,24 +215,29 @@ impl ParquetWriter {
         timestamp_nanos: i64,
         signal_type: &str,
         subdirectory: Option<&str>,
-    ) -> Result<(String, Blake3Hash)> {
+    ) -> Result<ParquetWriteResult> {
         if batches.is_empty() {
             bail!("Cannot write empty batch list");
         }
 
         let mut sink = HashingBuffer::new();
         let props = writer_properties().clone();
-        {
+        let schema: SchemaRef = batches[0].schema();
+        let metadata: ParquetMetaData = {
             let mut writer =
-                parquet::arrow::ArrowWriter::try_new(&mut sink, batches[0].schema(), Some(props))?;
+                parquet::arrow::ArrowWriter::try_new(&mut sink, schema.clone(), Some(props))?;
 
             for batch in batches {
                 writer.write(batch)?;
             }
-            writer.close()?;
-        }
+            writer.close()?
+        };
 
         let (buffer, hash) = sink.finish();
+        let file_size = buffer.len() as u64;
+        let parquet_metadata = Arc::new(metadata);
+        let row_count = parquet_metadata.file_metadata().num_rows();
+        let completed_at = Utc::now();
 
         // Generate partition path with signal type
         let path = crate::partition::generate_partition_path_with_signal(
@@ -231,7 +251,15 @@ impl ParquetWriter {
         // Write to storage
         self.operator.write(&path, buffer).await?;
 
-        Ok((path, hash))
+        Ok(ParquetWriteResult {
+            path,
+            hash,
+            file_size,
+            row_count,
+            arrow_schema: schema,
+            parquet_metadata,
+            completed_at,
+        })
     }
 }
 
@@ -307,10 +335,12 @@ mod tests {
         let writer = ParquetWriter::new(op.clone());
 
         let batch = create_test_batch();
-        let (path, hash) = writer
+        let result = writer
             .write_batch_with_hash(&batch, "test-service", 1_705_327_800_000_000_000)
             .await
             .unwrap();
+        let path = result.path;
+        let hash = result.hash;
 
         // Verify path structure
         assert!(path.starts_with("logs/test-service/"));
@@ -332,10 +362,11 @@ mod tests {
         let batch1 = create_test_batch();
         let batch2 = create_test_batch();
 
-        let (path, _hash) = writer
+        let result = writer
             .write_batches_with_hash(&[batch1, batch2], "test-service", 1_705_327_800_000_000_000)
             .await
             .unwrap();
+        let path = result.path;
 
         // Verify file exists
         let data = op.read(&path).await.unwrap();

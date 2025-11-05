@@ -14,11 +14,12 @@
 // Core transformation is in: otlp2parquet-core (OTLP → Arrow)
 // Batching utilities are in: otlp2parquet-batch
 
+pub mod iceberg;
 pub mod opendal_storage;
 pub mod parquet_writer;
 pub mod partition;
 
 // Re-export commonly used types
 pub use parquet_writer::{
-    set_parquet_row_group_size, writer_properties, Blake3Hash, ParquetWriter,
+    set_parquet_row_group_size, writer_properties, Blake3Hash, ParquetWriteResult, ParquetWriter,
 };

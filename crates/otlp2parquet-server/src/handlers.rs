@@ -158,7 +158,7 @@ async fn process_logs(
 
     let mut uploaded_paths = Vec::new();
     for completed in uploads {
-        let (partition_path, _hash) = state
+        let write_result = state
             .parquet_writer
             .write_batches_with_hash(
                 &completed.batches,
@@ -167,6 +167,7 @@ async fn process_logs(
             )
             .await
             .map_err(|e| e.context("Failed to write Parquet to storage"))?;
+        let partition_path = write_result.path.clone();
 
         counter!("otlp.batch.flushes", 1);
         histogram!("otlp.batch.rows", completed.metadata.record_count as f64);
@@ -224,7 +225,7 @@ async fn process_traces(
 
     // Write trace batch to Parquet
     let service_name = metadata.service_name.as_ref();
-    let (partition_path, _hash) = state
+    let write_result = state
         .parquet_writer
         .write_batches_with_signal(
             &batches,
@@ -235,6 +236,7 @@ async fn process_traces(
         )
         .await
         .map_err(|e| e.context("Failed to write traces Parquet to storage"))?;
+    let partition_path = write_result.path.clone();
 
     counter!("otlp.traces.flushes", 1);
     histogram!("otlp.batch.rows", metadata.span_count as f64, "signal" => "traces");
@@ -303,7 +305,7 @@ async fn process_metrics(
         let service_name = "default"; // TODO: Extract from metadata
         let timestamp_nanos = 0; // TODO: Extract first timestamp from batch
 
-        let (partition_path, _hash) = state
+        let write_result = state
             .parquet_writer
             .write_batches_with_signal(
                 &[batch],
@@ -314,6 +316,7 @@ async fn process_metrics(
             )
             .await
             .map_err(|e| e.context(format!("Failed to write {} metrics Parquet", metric_type)))?;
+        let partition_path = write_result.path.clone();
 
         counter!("otlp.metrics.flushes", 1, "metric_type" => metric_type.clone());
         info!(
