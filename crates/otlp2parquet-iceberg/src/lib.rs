@@ -6,6 +6,9 @@
 //
 // Only used by Lambda and Server runtimes (not Cloudflare Workers).
 
+pub mod partition;
+pub mod schema;
+
 use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
@@ -97,39 +100,39 @@ impl IcebergRestConfig {
     /// Load configuration from environment variables.
     ///
     /// Required:
-    /// - `ICEBERG_REST_URI`: REST catalog endpoint
-    /// - `ICEBERG_TABLE`: Table name
+    /// - `OTLP2PARQUET_ICEBERG_REST_URI`: REST catalog endpoint
+    /// - `OTLP2PARQUET_ICEBERG_TABLE`: Table name
     ///
     /// Optional:
-    /// - `ICEBERG_WAREHOUSE`: Warehouse location
-    /// - `ICEBERG_NAMESPACE`: Dot-separated namespace (e.g., "otel.logs")
-    /// - `ICEBERG_CATALOG_NAME`: Catalog name (default: "rest")
-    /// - `ICEBERG_STAGING_PREFIX`: Staging prefix for data files
-    /// - `ICEBERG_TARGET_FILE_SIZE_BYTES`: Target file size
+    /// - `OTLP2PARQUET_ICEBERG_WAREHOUSE`: Warehouse location
+    /// - `OTLP2PARQUET_ICEBERG_NAMESPACE`: Dot-separated namespace (e.g., "otel.logs")
+    /// - `OTLP2PARQUET_ICEBERG_CATALOG_NAME`: Catalog name (default: "rest")
+    /// - `OTLP2PARQUET_ICEBERG_STAGING_PREFIX`: Staging prefix for data files
+    /// - `OTLP2PARQUET_ICEBERG_TARGET_FILE_SIZE_BYTES`: Target file size
     pub fn from_env() -> Result<Self> {
-        let rest_uri = env::var("ICEBERG_REST_URI").context(
-            "ICEBERG_REST_URI must be set (e.g., https://s3tables.us-east-1.amazonaws.com/iceberg)",
+        let rest_uri = env::var("OTLP2PARQUET_ICEBERG_REST_URI").context(
+            "OTLP2PARQUET_ICEBERG_REST_URI must be set (e.g., https://s3tables.us-east-1.amazonaws.com/iceberg)",
         )?;
 
-        let warehouse = env::var("ICEBERG_WAREHOUSE").ok();
+        let warehouse = env::var("OTLP2PARQUET_ICEBERG_WAREHOUSE").ok();
 
-        let namespace = env::var("ICEBERG_NAMESPACE")
+        let namespace = env::var("OTLP2PARQUET_ICEBERG_NAMESPACE")
             .unwrap_or_default()
             .split('.')
             .filter(|segment| !segment.trim().is_empty())
             .map(|segment| segment.trim().to_string())
             .collect::<Vec<_>>();
 
-        let table = env::var("ICEBERG_TABLE")
-            .context("ICEBERG_TABLE must be set for Iceberg catalog access")?;
+        let table = env::var("OTLP2PARQUET_ICEBERG_TABLE")
+            .context("OTLP2PARQUET_ICEBERG_TABLE must be set for Iceberg catalog access")?;
 
-        let catalog_name =
-            env::var("ICEBERG_CATALOG_NAME").unwrap_or_else(|_| DEFAULT_CATALOG_NAME.to_string());
+        let catalog_name = env::var("OTLP2PARQUET_ICEBERG_CATALOG_NAME")
+            .unwrap_or_else(|_| DEFAULT_CATALOG_NAME.to_string());
 
-        let staging_prefix = env::var("ICEBERG_STAGING_PREFIX")
+        let staging_prefix = env::var("OTLP2PARQUET_ICEBERG_STAGING_PREFIX")
             .unwrap_or_else(|_| DEFAULT_STAGING_PREFIX.to_string());
 
-        let target_file_size_bytes = env::var("ICEBERG_TARGET_FILE_SIZE_BYTES")
+        let target_file_size_bytes = env::var("OTLP2PARQUET_ICEBERG_TARGET_FILE_SIZE_BYTES")
             .ok()
             .and_then(|raw| raw.parse::<u64>().ok())
             .unwrap_or(DEFAULT_TARGET_FILE_SIZE);
@@ -294,8 +297,26 @@ pub fn build_data_file(
         }
 
         // Store per-field statistics
-        // Iceberg uses field_id -> value maps; we use sequential IDs starting from schema field index
-        let field_id = (field_idx + 1) as i32; // Iceberg field IDs typically start at 1
+        // Look up field ID from Iceberg schema by column name
+        let column_descriptor = parquet_metadata
+            .file_metadata()
+            .schema_descr()
+            .column(field_idx);
+        let column_name = column_descriptor.name();
+
+        // Get field ID from Iceberg schema - this ensures proper mapping across schema evolution
+        let field_id = match _schema.field_by_name(column_name) {
+            Some(field_ref) => field_ref.id,
+            None => {
+                // Column not found in Iceberg schema - skip statistics for this column
+                // This can happen if the Parquet file has extra columns not in the table schema
+                debug!(
+                    column = column_name,
+                    "Column in Parquet file not found in Iceberg schema, skipping statistics"
+                );
+                continue;
+            }
+        };
 
         if total_size > 0 {
             column_sizes.insert(field_id, total_size);
@@ -474,13 +495,22 @@ impl IcebergCommitter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // Mutex to serialize tests that modify environment variables
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_config_from_env() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+
         // Set required environment variables
-        std::env::set_var("ICEBERG_REST_URI", "https://test.example.com/iceberg");
-        std::env::set_var("ICEBERG_TABLE", "test_table");
-        std::env::set_var("ICEBERG_NAMESPACE", "otel.logs");
+        std::env::set_var(
+            "OTLP2PARQUET_ICEBERG_REST_URI",
+            "https://test.example.com/iceberg",
+        );
+        std::env::set_var("OTLP2PARQUET_ICEBERG_TABLE", "test_table");
+        std::env::set_var("OTLP2PARQUET_ICEBERG_NAMESPACE", "otel.logs");
 
         let config = IcebergRestConfig::from_env().unwrap();
 
@@ -492,16 +522,21 @@ mod tests {
         assert_eq!(config.target_file_size_bytes, DEFAULT_TARGET_FILE_SIZE);
 
         // Clean up
-        std::env::remove_var("ICEBERG_REST_URI");
-        std::env::remove_var("ICEBERG_TABLE");
-        std::env::remove_var("ICEBERG_NAMESPACE");
+        std::env::remove_var("OTLP2PARQUET_ICEBERG_REST_URI");
+        std::env::remove_var("OTLP2PARQUET_ICEBERG_TABLE");
+        std::env::remove_var("OTLP2PARQUET_ICEBERG_NAMESPACE");
     }
 
     #[test]
     fn test_config_optional_warehouse() {
-        std::env::set_var("ICEBERG_REST_URI", "https://test.example.com/iceberg");
-        std::env::set_var("ICEBERG_TABLE", "test_table");
-        std::env::set_var("ICEBERG_WAREHOUSE", "s3://my-bucket/warehouse");
+        let _lock = ENV_MUTEX.lock().unwrap();
+
+        std::env::set_var(
+            "OTLP2PARQUET_ICEBERG_REST_URI",
+            "https://test.example.com/iceberg",
+        );
+        std::env::set_var("OTLP2PARQUET_ICEBERG_TABLE", "test_table");
+        std::env::set_var("OTLP2PARQUET_ICEBERG_WAREHOUSE", "s3://my-bucket/warehouse");
 
         let config = IcebergRestConfig::from_env().unwrap();
 
@@ -511,9 +546,9 @@ mod tests {
         );
 
         // Clean up
-        std::env::remove_var("ICEBERG_REST_URI");
-        std::env::remove_var("ICEBERG_TABLE");
-        std::env::remove_var("ICEBERG_WAREHOUSE");
+        std::env::remove_var("OTLP2PARQUET_ICEBERG_REST_URI");
+        std::env::remove_var("OTLP2PARQUET_ICEBERG_TABLE");
+        std::env::remove_var("OTLP2PARQUET_ICEBERG_WAREHOUSE");
     }
 
     #[test]

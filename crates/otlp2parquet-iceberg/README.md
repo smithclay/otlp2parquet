@@ -40,21 +40,21 @@ otlp2parquet-iceberg (S3 Tables catalog) ← THIS CRATE
  lambda     server
 ```
 
-##Configuration
+## Configuration
 
-Set these environment variables:
+Set these environment variables (following the `OTLP2PARQUET_` prefix convention):
 
 ```bash
 # Required
-ICEBERG_TABLE_BUCKET_ARN="arn:aws:s3tables:us-east-1:123456789012:bucket/my-bucket"
-ICEBERG_TABLE="otel_logs"
+OTLP2PARQUET_ICEBERG_REST_URI="https://s3tables.us-east-1.amazonaws.com/iceberg"
+OTLP2PARQUET_ICEBERG_TABLE="otel_logs"
 
 # Optional
-ICEBERG_NAMESPACE="otel.production"  # Dot-separated namespace
-ICEBERG_CATALOG_NAME="s3tables"       # Catalog name (default: "s3tables")
-ICEBERG_ENDPOINT_URL="http://localhost:4566"  # For testing with LocalStack
-ICEBERG_STAGING_PREFIX="data/incoming"  # Staging prefix for data files
-ICEBERG_TARGET_FILE_SIZE_BYTES="536870912"  # Target file size (512MB)
+OTLP2PARQUET_ICEBERG_WAREHOUSE="s3://my-warehouse"  # Warehouse location
+OTLP2PARQUET_ICEBERG_NAMESPACE="otel.production"  # Dot-separated namespace
+OTLP2PARQUET_ICEBERG_CATALOG_NAME="rest"  # Catalog name (default: "rest")
+OTLP2PARQUET_ICEBERG_STAGING_PREFIX="data/incoming"  # Staging prefix (default: "data/incoming")
+OTLP2PARQUET_ICEBERG_TARGET_FILE_SIZE_BYTES="536870912"  # Target file size (default: 512MB)
 ```
 
 ## Usage (Planned)

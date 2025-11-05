@@ -26,5 +26,8 @@ tracing = { version = "0.1", default-features = false, features = ["std"] }
 # Parquet metadata access
 parquet = { workspace = true, features = ["arrow"] }
 
+# Arrow for schema conversion
+arrow = { workspace = true }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }

@@ -2985,6 +2985,7 @@ name = "otlp2parquet-iceberg"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrow",
  "async-trait",
  "chrono",
  "iceberg",
