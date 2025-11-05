@@ -87,27 +87,41 @@
 //! This ensures ingestion is never blocked by catalog availability.
 
 pub mod init;
-pub mod partition;
-pub mod schema;
+
+// New minimal Iceberg implementation modules
+pub mod arrow_convert;
+pub mod catalog;
+pub mod datafile_convert;
+pub mod http;
+pub mod protocol;
+pub mod types;
+pub mod validation;
+
+// Re-export commonly used types
+pub use arrow_convert::arrow_to_iceberg_schema;
+pub use catalog::IcebergCatalog;
+pub use validation::validate_schema_compatibility;
+// Note: datafile_convert::build_data_file conflicts with old build_data_file, so not re-exported
+
+// Platform-specific HTTP implementations
+#[cfg(not(target_arch = "wasm32"))]
+pub mod http_native;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use http_native::NativeHttpClient;
+
+#[cfg(target_arch = "wasm32")]
+pub mod http_wasm;
+
+#[cfg(target_arch = "wasm32")]
+pub use http_wasm::WasmHttpClient;
 
 use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Context, Result};
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use iceberg::spec::{
-    DataContentType, DataFile, DataFileBuilder, DataFileFormat, Datum, Schema, Struct,
-    UnboundPartitionSpec,
-};
-use iceberg::transaction::{ApplyTransactionAction, Transaction};
-use iceberg::{Catalog, CatalogBuilder, NamespaceIdent, TableIdent};
-use iceberg_catalog_rest::{
-    RestCatalogBuilder, REST_CATALOG_PROP_URI, REST_CATALOG_PROP_WAREHOUSE,
-};
+use anyhow::{Context, Result};
 use otlp2parquet_storage::ParquetWriteResult;
-use parquet::file::metadata::ParquetMetaData;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, instrument, warn};
 
@@ -277,269 +291,43 @@ impl IcebergRestConfig {
             staging_prefix,
         })
     }
-
-    pub fn namespace_ident(&self) -> Result<NamespaceIdent> {
-        if self.namespace.is_empty() {
-            bail!("Iceberg namespace must contain at least one element");
-        }
-
-        NamespaceIdent::from_strs(self.namespace.clone())
-            .context("failed to parse namespace for Iceberg table")
-    }
-}
-
-/// Thin wrapper describing a fully-qualified Iceberg table.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IcebergTableIdentifier {
-    pub namespace: NamespaceIdent,
-    pub name: String,
-}
-
-impl IcebergTableIdentifier {
-    pub fn new(namespace: NamespaceIdent, name: impl Into<String>) -> Self {
-        Self {
-            namespace,
-            name: name.into(),
-        }
-    }
-
-    /// Convert to iceberg's TableIdent type.
-    pub fn to_table_ident(&self) -> TableIdent {
-        TableIdent::new(self.namespace.clone(), self.name.clone())
-    }
-}
-
-/// Abstract catalog interactions required by the storage layer.
-#[async_trait]
-pub trait CatalogAdapter: Send + Sync {
-    async fn ensure_namespace(&self, namespace: &NamespaceIdent) -> Result<()>;
-    async fn ensure_table(
-        &self,
-        ident: &IcebergTableIdentifier,
-        schema: Arc<Schema>,
-        partition_spec: Arc<UnboundPartitionSpec>,
-    ) -> Result<()>;
-    async fn append_files(
-        &self,
-        ident: &IcebergTableIdentifier,
-        files: Vec<DataFile>,
-        committed_at: DateTime<Utc>,
-    ) -> Result<()>;
-    async fn expire_snapshots(
-        &self,
-        ident: &IcebergTableIdentifier,
-        older_than: DateTime<Utc>,
-        retain_last: usize,
-    ) -> Result<()>;
-}
-
-/// Create an Iceberg REST catalog from configuration.
-///
-/// Works with any Iceberg REST catalog including:
-/// - AWS S3 Tables
-/// - AWS Glue Data Catalog
-/// - Tabular
-/// - Other REST-compatible catalogs
-pub async fn create_rest_catalog(config: &IcebergRestConfig) -> Result<Arc<dyn Catalog>> {
-    let mut properties = HashMap::new();
-    properties.insert(REST_CATALOG_PROP_URI.to_string(), config.rest_uri.clone());
-
-    if let Some(ref warehouse) = config.warehouse {
-        properties.insert(REST_CATALOG_PROP_WAREHOUSE.to_string(), warehouse.clone());
-    }
-
-    let catalog = RestCatalogBuilder::default()
-        .load(&config.catalog_name, properties)
-        .await
-        .context("failed to create REST catalog")?;
-
-    Ok(Arc::new(catalog))
-}
-
-/// Convert a written Parquet file into an Iceberg DataFile descriptor.
-///
-/// Extracts metadata from Parquet file statistics to build an Iceberg DataFile
-/// descriptor that can be committed to the catalog.
-///
-/// # Parameters
-/// - `result`: Parquet write result with metadata
-/// - `schema`: Iceberg schema for field ID mapping
-pub fn build_data_file(result: &ParquetWriteResult, schema: &Schema) -> Result<DataFile> {
-    let parquet_metadata: &ParquetMetaData = &result.parquet_metadata;
-
-    debug!(
-        path = %result.path,
-        row_count = result.row_count,
-        file_size = result.file_size,
-        num_row_groups = parquet_metadata.num_row_groups(),
-        "constructing iceberg DataFile from Parquet metadata"
-    );
-
-    // Extract column statistics from Parquet metadata
-    let mut column_sizes = HashMap::new();
-    let mut value_counts = HashMap::new();
-    let mut null_value_counts = HashMap::new();
-    let mut lower_bounds = HashMap::new();
-    let mut upper_bounds = HashMap::new();
-
-    // Iceberg uses field IDs, we'll use positional mapping for now
-    // TODO: Proper field ID mapping when schema evolution is implemented
-    let num_columns = parquet_metadata
-        .file_metadata()
-        .schema_descr()
-        .num_columns();
-
-    for field_idx in 0..num_columns {
-        let mut total_size = 0u64;
-        let mut total_values = 0u64;
-        let mut total_nulls = 0u64;
-        let mut col_min: Option<Vec<u8>> = None;
-        let mut col_max: Option<Vec<u8>> = None;
-
-        // Aggregate statistics across all row groups
-        for rg_idx in 0..parquet_metadata.num_row_groups() {
-            let row_group = parquet_metadata.row_group(rg_idx);
-            if field_idx < row_group.num_columns() {
-                let column_chunk = row_group.column(field_idx);
-
-                // Column size
-                total_size += column_chunk.compressed_size() as u64;
-
-                // Value and null counts
-                if let Some(stats) = column_chunk.statistics() {
-                    total_values += row_group.num_rows() as u64;
-                    if let Some(null_count) = stats.null_count_opt() {
-                        total_nulls += null_count;
-                    }
-
-                    // Min/max bounds (only if we haven't set them or need to update)
-                    if let Some(min_bytes) = stats.min_bytes_opt() {
-                        if col_min.is_none() || min_bytes < col_min.as_ref().unwrap().as_slice() {
-                            col_min = Some(min_bytes.to_vec());
-                        }
-                    }
-                    if let Some(max_bytes) = stats.max_bytes_opt() {
-                        if col_max.is_none() || max_bytes > col_max.as_ref().unwrap().as_slice() {
-                            col_max = Some(max_bytes.to_vec());
-                        }
-                    }
-                }
-            }
-        }
-
-        // Store per-field statistics
-        // Look up field ID from Iceberg schema by column name
-        let column_descriptor = parquet_metadata
-            .file_metadata()
-            .schema_descr()
-            .column(field_idx);
-        let column_name = column_descriptor.name();
-
-        // Get field ID from Iceberg schema - this ensures proper mapping across schema evolution
-        let field_id = match schema.field_by_name(column_name) {
-            Some(field_ref) => field_ref.id,
-            None => {
-                // Column not found in Iceberg schema - skip statistics for this column
-                // This can happen if the Parquet file has extra columns not in the table schema
-                debug!(
-                    column = column_name,
-                    "Column in Parquet file not found in Iceberg schema, skipping statistics"
-                );
-                continue;
-            }
-        };
-
-        if total_size > 0 {
-            column_sizes.insert(field_id, total_size);
-        }
-        if total_values > 0 {
-            value_counts.insert(field_id, total_values);
-        }
-        if total_nulls > 0 {
-            null_value_counts.insert(field_id, total_nulls);
-        }
-        if let Some(min) = col_min {
-            lower_bounds.insert(field_id, Datum::binary(min));
-        }
-        if let Some(max) = col_max {
-            upper_bounds.insert(field_id, Datum::binary(max));
-        }
-    }
-
-    // Calculate split offsets from row group positions
-    let mut split_offsets = Vec::new();
-    let mut current_offset: i64 = 4; // Parquet magic number size
-    for rg_idx in 0..parquet_metadata.num_row_groups() {
-        let row_group = parquet_metadata.row_group(rg_idx);
-        if let Some(dict_page_offset) = row_group.column(0).dictionary_page_offset() {
-            split_offsets.push(dict_page_offset);
-        } else {
-            let data_page_offset = row_group.column(0).data_page_offset();
-            if data_page_offset > 0 {
-                split_offsets.push(data_page_offset);
-            } else {
-                // Fallback: estimate based on cumulative size
-                current_offset += row_group.compressed_size();
-                split_offsets.push(current_offset);
-            }
-        }
-    }
-
-    let mut builder = DataFileBuilder::default();
-    builder
-        .file_path(result.path.clone())
-        .file_format(DataFileFormat::Parquet)
-        .record_count(result.row_count as u64)
-        .file_size_in_bytes(result.file_size)
-        .partition(Struct::empty()) // No partitioning for now
-        .content(DataContentType::Data)
-        .partition_spec_id(0)
-        .column_sizes(column_sizes)
-        .value_counts(value_counts)
-        .null_value_counts(null_value_counts)
-        .lower_bounds(lower_bounds)
-        .upper_bounds(upper_bounds)
-        .split_offsets(split_offsets);
-
-    // Set sort order ID if schema metadata indicates sorted data
-    // TODO: Extract from Arrow schema metadata when available
-    // builder.sort_order_id(Some(1));
-
-    builder
-        .build()
-        .context("failed to build Iceberg DataFile from Parquet metadata")
 }
 
 /// Committer that appends Parquet files to an Iceberg table.
 ///
-/// Uses the official Iceberg Catalog trait to:
-/// 1. Load the table
-/// 2. Create a transaction
-/// 3. Append DataFile descriptors
-/// 4. Commit the transaction
+/// Wrapper around the minimal IcebergCatalog implementation that maintains
+/// backward compatibility with existing Lambda/Server code.
+///
+/// This:
+/// 1. Converts ParquetWriteResult to DataFile descriptors
+/// 2. Delegates to IcebergCatalog.commit_with_signal
+/// 3. Implements warn-and-succeed pattern
+#[cfg(not(target_arch = "wasm32"))]
 pub struct IcebergCommitter {
-    catalog: Arc<dyn Catalog>,
-    tables: HashMap<String, IcebergTableIdentifier>,
+    catalog: Arc<IcebergCatalog<NativeHttpClient>>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl IcebergCommitter {
-    pub fn new(catalog: Arc<dyn Catalog>, tables: HashMap<String, IcebergTableIdentifier>) -> Self {
-        Self { catalog, tables }
+    pub fn new(catalog: Arc<IcebergCatalog<NativeHttpClient>>) -> Self {
+        Self { catalog }
     }
 
     /// Commit Parquet files to the appropriate Iceberg table based on signal type.
     ///
     /// This:
-    /// 1. Selects the correct table based on signal_type and metric_type
-    /// 2. Loads the current table state
-    /// 3. Builds DataFile descriptors from Parquet metadata
-    /// 4. Creates a transaction with append operation
-    /// 5. Commits atomically
+    /// 1. Delegates to catalog's commit_with_signal method (which handles schema loading and DataFile conversion internally)
+    /// 2. Implements warn-and-succeed: errors logged but return Ok(())
     ///
     /// # Parameters
     /// - `signal_type`: "logs", "traces", or "metrics"
     /// - `metric_type`: For metrics only - "gauge", "sum", "histogram", "exponential_histogram", or "summary"
     /// - `parquet_results`: Parquet files to commit
+    ///
+    /// # Note
+    /// The catalog's commit_with_signal now expects Vec<DataFile>, but we pass ParquetWriteResult.
+    /// We need to add a conversion method that takes ParquetWriteResult and converts to DataFile.
+    /// For now, we'll build DataFiles using the Arrow schema from the results.
     #[instrument(skip(self, parquet_results), fields(num_files = parquet_results.len(), signal_type, metric_type))]
     pub async fn commit_with_signal(
         &self,
@@ -552,46 +340,48 @@ impl IcebergCommitter {
             return Ok(());
         }
 
-        // Build table key and look up table identifier
-        let table_key = if let Some(mt) = metric_type {
-            format!("metrics:{}", mt)
-        } else {
-            signal_type.to_string()
-        };
-
-        let table_ident = self.tables.get(&table_key).ok_or_else(|| {
-            anyhow!(
-                "No table configured for signal_type='{}', metric_type='{:?}'",
-                signal_type,
-                metric_type
-            )
-        })?;
-
-        // Load the table
-        let table_ident_native = table_ident.to_table_ident();
-        let table = self
-            .catalog
-            .load_table(&table_ident_native)
-            .await
-            .context("failed to load Iceberg table")?;
-
-        // Build DataFile descriptors from Parquet results
-        let schema = table.metadata().current_schema();
+        // Convert ParquetWriteResult to Arrow schema, then to Iceberg schema, then to DataFile
+        // This is a simplified approach that doesn't require loading the table first
         let mut data_files = Vec::with_capacity(parquet_results.len());
         for result in parquet_results {
-            let data_file = build_data_file(result, schema.as_ref())?;
+            // Convert Arrow schema from Parquet to Iceberg schema
+            let arrow_schema = &result.arrow_schema;
+            let iceberg_schema = match arrow_convert::arrow_to_iceberg_schema(arrow_schema) {
+                Ok(schema) => schema,
+                Err(e) => {
+                    warn!(
+                        path = %result.path,
+                        error = %e,
+                        "failed to convert Arrow schema to Iceberg - skipping file"
+                    );
+                    continue;
+                }
+            };
+
+            // Build DataFile from Parquet metadata
+            let data_file = match datafile_convert::build_data_file(result, &iceberg_schema) {
+                Ok(df) => df,
+                Err(e) => {
+                    warn!(
+                        path = %result.path,
+                        error = %e,
+                        "failed to build DataFile from Parquet metadata - skipping file"
+                    );
+                    continue;
+                }
+            };
             data_files.push(data_file);
         }
 
-        let total_rows = data_files.iter().map(|f| f.record_count()).sum::<u64>();
-        let total_bytes = data_files
-            .iter()
-            .map(|f| f.file_size_in_bytes())
-            .sum::<u64>();
+        if data_files.is_empty() {
+            warn!("No valid DataFiles to commit after conversion");
+            return Ok(());
+        }
+
+        let total_rows: u64 = data_files.iter().map(|f| f.record_count).sum();
+        let total_bytes: u64 = data_files.iter().map(|f| f.file_size_in_bytes).sum();
 
         debug!(
-            table = %table_ident.name,
-            namespace = ?table_ident.namespace,
             signal_type = signal_type,
             metric_type = ?metric_type,
             num_files = data_files.len(),
@@ -600,39 +390,22 @@ impl IcebergCommitter {
             "committing files to Iceberg table"
         );
 
-        // Create transaction and append data files
-        let txn = Transaction::new(&table);
-        let append = txn.fast_append().add_data_files(data_files.into_iter());
-
-        // Apply action to transaction
-        let txn = match append.apply(txn) {
-            Ok(txn) => txn,
-            Err(e) => {
-                warn!(
-                    table = %table_ident.name,
-                    signal_type = signal_type,
-                    metric_type = ?metric_type,
-                    error = %e,
-                    "failed to apply append action to transaction - files written to storage but not cataloged"
-                );
-                return Ok(()); // Warn and succeed
-            }
-        };
-
-        // Commit transaction
-        if let Err(e) = txn.commit(&*self.catalog).await {
+        // Delegate to catalog's commit_with_signal
+        if let Err(e) = self
+            .catalog
+            .commit_with_signal(signal_type, metric_type, data_files)
+            .await
+        {
             warn!(
-                table = %table_ident.name,
                 signal_type = signal_type,
                 metric_type = ?metric_type,
                 error = %e,
-                "failed to commit transaction to catalog - files written to storage but not cataloged"
+                "failed to commit to catalog - files written to storage but not cataloged"
             );
             return Ok(()); // Warn and succeed
         }
 
         info!(
-            table = %table_ident.name,
             signal_type = signal_type,
             metric_type = ?metric_type,
             num_files = parquet_results.len(),
@@ -737,46 +510,12 @@ mod tests {
     }
 
     #[test]
-    fn test_namespace_ident_parsing() {
-        let mut tables = HashMap::new();
-        tables.insert("logs".to_string(), "test_table".to_string());
-
-        let config = IcebergRestConfig {
-            rest_uri: "https://test.example.com/iceberg".to_string(),
-            warehouse: None,
-            namespace: vec!["otel".to_string(), "logs".to_string()],
-            tables,
-            catalog_name: DEFAULT_CATALOG_NAME.to_string(),
-            format_version: 2,
-            target_file_size_bytes: DEFAULT_TARGET_FILE_SIZE,
-            staging_prefix: DEFAULT_STAGING_PREFIX.to_string(),
-        };
-
-        let ident = config.namespace_ident().unwrap();
-        assert_eq!(ident.to_string(), "otel.logs");
-    }
-
-    #[test]
     fn test_namespace_empty_error() {
-        let config = IcebergRestConfig {
-            namespace: vec![],
-            ..Default::default()
-        };
+        // Verify that empty namespace is rejected
+        use crate::catalog::NamespaceIdent;
 
-        assert!(config.namespace_ident().is_err());
-    }
-
-    #[test]
-    fn test_table_identifier_conversion() {
-        let namespace = NamespaceIdent::from_strs(vec!["otel", "logs"]).unwrap();
-        let ident = IcebergTableIdentifier::new(namespace.clone(), "test_table");
-
-        assert_eq!(ident.name, "test_table");
-        assert_eq!(ident.namespace, namespace);
-
-        let table_ident = ident.to_table_ident();
-        assert_eq!(table_ident.name(), "test_table");
-        assert_eq!(table_ident.namespace(), &namespace);
+        let empty_namespace: Vec<String> = vec![];
+        assert!(NamespaceIdent::from_vec(empty_namespace).is_err());
     }
 
     #[test]

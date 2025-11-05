@@ -3,10 +3,11 @@
 //! This module provides shared initialization logic used by both Lambda and Server runtimes
 //! to avoid code duplication.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::{create_rest_catalog, IcebergCommitter, IcebergRestConfig, IcebergTableIdentifier};
+use crate::{
+    catalog::NamespaceIdent, IcebergCatalog, IcebergCommitter, IcebergRestConfig, NativeHttpClient,
+};
 
 /// Result of Iceberg initialization.
 ///
@@ -30,8 +31,9 @@ pub enum InitResult {
 ///
 /// This function encapsulates the full initialization logic including:
 /// - Loading configuration from environment
-/// - Creating REST catalog client
-/// - Building table identifier map
+/// - Creating HTTP client
+/// - Creating IcebergCatalog with REST endpoint
+/// - Registering tables from configuration
 /// - Constructing the committer
 ///
 /// # Returns
@@ -73,27 +75,28 @@ pub async fn initialize_committer() -> InitResult {
         }
     };
 
-    // Create REST catalog
-    let catalog = match create_rest_catalog(&config).await {
-        Ok(c) => c,
-        Err(e) => return InitResult::CatalogError(e.to_string()),
+    // Parse namespace (convert Vec<String> to NamespaceIdent)
+    let namespace = match NamespaceIdent::from_vec(config.namespace.clone()) {
+        Ok(ns) => ns,
+        Err(e) => return InitResult::NamespaceError(format!("Failed to parse namespace: {}", e)),
     };
 
-    // Parse namespace
-    let namespace = match config.namespace_ident() {
-        Ok(n) => n,
-        Err(e) => return InitResult::NamespaceError(e.to_string()),
+    // Create HTTP client
+    let http_client = match NativeHttpClient::new(&config.rest_uri).await {
+        Ok(client) => client,
+        Err(e) => return InitResult::CatalogError(format!("Failed to create HTTP client: {}", e)),
     };
 
-    // Build table map from config
-    let mut tables = HashMap::new();
-    for (signal_key, table_name) in &config.tables {
-        let table_ident = IcebergTableIdentifier::new(namespace.clone(), table_name.clone());
-        tables.insert(signal_key.clone(), table_ident);
-    }
+    // Create IcebergCatalog with tables from config
+    let table_count = config.tables.len();
+    let catalog = IcebergCatalog::new(
+        http_client,
+        config.rest_uri.clone(),
+        namespace,
+        config.tables.clone(),
+    );
 
-    let table_count = tables.len();
-    let committer = IcebergCommitter::new(catalog, tables);
+    let committer = IcebergCommitter::new(Arc::new(catalog));
 
     InitResult::Success {
         committer: Arc::new(committer),
