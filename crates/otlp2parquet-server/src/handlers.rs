@@ -169,6 +169,14 @@ async fn process_logs(
             .map_err(|e| e.context("Failed to write Parquet to storage"))?;
         let partition_path = write_result.path.clone();
 
+        // Commit to Iceberg catalog if configured (warn-and-succeed on error)
+        if let Some(committer) = &state.iceberg_committer {
+            if let Err(e) = committer.commit(&[write_result]).await {
+                warn!("Failed to commit to Iceberg catalog: {}", e);
+                // Continue - files are in storage even if catalog commit failed
+            }
+        }
+
         counter!("otlp.batch.flushes", 1);
         histogram!("otlp.batch.rows", completed.metadata.record_count as f64);
         info!(
@@ -237,6 +245,14 @@ async fn process_traces(
         .await
         .map_err(|e| e.context("Failed to write traces Parquet to storage"))?;
     let partition_path = write_result.path.clone();
+
+    // Commit to Iceberg catalog if configured (warn-and-succeed on error)
+    if let Some(committer) = &state.iceberg_committer {
+        if let Err(e) = committer.commit(&[write_result]).await {
+            warn!("Failed to commit traces to Iceberg catalog: {}", e);
+            // Continue - files are in storage even if catalog commit failed
+        }
+    }
 
     counter!("otlp.traces.flushes", 1);
     histogram!("otlp.batch.rows", metadata.span_count as f64, "signal" => "traces");
@@ -317,6 +333,17 @@ async fn process_metrics(
             .await
             .map_err(|e| e.context(format!("Failed to write {} metrics Parquet", metric_type)))?;
         let partition_path = write_result.path.clone();
+
+        // Commit to Iceberg catalog if configured (warn-and-succeed on error)
+        if let Some(committer) = &state.iceberg_committer {
+            if let Err(e) = committer.commit(&[write_result]).await {
+                warn!(
+                    "Failed to commit {} metrics to Iceberg catalog: {}",
+                    metric_type, e
+                );
+                // Continue - files are in storage even if catalog commit failed
+            }
+        }
 
         counter!("otlp.metrics.flushes", 1, "metric_type" => metric_type.clone());
         info!(

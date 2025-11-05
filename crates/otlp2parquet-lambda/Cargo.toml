@@ -10,6 +10,7 @@ otlp2parquet-core = { path = "../otlp2parquet-core" }
 otlp2parquet-batch = { path = "../otlp2parquet-batch" }
 otlp2parquet-config = { path = "../otlp2parquet-config" }
 otlp2parquet-storage = { path = "../otlp2parquet-storage", features = ["services-s3"] }
+otlp2parquet-iceberg = { path = "../otlp2parquet-iceberg" }
 
 # AWS Lambda runtime (provides tokio runtime)
 lambda_runtime = "0.14"

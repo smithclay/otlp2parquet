@@ -131,7 +131,15 @@ async fn process_logs(
             .await
         {
             Ok(write_result) => {
-                uploaded_paths.push(write_result.path);
+                uploaded_paths.push(write_result.path.clone());
+
+                // Commit to Iceberg catalog if configured (warn-and-succeed on error)
+                if let Some(committer) = &state.iceberg_committer {
+                    if let Err(e) = committer.commit(&[write_result]).await {
+                        eprintln!("Warning: Failed to commit to Iceberg catalog: {}", e);
+                        // Continue - files are in S3 even if catalog commit failed
+                    }
+                }
             }
             Err(err) => {
                 eprintln!("Failed to write Parquet to storage: {}", err);
@@ -225,7 +233,18 @@ async fn process_metrics(
             .await
         {
             Ok(write_result) => {
-                uploaded_paths.push(write_result.path);
+                uploaded_paths.push(write_result.path.clone());
+
+                // Commit to Iceberg catalog if configured (warn-and-succeed on error)
+                if let Some(committer) = &state.iceberg_committer {
+                    if let Err(e) = committer.commit(&[write_result]).await {
+                        eprintln!(
+                            "Warning: Failed to commit {} metrics to Iceberg catalog: {}",
+                            metric_type, e
+                        );
+                        // Continue - files are in S3 even if catalog commit failed
+                    }
+                }
             }
             Err(err) => {
                 eprintln!("Failed to write {} metrics Parquet: {}", metric_type, err);

@@ -22,6 +22,7 @@ use axum::{
 };
 use otlp2parquet_batch::{BatchConfig, BatchManager, PassthroughBatcher};
 use otlp2parquet_config::RuntimeConfig;
+use otlp2parquet_iceberg::IcebergCommitter;
 use otlp2parquet_storage::opendal_storage::OpenDalStorage;
 use otlp2parquet_storage::{set_parquet_row_group_size, ParquetWriter};
 use serde_json::json;
@@ -44,6 +45,7 @@ pub(crate) struct AppState {
     pub batcher: Option<Arc<BatchManager>>,
     pub passthrough: PassthroughBatcher,
     pub max_payload_bytes: usize,
+    pub iceberg_committer: Option<Arc<IcebergCommitter>>,
 }
 
 /// Error type that implements IntoResponse
@@ -160,6 +162,49 @@ pub async fn run() -> Result<()> {
     let max_payload_bytes = config.request.max_payload_bytes;
     info!("Max payload size set to {} bytes", max_payload_bytes);
 
+    // Initialize Iceberg committer if configured
+    let iceberg_committer = match otlp2parquet_iceberg::IcebergRestConfig::from_env() {
+        Ok(config) => match otlp2parquet_iceberg::create_rest_catalog(&config).await {
+            Ok(catalog) => match config.namespace_ident() {
+                Ok(namespace) => {
+                    let table_ident = otlp2parquet_iceberg::IcebergTableIdentifier::new(
+                        namespace,
+                        config.table.clone(),
+                    );
+                    let committer = otlp2parquet_iceberg::IcebergCommitter::new(
+                        catalog,
+                        table_ident,
+                        config.clone(),
+                    );
+                    info!("Iceberg catalog integration enabled");
+                    Some(Arc::new(committer))
+                }
+                Err(e) => {
+                    info!(
+                        "Failed to parse Iceberg namespace: {} - continuing without Iceberg",
+                        e
+                    );
+                    None
+                }
+            },
+            Err(e) => {
+                info!(
+                    "Failed to create Iceberg catalog: {} - continuing without Iceberg",
+                    e
+                );
+                None
+            }
+        },
+        Err(e) => {
+            // Not configured or failed to load config - log and continue without Iceberg
+            info!(
+                "Iceberg catalog not configured (OTLP2PARQUET_ICEBERG_REST_URI not set): {}",
+                e
+            );
+            None
+        }
+    };
+
     // Create app state
     let state = AppState {
         storage,
@@ -167,6 +212,7 @@ pub async fn run() -> Result<()> {
         batcher,
         passthrough: PassthroughBatcher::default(),
         max_payload_bytes,
+        iceberg_committer,
     };
 
     // Build router

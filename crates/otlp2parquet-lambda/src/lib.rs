@@ -9,6 +9,7 @@ use anyhow::Result;
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use otlp2parquet_batch::PassthroughBatcher;
 use otlp2parquet_config::{RuntimeConfig, StorageBackend};
+use otlp2parquet_iceberg::IcebergCommitter;
 use otlp2parquet_storage::{set_parquet_row_group_size, ParquetWriter};
 use std::sync::Arc;
 
@@ -89,6 +90,7 @@ pub(crate) struct LambdaState {
     pub parquet_writer: Arc<ParquetWriter>,
     pub passthrough: PassthroughBatcher,
     pub max_payload_bytes: usize,
+    pub iceberg_committer: Option<Arc<IcebergCommitter>>,
 }
 
 /// Lambda runtime entry point
@@ -139,10 +141,54 @@ pub async fn run() -> Result<(), Error> {
     let max_payload_bytes = config.request.max_payload_bytes;
     println!("Lambda payload cap set to {} bytes", max_payload_bytes);
 
+    // Initialize Iceberg committer if configured
+    let iceberg_committer = match otlp2parquet_iceberg::IcebergRestConfig::from_env() {
+        Ok(config) => match otlp2parquet_iceberg::create_rest_catalog(&config).await {
+            Ok(catalog) => match config.namespace_ident() {
+                Ok(namespace) => {
+                    let table_ident = otlp2parquet_iceberg::IcebergTableIdentifier::new(
+                        namespace,
+                        config.table.clone(),
+                    );
+                    let committer = otlp2parquet_iceberg::IcebergCommitter::new(
+                        catalog,
+                        table_ident,
+                        config.clone(),
+                    );
+                    println!("Iceberg catalog integration enabled");
+                    Some(Arc::new(committer))
+                }
+                Err(e) => {
+                    println!(
+                        "Failed to parse Iceberg namespace: {} - continuing without Iceberg",
+                        e
+                    );
+                    None
+                }
+            },
+            Err(e) => {
+                println!(
+                    "Failed to create Iceberg catalog: {} - continuing without Iceberg",
+                    e
+                );
+                None
+            }
+        },
+        Err(e) => {
+            // Not configured or failed to load config - log and continue without Iceberg
+            println!(
+                "Iceberg catalog not configured (OTLP2PARQUET_ICEBERG_REST_URI not set): {}",
+                e
+            );
+            None
+        }
+    };
+
     let state = Arc::new(LambdaState {
         parquet_writer,
         passthrough: PassthroughBatcher::default(),
         max_payload_bytes,
+        iceberg_committer,
     });
 
     lambda_runtime::run(service_fn(move |event: LambdaEvent<HttpRequestEvent>| {
