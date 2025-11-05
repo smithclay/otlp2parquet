@@ -102,6 +102,7 @@ fn platform_defaults(platform: Platform) -> RuntimeConfig {
         } else {
             None
         },
+        iceberg: None, // Iceberg is optional, loaded from env vars or config file
     }
 }
 
@@ -157,6 +158,11 @@ fn merge_config(base: &mut RuntimeConfig, file: RuntimeConfig) {
     }
     if file.cloudflare.is_some() {
         base.cloudflare = file.cloudflare;
+    }
+
+    // Iceberg config
+    if file.iceberg.is_some() {
+        base.iceberg = file.iceberg;
     }
 }
 
@@ -315,6 +321,71 @@ fn apply_env_overrides(config: &mut RuntimeConfig, platform: Platform) -> Result
         }
     }
 
+    // Iceberg configuration (only for Lambda and Server)
+    if platform == Platform::Lambda || platform == Platform::Server {
+        // Check if any Iceberg env vars are set - if so, initialize config
+        if let Some(rest_uri) = get_env_string("ICEBERG_REST_URI")? {
+            let mut iceberg = config.iceberg.take().unwrap_or_else(|| IcebergConfig {
+                rest_uri: rest_uri.clone(),
+                warehouse: None,
+                namespace: None,
+                catalog_name: default_iceberg_catalog_name(),
+                staging_prefix: default_iceberg_staging_prefix(),
+                target_file_size_bytes: default_iceberg_target_file_size(),
+                format_version: default_iceberg_format_version(),
+                tables: IcebergTableNames::default(),
+            });
+
+            iceberg.rest_uri = rest_uri;
+
+            if let Some(warehouse) = get_env_string("ICEBERG_WAREHOUSE")? {
+                iceberg.warehouse = Some(warehouse);
+            }
+            if let Some(namespace) = get_env_string("ICEBERG_NAMESPACE")? {
+                iceberg.namespace = Some(namespace);
+            }
+            if let Some(catalog_name) = get_env_string("ICEBERG_CATALOG_NAME")? {
+                iceberg.catalog_name = catalog_name;
+            }
+            if let Some(staging_prefix) = get_env_string("ICEBERG_STAGING_PREFIX")? {
+                iceberg.staging_prefix = staging_prefix;
+            }
+            if let Some(target_size) = get_env_u64("ICEBERG_TARGET_FILE_SIZE_BYTES")? {
+                iceberg.target_file_size_bytes = target_size;
+            }
+            if let Some(format_version) = get_env_i32("ICEBERG_FORMAT_VERSION")? {
+                iceberg.format_version = format_version;
+            }
+
+            // Table name overrides
+            if let Some(logs) = get_env_string("ICEBERG_TABLE_LOGS")? {
+                iceberg.tables.logs = logs;
+            }
+            if let Some(traces) = get_env_string("ICEBERG_TABLE_TRACES")? {
+                iceberg.tables.traces = traces;
+            }
+            if let Some(gauge) = get_env_string("ICEBERG_TABLE_METRICS_GAUGE")? {
+                iceberg.tables.metrics_gauge = gauge;
+            }
+            if let Some(sum) = get_env_string("ICEBERG_TABLE_METRICS_SUM")? {
+                iceberg.tables.metrics_sum = sum;
+            }
+            if let Some(histogram) = get_env_string("ICEBERG_TABLE_METRICS_HISTOGRAM")? {
+                iceberg.tables.metrics_histogram = histogram;
+            }
+            if let Some(exp_histogram) =
+                get_env_string("ICEBERG_TABLE_METRICS_EXPONENTIAL_HISTOGRAM")?
+            {
+                iceberg.tables.metrics_exponential_histogram = exp_histogram;
+            }
+            if let Some(summary) = get_env_string("ICEBERG_TABLE_METRICS_SUMMARY")? {
+                iceberg.tables.metrics_summary = summary;
+            }
+
+            config.iceberg = Some(iceberg);
+        }
+    }
+
     Ok(())
 }
 
@@ -350,6 +421,20 @@ fn get_env_u64(key: &str) -> Result<Option<u64>> {
         Some(val) => {
             let parsed = val
                 .parse::<u64>()
+                .with_context(|| format!("{} must be a valid number", full_key))?;
+            Ok(Some(parsed))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Helper: Get environment variable as i32
+fn get_env_i32(key: &str) -> Result<Option<i32>> {
+    let full_key = format!("{}{}", ENV_PREFIX, key);
+    match get_env_string(key)? {
+        Some(val) => {
+            let parsed = val
+                .parse::<i32>()
                 .with_context(|| format!("{} must be a valid number", full_key))?;
             Ok(Some(parsed))
         }
