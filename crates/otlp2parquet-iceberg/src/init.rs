@@ -145,7 +145,7 @@ async fn initialize_tables<T: crate::http::HttpClient>(
             "metrics:gauge" => schema::otel_metrics_gauge_schema(),
             "metrics:sum" => schema::otel_metrics_sum_schema(),
             "metrics:histogram" => schema::otel_metrics_histogram_schema(),
-            "metrics:exponentialhistogram" => schema::otel_metrics_exponential_histogram_schema(),
+            "metrics:exponential_histogram" => schema::otel_metrics_exponential_histogram_schema(),
             "metrics:summary" => schema::otel_metrics_summary_schema(),
             _ => {
                 tracing::warn!(

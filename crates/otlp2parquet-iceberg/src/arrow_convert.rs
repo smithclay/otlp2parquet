@@ -64,7 +64,7 @@ fn convert_field(field: &Field) -> Result<NestedField> {
 ///
 /// Iceberg does not have native unsigned integer types:
 /// - `UInt32` → `Long` (64-bit signed safely represents all 32-bit unsigned)
-/// - `UInt64` → **Error** (cannot be safely represented)
+/// - `UInt64` → `Long` with warning (values >= 2^63 may appear negative)
 fn convert_data_type(data_type: &DataType, field_name: &str) -> Result<Type> {
     let iceberg_type = match data_type {
         DataType::Boolean => Type::Boolean,
@@ -72,13 +72,15 @@ fn convert_data_type(data_type: &DataType, field_name: &str) -> Result<Type> {
         DataType::Int64 => Type::Long,
         // Safe: UInt32 max (4,294,967,295) fits in Long
         DataType::UInt32 => Type::Long,
-        // Unsafe: UInt64 values >= 2^63 would be misrepresented
+        // Lossy: UInt64 values >= 2^63 will appear as negative numbers in Iceberg
         DataType::UInt64 => {
-            return Err(anyhow!(
-                "Field '{}' has type UInt64 which cannot be safely represented in Iceberg. \
-                 Values >= 2^63 would appear as negative numbers.",
+            tracing::warn!(
+                "Field '{}' has type UInt64 which maps to Long in Iceberg. \
+                 Values >= 2^63 (9,223,372,036,854,775,808) will appear as negative numbers. \
+                 If your data contains large counter values, consider schema changes.",
                 field_name
-            ))
+            );
+            Type::Long
         }
         DataType::Float32 => Type::Float,
         DataType::Float64 => Type::Double,
@@ -214,12 +216,18 @@ mod tests {
     }
 
     #[test]
-    fn test_uint64_error() {
+    fn test_uint64_maps_to_long_with_warning() {
         let arrow_schema =
             ArrowSchema::new(vec![field_with_id("count", DataType::UInt64, false, 1)]);
 
         let result = arrow_to_iceberg_schema(&arrow_schema);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("UInt64"));
+        assert!(result.is_ok(), "UInt64 should map to Long with warning");
+
+        let iceberg_schema = result.unwrap();
+        assert_eq!(iceberg_schema.fields.len(), 1);
+        assert_eq!(
+            iceberg_schema.field_by_name("count").unwrap().field_type,
+            Type::Long
+        );
     }
 }
