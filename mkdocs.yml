@@ -60,6 +60,7 @@ nav:
       - Sending Data: sending-data.md
       - Configuration: configuration.md
   - Deployment:
+      - Overview: deployment/index.md
       - Docker: deployment/docker.md
       - Cloudflare Workers: deployment/cloudflare.md
       - AWS Lambda: deployment/aws-lambda.md

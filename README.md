@@ -5,7 +5,7 @@
 
 > Put your observability data in cost-effective cloud object storage, servers optional.
 
-`otlp2parquet` ingests OpenTelemetry logs, metrics, and traces and stores them in object storage as regular parquet files (with or without Apache Iceberg). It runs natively in serverless runtimes like AWS Lambda and Cloudflare Workers. With [some optimization](#notes-on-batch-sizes) and using a duckdb client, this is likely one of the cheapest ways to store and query structured observability data in the cloud with long-term retention.
+`otlp2parquet` ingests OpenTelemetry logs, metrics, and traces and stores them in object storage as parquet files, optionally with Apache Iceberg support. It runs natively in serverless runtimes like AWS Lambda and Cloudflare Workers. With [some optimization](#notes-on-batch-sizes) and using a duckdb client, this is likely one of the cheapest ways to store and query structured observability data in the cloud with long-term retention.
 
 While functional, the project is experimental as the [API and schema are evolving](#parquet-schema-for-logs-metrics-and-traces). It is _not_ a telemetry pipeline: in production scenarios, it would be paired with [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/), [Vector](https://vector.dev/), Cribl, or similar to perform transformations, routing, and batching.
 
@@ -31,11 +31,11 @@ _Note: If you want to query or convert existing OTLP files, you can use the [otl
 | OTLP Profiles | ❌ | ❌ | ❌ |
 | **Storage Support** | | | |
 | Parquet | ✅ | ✅ | ✅ |
-| Iceberg (REST Catalog API) | ✅ | ✅ | ✅ |
+| Iceberg (REST Catalog API) | 🚧 | 🚧 | 🚧 |
 | **Security*** | | | |
 | Basic Auth Header | ❌ | ✅ | ❌ |
 | **Advanced Features** | | | |
-| In-Memory Batching | ✅ | ❌** | ❌** |
+| In-Memory Batching | ✅ | ❌ | ❌ |
 
 ## Documentation
 
@@ -65,7 +65,7 @@ Below are other projects that also have support for converting OTLP to Parquet f
 
 ## Contributing
 
-We welcome contributions! Please see our [Developer Documentation](docs/developers/index.md) for guidelines on how to contribute.
+Please see [Developer Documentation](docs/developers/index.md) for guidelines on how to contribute.
 
 ## License
 
