@@ -80,3 +80,49 @@ log_format = "text"
 # ==============================================================================
 # [cloudflare]
 # (Currently no cloudflare-specific config - uses common settings above)
+
+
+# ==============================================================================
+# Apache Iceberg Configuration (Optional - Lambda and Server Only)
+# ==============================================================================
+# Apache Iceberg provides ACID transactions, schema evolution, and faster queries
+# for your OTLP data. When enabled, Parquet files are committed to an Iceberg
+# catalog after being written to object storage.
+#
+# Note: Iceberg is NOT available in Cloudflare Workers to keep WASM binary size minimal.
+#
+# [iceberg]
+# # Required: REST catalog endpoint URI
+# # Examples:
+# #   - AWS S3 Tables: "https://s3tables.us-east-1.amazonaws.com/iceberg"
+# #   - AWS Glue: "https://glue.us-east-1.amazonaws.com/iceberg"
+# rest_uri = "https://s3tables.us-east-1.amazonaws.com/iceberg"
+#
+# # Optional: Warehouse location (required for some catalogs like S3 Tables)
+# warehouse = "s3://my-iceberg-warehouse"
+#
+# # Optional: Namespace for tables (dot-separated, e.g., "otel.production")
+# # If not specified, tables will be created in the default namespace
+# namespace = "otel.production"
+#
+# # Optional: Catalog name (default: "rest")
+# catalog_name = "rest"
+#
+# # Optional: Staging prefix for data files (default: "data/incoming")
+# staging_prefix = "data/incoming"
+#
+# # Optional: Target file size in bytes (default: 536870912 = 512 MB)
+# target_file_size_bytes = 536_870_912
+#
+# # Optional: Iceberg format version (default: 2)
+# format_version = 2
+#
+# # Optional: Custom table names (defaults shown)
+# [iceberg.tables]
+# logs = "otel_logs"
+# traces = "otel_traces"
+# metrics_gauge = "otel_metrics_gauge"
+# metrics_sum = "otel_metrics_sum"
+# metrics_histogram = "otel_metrics_histogram"
+# metrics_exponential_histogram = "otel_metrics_exponential_histogram"
+# metrics_summary = "otel_metrics_summary"

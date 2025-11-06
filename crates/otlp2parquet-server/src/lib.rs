@@ -22,6 +22,7 @@ use axum::{
 };
 use otlp2parquet_batch::{BatchConfig, BatchManager, PassthroughBatcher};
 use otlp2parquet_config::RuntimeConfig;
+use otlp2parquet_iceberg::IcebergCommitter;
 use otlp2parquet_storage::opendal_storage::OpenDalStorage;
 use otlp2parquet_storage::{set_parquet_row_group_size, ParquetWriter};
 use serde_json::json;
@@ -44,6 +45,7 @@ pub(crate) struct AppState {
     pub batcher: Option<Arc<BatchManager>>,
     pub passthrough: PassthroughBatcher,
     pub max_payload_bytes: usize,
+    pub iceberg_committer: Option<Arc<IcebergCommitter>>,
 }
 
 /// Error type that implements IntoResponse
@@ -160,6 +162,41 @@ pub async fn run() -> Result<()> {
     let max_payload_bytes = config.request.max_payload_bytes;
     info!("Max payload size set to {} bytes", max_payload_bytes);
 
+    // Initialize Iceberg committer if configured
+    let iceberg_committer = {
+        use otlp2parquet_iceberg::init::{initialize_committer, InitResult};
+        match initialize_committer().await {
+            InitResult::Success {
+                committer,
+                table_count,
+            } => {
+                info!(
+                    "Iceberg catalog integration enabled with {} tables",
+                    table_count
+                );
+                Some(committer)
+            }
+            InitResult::NotConfigured(msg) => {
+                info!("Iceberg catalog not configured: {}", msg);
+                None
+            }
+            InitResult::CatalogError(msg) => {
+                info!(
+                    "Failed to create Iceberg catalog: {} - continuing without Iceberg",
+                    msg
+                );
+                None
+            }
+            InitResult::NamespaceError(msg) => {
+                info!(
+                    "Failed to parse Iceberg namespace: {} - continuing without Iceberg",
+                    msg
+                );
+                None
+            }
+        }
+    };
+
     // Create app state
     let state = AppState {
         storage,
@@ -167,6 +204,7 @@ pub async fn run() -> Result<()> {
         batcher,
         passthrough: PassthroughBatcher::default(),
         max_payload_bytes,
+        iceberg_committer,
     };
 
     // Build router

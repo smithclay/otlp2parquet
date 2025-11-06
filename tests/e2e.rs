@@ -67,18 +67,21 @@ async fn test_end_to_end_with_storage() {
 
     // Write to storage with fixed timestamp for testing
     let test_timestamp = metadata.first_timestamp_nanos;
-    let (path, hash) = writer
+    let result = writer
         .write_batch_with_hash(&batch, &metadata.service_name, test_timestamp)
         .await
         .expect("Failed to write batch");
 
     // Verify file was written
-    assert!(path.starts_with("logs/"));
-    assert!(path.ends_with(".parquet"));
-    assert!(path.contains(&hash.to_hex()[..16]));
+    assert!(result.path.starts_with("logs/"));
+    assert!(result.path.ends_with(".parquet"));
+    assert!(result.path.contains(&result.hash.to_hex()[..16]));
 
     // Verify file exists and is valid Parquet
-    let data = op.read(&path).await.expect("Failed to read parquet file");
+    let data = op
+        .read(&result.path)
+        .await
+        .expect("Failed to read parquet file");
     let bytes = data.to_vec();
     assert!(!bytes.is_empty(), "Parquet file should not be empty");
     assert_eq!(&bytes[0..4], b"PAR1", "File should be valid Parquet format");
@@ -612,7 +615,7 @@ async fn test_traces_with_storage() {
 
     // Write to storage
     let test_timestamp = metadata.first_timestamp_nanos;
-    let (path, hash) = writer
+    let result = writer
         .write_batches_with_signal(
             &batches,
             &metadata.service_name,
@@ -624,12 +627,15 @@ async fn test_traces_with_storage() {
         .expect("Failed to write traces");
 
     // Verify file was written
-    assert!(path.starts_with("traces/"));
-    assert!(path.ends_with(".parquet"));
-    assert!(path.contains(&hash.to_hex()[..16]));
+    assert!(result.path.starts_with("traces/"));
+    assert!(result.path.ends_with(".parquet"));
+    assert!(result.path.contains(&result.hash.to_hex()[..16]));
 
     // Verify file exists and is valid Parquet
-    let data = op.read(&path).await.expect("Failed to read parquet file");
+    let data = op
+        .read(&result.path)
+        .await
+        .expect("Failed to read parquet file");
     let bytes = data.to_vec();
     assert!(!bytes.is_empty(), "Parquet file should not be empty");
     assert_eq!(&bytes[0..4], b"PAR1", "File should be valid Parquet format");

@@ -143,6 +143,35 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
+  # End-to-end integration tests with Docker
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    # Skip on draft PRs to save CI resources
+    if: github.event.pull_request.draft == false || github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure toolchain
+        uses: ./.github/actions/setup-rust
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          cache-prefix: e2e
+          cache-key: docker-tests
+
+      - name: Build Docker image
+        run: docker compose build otlp2parquet
+
+      - name: Run core pipeline tests
+        run: make test-e2e
+
+      - name: Run Iceberg integration tests
+        run: make test-e2e-iceberg
+
+      - name: Docker logs on failure
+        if: failure()
+        run: docker compose logs
+
   build-artifacts:
     name: Package Release Artifacts
     needs:
@@ -153,6 +182,7 @@ jobs:
       - wasm-size
       - audit
       - docs
+      - e2e
     if: startsWith(github.ref, 'refs/tags/v')
     uses: ./.github/workflows/build-artifacts.yml
     secrets: inherit

@@ -1,5 +1,6 @@
 // Request handlers for OTLP signals (logs, traces, metrics)
 
+use arrow::array::{Array, RecordBatch, StringArray, TimestampNanosecondArray};
 use otlp2parquet_batch::{LogSignalProcessor, PassthroughBatcher};
 use otlp2parquet_core::otlp;
 use serde_json::json;
@@ -30,14 +31,18 @@ pub async fn handle_logs_request(
         worker::Error::RustError(format!("Processing error: {}", e))
     })?;
 
-    // Convert directly to Arrow (no batching)
-    let batch = passthrough.ingest(&request).map_err(|err| {
-        console_error!("Failed to convert OTLP to Arrow: {:?}", err);
-        worker::Error::RustError(format!("Encoding error: {}", err))
-    })?;
+    let per_service_requests = otlp::logs::split_request_by_service(request);
+    let mut uploads = Vec::new();
+    let mut total_records = 0usize;
 
-    let metadata = batch.metadata.clone();
-    let uploads = vec![batch];
+    for subset in per_service_requests {
+        let batch = passthrough.ingest(&subset).map_err(|err| {
+            console_error!("Failed to convert OTLP to Arrow: {:?}", err);
+            worker::Error::RustError(format!("Encoding error: {}", err))
+        })?;
+        total_records += batch.metadata.record_count;
+        uploads.push(batch);
+    }
 
     let mut uploaded_paths = Vec::new();
     for batch in uploads {
@@ -73,7 +78,7 @@ pub async fn handle_logs_request(
 
     let response_body = json!({
         "status": "ok",
-        "records_processed": metadata.record_count,
+        "records_processed": total_records,
         "flush_count": uploaded_paths.len(),
         "partitions": uploaded_paths,
     });
@@ -99,14 +104,51 @@ pub async fn handle_traces_request(
         worker::Error::RustError(format!("Processing error: {}", e))
     })?;
 
-    // Convert to Arrow
-    let (batches, metadata) =
-        otlp::traces::TraceArrowConverter::convert(&request).map_err(|e| {
-            console_error!("Failed to convert OTLP traces to Arrow: {:?}", e);
-            worker::Error::RustError(format!("Encoding error: {}", e))
+    let per_service_requests = otlp::traces::split_request_by_service(request);
+    let mut uploaded_paths = Vec::new();
+    let mut spans_processed = 0usize;
+
+    for subset in per_service_requests {
+        let (batches, metadata) =
+            otlp::traces::TraceArrowConverter::convert(&subset).map_err(|e| {
+                console_error!("Failed to convert OTLP traces to Arrow: {:?}", e);
+                worker::Error::RustError(format!("Encoding error: {}", e))
+            })?;
+
+        if batches.is_empty() || metadata.span_count == 0 {
+            continue;
+        }
+
+        spans_processed += metadata.span_count;
+
+        let parquet_bytes = parquet::write_batches_to_parquet(&batches).map_err(|e| {
+            console_error!("Failed to serialize traces Parquet: {:?}", e);
+            worker::Error::RustError(format!("Parquet serialization error: {}", e))
         })?;
 
-    if batches.is_empty() || metadata.span_count == 0 {
+        let hash_bytes = blake3::hash(&parquet_bytes);
+        let hash_hex = hex::encode(hash_bytes.as_bytes());
+
+        let partition_path = otlp2parquet_storage::partition::generate_partition_path_with_signal(
+            "traces",
+            metadata.service_name.as_ref(),
+            metadata.first_timestamp_nanos,
+            &hash_hex,
+            None,
+        );
+
+        storage
+            .write(&partition_path, parquet_bytes)
+            .await
+            .map_err(|e| {
+                console_error!("Failed to write traces to R2: {:?}", e);
+                worker::Error::RustError(format!("Storage error: {}", e))
+            })?;
+
+        uploaded_paths.push(partition_path);
+    }
+
+    if spans_processed == 0 {
         let response = Response::from_json(&json!({
             "status": "ok",
             "message": "No trace spans to process",
@@ -114,38 +156,10 @@ pub async fn handle_traces_request(
         return Ok(response);
     }
 
-    // Write Parquet synchronously (WASM-compatible)
-    let parquet_bytes = parquet::write_batches_to_parquet(&batches).map_err(|e| {
-        console_error!("Failed to serialize traces Parquet: {:?}", e);
-        worker::Error::RustError(format!("Parquet serialization error: {}", e))
-    })?;
-
-    // Compute Blake3 hash
-    let hash_bytes = blake3::hash(&parquet_bytes);
-    let hash_hex = hex::encode(hash_bytes.as_bytes());
-
-    // Generate partition path for traces
-    let partition_path = otlp2parquet_storage::partition::generate_partition_path_with_signal(
-        "traces",
-        metadata.service_name.as_ref(),
-        metadata.first_timestamp_nanos,
-        &hash_hex,
-        None, // No subdirectory for traces (unlike metrics)
-    );
-
-    // Upload to R2
-    storage
-        .write(&partition_path, parquet_bytes)
-        .await
-        .map_err(|e| {
-            console_error!("Failed to write traces to R2: {:?}", e);
-            worker::Error::RustError(format!("Storage error: {}", e))
-        })?;
-
     let response_body = json!({
         "status": "ok",
-        "spans_processed": metadata.span_count,
-        "partitions": vec![partition_path],
+        "spans_processed": spans_processed,
+        "partitions": uploaded_paths,
     });
 
     Response::from_json(&response_body)
@@ -169,14 +183,63 @@ pub async fn handle_metrics_request(
         worker::Error::RustError(format!("Processing error: {}", e))
     })?;
 
-    // Convert to Arrow (returns multiple batches, one per metric type)
+    let per_service_requests = otlp::metrics::split_request_by_service(request);
     let converter = otlp::metrics::ArrowConverter::new();
-    let (batches_by_type, metadata) = converter.convert(request).map_err(|e| {
-        console_error!("Failed to convert OTLP metrics to Arrow: {:?}", e);
-        worker::Error::RustError(format!("Encoding error: {}", e))
-    })?;
+    let mut aggregated = otlp::metrics::MetricsMetadata::default();
+    let mut uploaded_paths = Vec::new();
 
-    if batches_by_type.is_empty() {
+    for subset in per_service_requests {
+        let (batches_by_type, subset_metadata) = converter.convert(subset).map_err(|e| {
+            console_error!("Failed to convert OTLP metrics to Arrow: {:?}", e);
+            worker::Error::RustError(format!("Encoding error: {}", e))
+        })?;
+
+        aggregated.resource_metrics_count += subset_metadata.resource_metrics_count;
+        aggregated.scope_metrics_count += subset_metadata.scope_metrics_count;
+        aggregated.gauge_count += subset_metadata.gauge_count;
+        aggregated.sum_count += subset_metadata.sum_count;
+        aggregated.histogram_count += subset_metadata.histogram_count;
+        aggregated.exponential_histogram_count += subset_metadata.exponential_histogram_count;
+        aggregated.summary_count += subset_metadata.summary_count;
+
+        for (metric_type, batch) in batches_by_type {
+            let service_name = extract_service_name(&batch);
+            let timestamp_nanos = extract_first_timestamp(&batch);
+
+            let parquet_bytes = parquet::write_batches_to_parquet(&[batch]).map_err(|e| {
+                console_error!(
+                    "Failed to serialize {} metrics Parquet: {:?}",
+                    metric_type,
+                    e
+                );
+                worker::Error::RustError(format!("Parquet serialization error: {}", e))
+            })?;
+
+            let hash_bytes = blake3::hash(&parquet_bytes);
+            let hash_hex = hex::encode(hash_bytes.as_bytes());
+
+            let partition_path =
+                otlp2parquet_storage::partition::generate_partition_path_with_signal(
+                    "metrics",
+                    &service_name,
+                    timestamp_nanos,
+                    &hash_hex,
+                    Some(&metric_type),
+                );
+
+            storage
+                .write(&partition_path, parquet_bytes)
+                .await
+                .map_err(|e| {
+                    console_error!("Failed to write {} metrics to R2: {:?}", metric_type, e);
+                    worker::Error::RustError(format!("Storage error: {}", e))
+                })?;
+
+            uploaded_paths.push(partition_path);
+        }
+    }
+
+    if uploaded_paths.is_empty() {
         let response = Response::from_json(&json!({
             "status": "ok",
             "message": "No metrics data points to process",
@@ -184,64 +247,63 @@ pub async fn handle_metrics_request(
         return Ok(response);
     }
 
-    // Count total data points across all metric types
-    let total_data_points = metadata.gauge_count
-        + metadata.sum_count
-        + metadata.histogram_count
-        + metadata.exponential_histogram_count
-        + metadata.summary_count;
-
-    // Write each metric type batch to its own Parquet file
-    let mut uploaded_paths = Vec::new();
-    for (metric_type, batch) in batches_by_type {
-        let service_name = "default"; // TODO: Extract from metadata
-        let timestamp_nanos = 0; // TODO: Extract first timestamp from batch
-
-        // Write Parquet synchronously (WASM-compatible)
-        let parquet_bytes = parquet::write_batches_to_parquet(&[batch]).map_err(|e| {
-            console_error!(
-                "Failed to serialize {} metrics Parquet: {:?}",
-                metric_type,
-                e
-            );
-            worker::Error::RustError(format!("Parquet serialization error: {}", e))
-        })?;
-
-        // Compute Blake3 hash
-        let hash_bytes = blake3::hash(&parquet_bytes);
-        let hash_hex = hex::encode(hash_bytes.as_bytes());
-
-        // Generate partition path with metric type subdirectory
-        let partition_path = otlp2parquet_storage::partition::generate_partition_path_with_signal(
-            "metrics",
-            service_name,
-            timestamp_nanos,
-            &hash_hex,
-            Some(&metric_type),
-        );
-
-        // Upload to R2
-        storage
-            .write(&partition_path, parquet_bytes)
-            .await
-            .map_err(|e| {
-                console_error!("Failed to write {} metrics to R2: {:?}", metric_type, e);
-                worker::Error::RustError(format!("Storage error: {}", e))
-            })?;
-
-        uploaded_paths.push(partition_path);
-    }
+    let total_data_points = aggregated.gauge_count
+        + aggregated.sum_count
+        + aggregated.histogram_count
+        + aggregated.exponential_histogram_count
+        + aggregated.summary_count;
 
     let response_body = json!({
         "status": "ok",
         "data_points_processed": total_data_points,
-        "gauge_count": metadata.gauge_count,
-        "sum_count": metadata.sum_count,
-        "histogram_count": metadata.histogram_count,
-        "exponential_histogram_count": metadata.exponential_histogram_count,
-        "summary_count": metadata.summary_count,
+        "gauge_count": aggregated.gauge_count,
+        "sum_count": aggregated.sum_count,
+        "histogram_count": aggregated.histogram_count,
+        "exponential_histogram_count": aggregated.exponential_histogram_count,
+        "summary_count": aggregated.summary_count,
         "partitions": uploaded_paths,
     });
 
     Response::from_json(&response_body)
+}
+
+fn extract_service_name(batch: &RecordBatch) -> String {
+    let fallback = otlp::common::UNKNOWN_SERVICE_NAME;
+
+    if let Some(array) = batch.column(1).as_any().downcast_ref::<StringArray>() {
+        for idx in 0..array.len() {
+            if array.is_valid(idx) {
+                let value = array.value(idx);
+                if !value.is_empty() {
+                    return value.to_string();
+                }
+            }
+        }
+    }
+
+    fallback.to_string()
+}
+
+fn extract_first_timestamp(batch: &RecordBatch) -> i64 {
+    if let Some(array) = batch
+        .column(0)
+        .as_any()
+        .downcast_ref::<TimestampNanosecondArray>()
+    {
+        let mut min_value = i64::MAX;
+        for idx in 0..array.len() {
+            if array.is_valid(idx) {
+                let value = array.value(idx);
+                if value < min_value {
+                    min_value = value;
+                }
+            }
+        }
+
+        if min_value != i64::MAX {
+            return min_value;
+        }
+    }
+
+    0
 }

@@ -9,6 +9,7 @@ use anyhow::Result;
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use otlp2parquet_batch::PassthroughBatcher;
 use otlp2parquet_config::{RuntimeConfig, StorageBackend};
+use otlp2parquet_iceberg::IcebergCommitter;
 use otlp2parquet_storage::{set_parquet_row_group_size, ParquetWriter};
 use std::sync::Arc;
 
@@ -89,6 +90,7 @@ pub(crate) struct LambdaState {
     pub parquet_writer: Arc<ParquetWriter>,
     pub passthrough: PassthroughBatcher,
     pub max_payload_bytes: usize,
+    pub iceberg_committer: Option<Arc<IcebergCommitter>>,
 }
 
 /// Lambda runtime entry point
@@ -139,10 +141,46 @@ pub async fn run() -> Result<(), Error> {
     let max_payload_bytes = config.request.max_payload_bytes;
     println!("Lambda payload cap set to {} bytes", max_payload_bytes);
 
+    // Initialize Iceberg committer if configured
+    let iceberg_committer = {
+        use otlp2parquet_iceberg::init::{initialize_committer, InitResult};
+        match initialize_committer().await {
+            InitResult::Success {
+                committer,
+                table_count,
+            } => {
+                println!(
+                    "Iceberg catalog integration enabled with {} tables",
+                    table_count
+                );
+                Some(committer)
+            }
+            InitResult::NotConfigured(msg) => {
+                println!("Iceberg catalog not configured: {}", msg);
+                None
+            }
+            InitResult::CatalogError(msg) => {
+                println!(
+                    "Failed to create Iceberg catalog: {} - continuing without Iceberg",
+                    msg
+                );
+                None
+            }
+            InitResult::NamespaceError(msg) => {
+                println!(
+                    "Failed to parse Iceberg namespace: {} - continuing without Iceberg",
+                    msg
+                );
+                None
+            }
+        }
+    };
+
     let state = Arc::new(LambdaState {
         parquet_writer,
         passthrough: PassthroughBatcher::default(),
         max_payload_bytes,
+        iceberg_committer,
     });
 
     lambda_runtime::run(service_fn(move |event: LambdaEvent<HttpRequestEvent>| {

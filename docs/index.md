@@ -2,7 +2,7 @@
 
 > Put your observability data in cheap object storage, servers optional.
 
-`otlp2parquet` ingests OpenTelemetry (OTLP) data and stores it as compressed Parquet files in object storage. It runs in various environments, including Docker, AWS Lambda, and Cloudflare Workers, providing a fast and cost-effective way to manage your observability data.
+`otlp2parquet` ingests OpenTelemetry (OTLP) data and stores it as compressed Parquet files in object storage with optional Apache Iceberg support. It runs in Docker, AWS Lambda, and Cloudflare Workers, providing a fast and cost-effective way to sotre and query your observability data.
 
 ---
 

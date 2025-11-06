@@ -3,13 +3,20 @@
 // Serializes Arrow RecordBatches, computes a Blake3 content hash while
 // encoding, and uploads the resulting Parquet bytes to OpenDAL storage.
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use arrow::array::RecordBatch;
+use arrow::datatypes::SchemaRef;
+use chrono::{DateTime, Utc};
 use opendal::Operator;
+use parquet::basic::ColumnOrder;
+use parquet::file::metadata::{
+    FileMetaData as PhysicalFileMetaData, ParquetMetaData, RowGroupMetaData,
+};
 use parquet::file::properties::{EnabledStatistics, WriterProperties};
-use parquet::format::KeyValue;
+use parquet::format::{ColumnOrder as TColumnOrder, FileMetaData as ThriftFileMetaData, KeyValue};
+use parquet::schema::types::{self, SchemaDescriptor};
 use std::io::{self, Write};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 #[cfg(target_arch = "wasm32")]
 use parquet::basic::Compression;
@@ -144,6 +151,18 @@ impl Blake3Hash {
     }
 }
 
+/// Rich metadata describing a Parquet file persisted by this writer.
+#[derive(Debug, Clone)]
+pub struct ParquetWriteResult {
+    pub path: String,
+    pub hash: Blake3Hash,
+    pub file_size: u64,
+    pub row_count: i64,
+    pub arrow_schema: SchemaRef,
+    pub parquet_metadata: Arc<ParquetMetaData>,
+    pub completed_at: DateTime<Utc>,
+}
+
 /// Parquet writer that streams directly to OpenDAL storage
 pub struct ParquetWriter {
     operator: Operator,
@@ -169,7 +188,7 @@ impl ParquetWriter {
         batch: &RecordBatch,
         service_name: &str,
         timestamp_nanos: i64,
-    ) -> Result<(String, Blake3Hash)> {
+    ) -> Result<ParquetWriteResult> {
         self.write_batches_with_hash(std::slice::from_ref(batch), service_name, timestamp_nanos)
             .await
     }
@@ -180,7 +199,7 @@ impl ParquetWriter {
         batches: &[RecordBatch],
         service_name: &str,
         timestamp_nanos: i64,
-    ) -> Result<(String, Blake3Hash)> {
+    ) -> Result<ParquetWriteResult> {
         self.write_batches_with_signal(batches, service_name, timestamp_nanos, "logs", None)
             .await
     }
@@ -200,24 +219,33 @@ impl ParquetWriter {
         timestamp_nanos: i64,
         signal_type: &str,
         subdirectory: Option<&str>,
-    ) -> Result<(String, Blake3Hash)> {
+    ) -> Result<ParquetWriteResult> {
         if batches.is_empty() {
             bail!("Cannot write empty batch list");
         }
 
         let mut sink = HashingBuffer::new();
         let props = writer_properties().clone();
-        {
+        let schema: SchemaRef = batches[0].schema();
+        let file_metadata = {
             let mut writer =
-                parquet::arrow::ArrowWriter::try_new(&mut sink, batches[0].schema(), Some(props))?;
+                parquet::arrow::ArrowWriter::try_new(&mut sink, schema.clone(), Some(props))?;
 
             for batch in batches {
                 writer.write(batch)?;
             }
-            writer.close()?;
-        }
+            writer.close()?
+        };
 
         let (buffer, hash) = sink.finish();
+        let file_size = buffer.len() as u64;
+
+        let parquet_metadata = Arc::new(
+            build_parquet_metadata(file_metadata)
+                .context("failed to reconstruct parquet metadata from writer")?,
+        );
+        let row_count = parquet_metadata.file_metadata().num_rows();
+        let completed_at = Utc::now();
 
         // Generate partition path with signal type
         let path = crate::partition::generate_partition_path_with_signal(
@@ -231,7 +259,70 @@ impl ParquetWriter {
         // Write to storage
         self.operator.write(&path, buffer).await?;
 
-        Ok((path, hash))
+        Ok(ParquetWriteResult {
+            path,
+            hash,
+            file_size,
+            row_count,
+            arrow_schema: schema,
+            parquet_metadata,
+            completed_at,
+        })
+    }
+}
+
+fn build_parquet_metadata(file_metadata: ThriftFileMetaData) -> Result<ParquetMetaData> {
+    let schema = types::from_thrift(&file_metadata.schema)
+        .map_err(|e| anyhow!("failed to decode parquet schema: {}", e))?;
+    let schema_descr = Arc::new(SchemaDescriptor::new(schema));
+
+    let column_orders = parse_column_orders(file_metadata.column_orders, &schema_descr)?;
+
+    let mut row_groups = Vec::with_capacity(file_metadata.row_groups.len());
+    for row_group in file_metadata.row_groups {
+        let metadata = RowGroupMetaData::from_thrift(schema_descr.clone(), row_group)
+            .map_err(|e| anyhow!("failed to decode row group metadata: {}", e))?;
+        row_groups.push(metadata);
+    }
+
+    let physical_metadata = PhysicalFileMetaData::new(
+        file_metadata.version,
+        file_metadata.num_rows,
+        file_metadata.created_by,
+        file_metadata.key_value_metadata,
+        schema_descr,
+        column_orders,
+    );
+
+    Ok(ParquetMetaData::new(physical_metadata, row_groups))
+}
+
+fn parse_column_orders(
+    orders: Option<Vec<TColumnOrder>>,
+    schema_descr: &SchemaDescriptor,
+) -> Result<Option<Vec<ColumnOrder>>> {
+    match orders {
+        Some(order_defs) => {
+            if order_defs.len() != schema_descr.num_columns() {
+                return Err(anyhow!("column order length mismatch"));
+            }
+
+            let mut parsed = Vec::with_capacity(order_defs.len());
+            for (idx, column) in schema_descr.columns().iter().enumerate() {
+                match &order_defs[idx] {
+                    TColumnOrder::TYPEORDER(_) => {
+                        let sort_order = ColumnOrder::get_sort_order(
+                            column.logical_type(),
+                            column.converted_type(),
+                            column.physical_type(),
+                        );
+                        parsed.push(ColumnOrder::TYPE_DEFINED_ORDER(sort_order));
+                    }
+                }
+            }
+            Ok(Some(parsed))
+        }
+        None => Ok(None),
     }
 }
 
@@ -252,7 +343,7 @@ pub fn write_batches_to_parquet<W: Write + Send>(
     for batch in batches {
         arrow_writer.write(&batch)?;
     }
-    arrow_writer.close()?;
+    let _ = arrow_writer.close()?;
     Ok(())
 }
 
@@ -271,7 +362,7 @@ pub fn write_batches_with_hash(batches: Vec<RecordBatch>) -> Result<(Vec<u8>, Bl
         for batch in batches {
             writer.write(&batch)?;
         }
-        writer.close()?;
+        let _ = writer.close()?;
     }
 
     Ok(sink.finish())
@@ -307,10 +398,12 @@ mod tests {
         let writer = ParquetWriter::new(op.clone());
 
         let batch = create_test_batch();
-        let (path, hash) = writer
+        let result = writer
             .write_batch_with_hash(&batch, "test-service", 1_705_327_800_000_000_000)
             .await
             .unwrap();
+        let path = result.path;
+        let hash = result.hash;
 
         // Verify path structure
         assert!(path.starts_with("logs/test-service/"));
@@ -332,10 +425,11 @@ mod tests {
         let batch1 = create_test_batch();
         let batch2 = create_test_batch();
 
-        let (path, _hash) = writer
+        let result = writer
             .write_batches_with_hash(&[batch1, batch2], "test-service", 1_705_327_800_000_000_000)
             .await
             .unwrap();
+        let path = result.path;
 
         // Verify file exists
         let data = op.read(&path).await.unwrap();

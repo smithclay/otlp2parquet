@@ -469,17 +469,19 @@ impl TraceArrowBuilder {
         let batch = RecordBatch::try_new(
             schema,
             vec![
+                // Common fields (IDs 1-10)
                 Arc::new(self.timestamp_builder.finish()),
                 Arc::new(self.trace_id_builder.finish()),
                 Arc::new(self.span_id_builder.finish()),
-                Arc::new(self.parent_span_id_builder.finish()),
-                Arc::new(self.trace_state_builder.finish()),
-                Arc::new(self.span_name_builder.finish()),
-                Arc::new(self.span_kind_builder.finish()),
                 Arc::new(self.service_name_builder.finish()),
                 Arc::new(self.resource_attributes_builder.finish()),
                 Arc::new(self.scope_name_builder.finish()),
                 Arc::new(self.scope_version_builder.finish()),
+                // Traces-specific fields (IDs 51+)
+                Arc::new(self.parent_span_id_builder.finish()),
+                Arc::new(self.trace_state_builder.finish()),
+                Arc::new(self.span_name_builder.finish()),
+                Arc::new(self.span_kind_builder.finish()),
                 Arc::new(self.span_attributes_builder.finish()),
                 Arc::new(self.duration_builder.finish()),
                 Arc::new(self.status_code_builder.finish()),
@@ -678,7 +680,7 @@ mod tests {
         assert_eq!(batch.num_rows(), 2);
 
         let span_names = batch
-            .column(5)
+            .column(9) // SpanName moved to index 9
             .as_any()
             .downcast_ref::<StringArray>()
             .unwrap();
@@ -686,7 +688,7 @@ mod tests {
         assert_eq!(span_names.value(1), "ingress");
 
         let durations = batch
-            .column(12)
+            .column(12) // Duration still at index 12
             .as_any()
             .downcast_ref::<Int64Array>()
             .unwrap();
@@ -694,7 +696,7 @@ mod tests {
         assert_eq!(durations.value(1), 4_328_000);
 
         let events = batch
-            .column(16)
+            .column(15) // EventsTimestamp moved to index 15
             .as_any()
             .downcast_ref::<ListArray>()
             .unwrap();
