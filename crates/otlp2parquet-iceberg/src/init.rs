@@ -3,7 +3,11 @@
 //! This module provides shared initialization logic used by both Lambda and Server runtimes
 //! to avoid code duplication.
 
+use std::collections::HashMap;
 use std::sync::Arc;
+
+use anyhow::Result;
+use tracing::info;
 
 use crate::{
     catalog::NamespaceIdent, IcebergCatalog, IcebergCommitter, IcebergRestConfig, ReqwestHttpClient,
@@ -87,14 +91,24 @@ pub async fn initialize_committer() -> InitResult {
         Err(e) => return InitResult::CatalogError(format!("Failed to create HTTP client: {}", e)),
     };
 
-    // Create IcebergCatalog with tables from config
+    // Create IcebergCatalog with tables from config (fetches config to get prefix)
     let table_count = config.tables.len();
-    let catalog = IcebergCatalog::new(
+    let catalog = match IcebergCatalog::from_config(
         http_client,
         config.rest_uri.clone(),
         namespace,
         config.tables.clone(),
-    );
+    )
+    .await
+    {
+        Ok(cat) => cat,
+        Err(e) => return InitResult::CatalogError(format!("Failed to initialize catalog: {}", e)),
+    };
+
+    // Create namespace and tables
+    if let Err(e) = initialize_tables(&catalog, &config.tables).await {
+        return InitResult::CatalogError(format!("Failed to create tables: {}", e));
+    }
 
     let committer = IcebergCommitter::new(Arc::new(catalog));
 
@@ -102,4 +116,52 @@ pub async fn initialize_committer() -> InitResult {
         committer: Arc::new(committer),
         table_count,
     }
+}
+
+/// Initialize tables in the catalog by creating namespace and all configured tables
+///
+/// This function:
+/// 1. Creates the namespace (if it doesn't exist)
+/// 2. Creates each table with the appropriate schema based on signal type
+///
+/// # Arguments
+///
+/// * `catalog` - The Iceberg catalog client
+/// * `tables` - Map of signal/metric types to table names
+async fn initialize_tables<T: crate::http::HttpClient>(
+    catalog: &IcebergCatalog<T>,
+    tables: &HashMap<String, String>,
+) -> Result<()> {
+    use otlp2parquet_core::schema;
+
+    // Create namespace first (idempotent - OK if already exists)
+    catalog.create_namespace().await?;
+
+    // Create each table based on signal type
+    for (signal_key, table_name) in tables {
+        let schema = match signal_key.as_str() {
+            "logs" => schema::otel_logs_schema(),
+            "traces" => schema::otel_traces_schema(),
+            "metrics:gauge" => schema::otel_metrics_gauge_schema(),
+            "metrics:sum" => schema::otel_metrics_sum_schema(),
+            "metrics:histogram" => schema::otel_metrics_histogram_schema(),
+            "metrics:exponentialhistogram" => schema::otel_metrics_exponential_histogram_schema(),
+            "metrics:summary" => schema::otel_metrics_summary_schema(),
+            _ => {
+                tracing::warn!(
+                    "Unknown signal type '{}', skipping table creation",
+                    signal_key
+                );
+                continue;
+            }
+        };
+
+        info!(
+            "Creating table '{}' for signal '{}'",
+            table_name, signal_key
+        );
+        catalog.create_table(table_name, schema).await?;
+    }
+
+    Ok(())
 }

@@ -91,6 +91,18 @@ pub struct LoadTableResponse {
     pub config: Option<std::collections::HashMap<String, String>>,
 }
 
+/// Response from catalog config endpoint (GET /v1/config)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct CatalogConfig {
+    /// Default configuration values
+    pub defaults: std::collections::HashMap<String, String>,
+
+    /// Configuration overrides
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overrides: Option<std::collections::HashMap<String, String>>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

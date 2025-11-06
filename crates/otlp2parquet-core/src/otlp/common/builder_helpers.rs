@@ -24,7 +24,8 @@ pub(crate) fn map_field_names() -> MapFieldNames {
 
 /// Create a new StructBuilder for AnyValue with correct field order and types
 pub(crate) fn new_any_value_struct_builder() -> StructBuilder {
-    let fields = crate::schema::any_value_fields();
+    // Use fields without field_id metadata to avoid schema mismatch errors
+    let fields = crate::schema::any_value_fields_for_builder();
     StructBuilder::new(
         fields.clone(),
         vec![

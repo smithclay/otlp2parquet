@@ -4,7 +4,7 @@
 .PHONY: help
 help: ## Show this help message
 	@echo "Available targets:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 #
 # Standard Rust Development Commands
@@ -317,3 +317,22 @@ profile-all: bloat llvm-lines flamegraph ## Run all profiling tools
 	@echo "    - Binary size: bloat.txt"
 	@echo "    - LLVM lines: llvm_lines.txt"
 	@echo "    - CPU profile: flamegraph.svg"
+
+#
+# End-to-End Docker Integration Tests
+#
+
+.PHONY: test-e2e
+test-e2e: ## Run core e2e tests with Docker (MinIO, otlp2parquet)
+	@./scripts/test-e2e.sh
+
+.PHONY: test-e2e-iceberg
+test-e2e-iceberg: ## Run e2e tests including Iceberg catalog validation
+	@TEST_ICEBERG=1 ./scripts/test-e2e.sh
+
+.PHONY: test-e2e-debug
+test-e2e-debug: ## Run e2e tests and preserve containers for debugging
+	@KEEP_CONTAINERS=1 ./scripts/test-e2e.sh
+
+.PHONY: test-all
+test-all: test test-e2e ## Run unit tests + core e2e tests

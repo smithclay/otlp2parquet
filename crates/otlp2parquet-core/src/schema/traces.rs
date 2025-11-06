@@ -5,6 +5,12 @@ use arrow::datatypes::{DataType, Field, Fields, Schema, TimeUnit};
 
 use crate::otlp::field_names::arrow as field;
 
+/// Helper to create a Field with PARQUET:field_id metadata for Iceberg compatibility
+fn field_with_id(name: &str, data_type: DataType, nullable: bool, id: i32) -> Field {
+    let metadata = HashMap::from([("PARQUET:field_id".to_string(), id.to_string())]);
+    Field::new(name, data_type, nullable).with_metadata(metadata)
+}
+
 /// Returns the Arrow schema for OTLP traces.
 pub fn otel_traces_schema() -> Schema {
     otel_traces_schema_arc().as_ref().clone()
@@ -32,28 +38,28 @@ fn build_schema() -> Schema {
         DataType::List(Arc::new(Field::new("item", map_type.clone(), false)));
 
     let fields = vec![
-        Field::new(field::TIMESTAMP, timestamp_ns.clone(), false),
-        Field::new(field::TRACE_ID, DataType::Utf8, false),
-        Field::new(field::SPAN_ID, DataType::Utf8, false),
-        Field::new(field::PARENT_SPAN_ID, DataType::Utf8, true),
-        Field::new(field::TRACE_STATE, DataType::Utf8, true),
-        Field::new(field::SPAN_NAME, DataType::Utf8, false),
-        Field::new(field::SPAN_KIND, DataType::Utf8, false),
-        Field::new(field::SERVICE_NAME, DataType::Utf8, true),
-        Field::new(field::RESOURCE_ATTRIBUTES, map_type.clone(), false),
-        Field::new(field::SCOPE_NAME, DataType::Utf8, true),
-        Field::new(field::SCOPE_VERSION, DataType::Utf8, true),
-        Field::new(field::SPAN_ATTRIBUTES, map_type.clone(), false),
-        Field::new(field::DURATION, DataType::Int64, false),
-        Field::new(field::STATUS_CODE, DataType::Utf8, true),
-        Field::new(field::STATUS_MESSAGE, DataType::Utf8, true),
-        Field::new(field::EVENTS_TIMESTAMP, events_timestamp_list, false),
-        Field::new(field::EVENTS_NAME, events_name_list, false),
-        Field::new(field::EVENTS_ATTRIBUTES, events_attributes_list, false),
-        Field::new(field::LINKS_TRACE_ID, links_trace_id_list, false),
-        Field::new(field::LINKS_SPAN_ID, links_span_id_list, false),
-        Field::new(field::LINKS_TRACE_STATE, links_trace_state_list, false),
-        Field::new(field::LINKS_ATTRIBUTES, links_attributes_list, false),
+        field_with_id(field::TIMESTAMP, timestamp_ns.clone(), false, 1),
+        field_with_id(field::TRACE_ID, DataType::Utf8, false, 2),
+        field_with_id(field::SPAN_ID, DataType::Utf8, false, 3),
+        field_with_id(field::PARENT_SPAN_ID, DataType::Utf8, true, 4),
+        field_with_id(field::TRACE_STATE, DataType::Utf8, true, 5),
+        field_with_id(field::SPAN_NAME, DataType::Utf8, false, 6),
+        field_with_id(field::SPAN_KIND, DataType::Utf8, false, 7),
+        field_with_id(field::SERVICE_NAME, DataType::Utf8, true, 8),
+        field_with_id(field::RESOURCE_ATTRIBUTES, map_type.clone(), false, 9),
+        field_with_id(field::SCOPE_NAME, DataType::Utf8, true, 10),
+        field_with_id(field::SCOPE_VERSION, DataType::Utf8, true, 11),
+        field_with_id(field::SPAN_ATTRIBUTES, map_type.clone(), false, 12),
+        field_with_id(field::DURATION, DataType::Int64, false, 13),
+        field_with_id(field::STATUS_CODE, DataType::Utf8, true, 14),
+        field_with_id(field::STATUS_MESSAGE, DataType::Utf8, true, 15),
+        field_with_id(field::EVENTS_TIMESTAMP, events_timestamp_list, false, 16),
+        field_with_id(field::EVENTS_NAME, events_name_list, false, 17),
+        field_with_id(field::EVENTS_ATTRIBUTES, events_attributes_list, false, 18),
+        field_with_id(field::LINKS_TRACE_ID, links_trace_id_list, false, 19),
+        field_with_id(field::LINKS_SPAN_ID, links_span_id_list, false, 20),
+        field_with_id(field::LINKS_TRACE_STATE, links_trace_state_list, false, 21),
+        field_with_id(field::LINKS_ATTRIBUTES, links_attributes_list, false, 22),
     ];
 
     let mut metadata = HashMap::new();

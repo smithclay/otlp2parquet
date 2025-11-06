@@ -6,7 +6,7 @@
 use anyhow::{Context, Result};
 use arrow::array::{
     FixedSizeBinaryBuilder, Int32Builder, MapBuilder, RecordBatch, StringBuilder, StructBuilder,
-    TimestampNanosecondBuilder, TimestampSecondBuilder, UInt32Builder,
+    TimestampMicrosecondBuilder, TimestampNanosecondBuilder, UInt32Builder,
 };
 use otlp2parquet_proto::opentelemetry::proto::{
     collector::logs::v1::ExportLogsServiceRequest,
@@ -34,7 +34,7 @@ pub struct LogMetadata {
 pub struct ArrowConverter {
     // Column builders
     timestamp_builder: TimestampNanosecondBuilder,
-    timestamp_time_builder: TimestampSecondBuilder,
+    timestamp_time_builder: TimestampMicrosecondBuilder,
     observed_timestamp_builder: TimestampNanosecondBuilder,
     trace_id_builder: FixedSizeBinaryBuilder,
     span_id_builder: FixedSizeBinaryBuilder,
@@ -76,7 +76,7 @@ impl ArrowConverter {
             timestamp_builder: TimestampNanosecondBuilder::with_capacity(capacity)
                 .with_timezone("UTC")
                 .with_data_type(schema.field(0).data_type().clone()),
-            timestamp_time_builder: TimestampSecondBuilder::with_capacity(capacity)
+            timestamp_time_builder: TimestampMicrosecondBuilder::with_capacity(capacity)
                 .with_timezone("UTC")
                 .with_data_type(schema.field(1).data_type().clone()),
             observed_timestamp_builder: TimestampNanosecondBuilder::with_capacity(capacity)
@@ -379,8 +379,8 @@ impl ArrowConverter {
     {
         let timestamp = Self::clamp_nanos(log_record.time_unix_nano);
         self.timestamp_builder.append_value(timestamp);
-        let timestamp_seconds = timestamp / 1_000_000_000;
-        self.timestamp_time_builder.append_value(timestamp_seconds);
+        let timestamp_micros = timestamp / 1_000;
+        self.timestamp_time_builder.append_value(timestamp_micros);
         self.observed_timestamp_builder
             .append_value(Self::clamp_nanos(log_record.observed_time_unix_nano));
 

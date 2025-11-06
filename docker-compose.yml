@@ -1,5 +1,3 @@
-version: '3.9'
-
 # otlp2parquet with MinIO - S3-compatible local storage
 # One command: docker-compose up
 
@@ -40,10 +38,47 @@ services:
   # Iceberg REST catalog
   nessie:
     image: ghcr.io/projectnessie/nessie:latest
+    ports:
+      - "19120:19120"  # API port
+      - "9002:9000"    # Management port (health checks) - mapped to 9002 to avoid MinIO conflict
+    depends_on:
+      minio:
+        condition: service_healthy
     environment:
-      QUARKUS_HTTP_PORT: "19120"
-      # enable Iceberg REST catalog endpoints
-      QUARKUS_PROFILE: "iceberg-rest"
+      # Use property names directly (Quarkus MicroProfile Config style)
+      nessie.version.store.type: "IN_MEMORY"
+      quarkus.http.port: "19120"
+      quarkus.profile: "iceberg-rest"
+      # Warehouse configuration
+      nessie.catalog.default-warehouse: "warehouse"
+      nessie.catalog.warehouses.warehouse.location: "s3://otlp-logs/warehouse"
+      # S3 default options
+      nessie.catalog.service.s3.default-options.region: "us-east-1"
+      nessie.catalog.service.s3.default-options.path-style-access: "true"
+      nessie.catalog.service.s3.default-options.endpoint: "http://minio:9000/"
+      # Credential configuration using URN pattern (Nessie's secret management)
+      nessie.catalog.service.s3.default-options.access-key: "urn:nessie-secret:quarkus:nessie.catalog.secrets.access-key"
+      nessie.catalog.secrets.access-key.name: "${AWS_ACCESS_KEY_ID:-minioadmin}"
+      nessie.catalog.secrets.access-key.secret: "${AWS_SECRET_ACCESS_KEY:-minioadmin}"
+    healthcheck:
+      test: "exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /q/health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'"
+      interval: 5s
+      timeout: 2s
+      retries: 15
+
+  # Create Iceberg namespace automatically
+  nessie-init:
+    image: curlimages/curl:latest
+    depends_on:
+      nessie:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      curl -X POST http://nessie:19120/iceberg/v1/main/namespaces \
+        -H 'Content-Type: application/json' \
+        -d '{\"namespace\": [\"otlp\"], \"properties\": {}}' || true;
+      echo 'Nessie namespace ready';
+      "
 
   # otlp2parquet
   otlp2parquet:
@@ -54,6 +89,10 @@ services:
       minio:
         condition: service_healthy
       minio-init:
+        condition: service_completed_successfully
+      nessie:
+        condition: service_healthy
+      nessie-init:
         condition: service_completed_successfully
     ports:
       - "${HTTP_PORT:-4318}:4318"
@@ -73,13 +112,18 @@ services:
       OTLP2PARQUET_HTTP_HOST: 0.0.0.0
       RUST_LOG: ${RUST_LOG:-info}
 
+      # Batching (disable for tests to get immediate writes)
+      OTLP2PARQUET_BATCHING_ENABLED: ${BATCHING_ENABLED:-false}
+
+      # Iceberg catalog (optional - enables Nessie integration)
+      OTLP2PARQUET_ICEBERG_ENABLED: ${ICEBERG_ENABLED:-true}
+      OTLP2PARQUET_ICEBERG_REST_URI: ${ICEBERG_REST_URI:-http://nessie:19120/iceberg}
+      OTLP2PARQUET_ICEBERG_WAREHOUSE: ${ICEBERG_WAREHOUSE:-s3://otlp-logs/warehouse}
+      OTLP2PARQUET_ICEBERG_NAMESPACE: ${ICEBERG_NAMESPACE:-otlp}
+
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4318/health || exit 1"]
-      interval: 10s
-      timeout: 3s
-      retries: 3
-      start_period: 5s
+    # Note: healthcheck removed because distroless image has no wget/curl
+    # The test-e2e.sh script handles health checking from the host
 
   # Telemetrygen - Generate sample OTLP logs, metrics, and traces
   telemetrygen-traces:

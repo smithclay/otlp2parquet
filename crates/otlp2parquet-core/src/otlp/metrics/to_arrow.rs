@@ -5,8 +5,9 @@
 
 use anyhow::{Context, Result};
 use arrow::array::{
-    Array, BooleanBuilder, Float64Builder, GenericListArray, Int32Builder, ListBuilder, MapBuilder,
-    OffsetSizeTrait, RecordBatch, StringBuilder, TimestampNanosecondBuilder, UInt64Builder,
+    Array, BooleanBuilder, Float64Builder, GenericListArray, Int32Builder, Int64Builder,
+    ListBuilder, MapBuilder, OffsetSizeTrait, RecordBatch, StringBuilder,
+    TimestampNanosecondBuilder,
 };
 use arrow::datatypes::{DataType, Field};
 use otlp2parquet_proto::opentelemetry::proto::{
@@ -541,9 +542,9 @@ impl SumBuilder {
 // Histogram builder
 struct HistogramBuilder {
     base: BaseColumnsBuilder,
-    count_builder: UInt64Builder,
+    count_builder: Int64Builder,
     sum_builder: Float64Builder,
-    bucket_counts_builder: ListBuilder<UInt64Builder>,
+    bucket_counts_builder: ListBuilder<Int64Builder>,
     explicit_bounds_builder: ListBuilder<Float64Builder>,
     min_builder: Float64Builder,
     max_builder: Float64Builder,
@@ -553,9 +554,9 @@ impl HistogramBuilder {
     fn new() -> Self {
         Self {
             base: BaseColumnsBuilder::new(),
-            count_builder: UInt64Builder::new(),
+            count_builder: Int64Builder::new(),
             sum_builder: Float64Builder::new(),
-            bucket_counts_builder: ListBuilder::new(UInt64Builder::new()),
+            bucket_counts_builder: ListBuilder::new(Int64Builder::new()),
             explicit_bounds_builder: ListBuilder::new(Float64Builder::new()),
             min_builder: Float64Builder::new(),
             max_builder: Float64Builder::new(),
@@ -578,12 +579,14 @@ impl HistogramBuilder {
             scope_ctx,
         )?;
 
-        self.count_builder.append_value(point.count);
+        self.count_builder.append_value(point.count as i64);
         self.sum_builder.append_value(point.sum.unwrap_or(0.0));
 
         // Bucket counts
         for &count in &point.bucket_counts {
-            self.bucket_counts_builder.values().append_value(count);
+            self.bucket_counts_builder
+                .values()
+                .append_value(count as i64);
         }
         self.bucket_counts_builder.append(true);
 
@@ -616,7 +619,7 @@ impl HistogramBuilder {
         // Convert list arrays to have non-nullable items (schema requirement)
         let bucket_counts = list_array_with_non_nullable_items(
             self.bucket_counts_builder.finish(),
-            DataType::UInt64,
+            DataType::Int64,
         );
         let explicit_bounds = list_array_with_non_nullable_items(
             self.explicit_bounds_builder.finish(),
@@ -650,14 +653,14 @@ impl HistogramBuilder {
 // Exponential Histogram builder
 struct ExponentialHistogramBuilder {
     base: BaseColumnsBuilder,
-    count_builder: UInt64Builder,
+    count_builder: Int64Builder,
     sum_builder: Float64Builder,
     scale_builder: Int32Builder,
-    zero_count_builder: UInt64Builder,
+    zero_count_builder: Int64Builder,
     positive_offset_builder: Int32Builder,
-    positive_bucket_counts_builder: ListBuilder<UInt64Builder>,
+    positive_bucket_counts_builder: ListBuilder<Int64Builder>,
     negative_offset_builder: Int32Builder,
-    negative_bucket_counts_builder: ListBuilder<UInt64Builder>,
+    negative_bucket_counts_builder: ListBuilder<Int64Builder>,
     min_builder: Float64Builder,
     max_builder: Float64Builder,
 }
@@ -666,14 +669,14 @@ impl ExponentialHistogramBuilder {
     fn new() -> Self {
         Self {
             base: BaseColumnsBuilder::new(),
-            count_builder: UInt64Builder::new(),
+            count_builder: Int64Builder::new(),
             sum_builder: Float64Builder::new(),
             scale_builder: Int32Builder::new(),
-            zero_count_builder: UInt64Builder::new(),
+            zero_count_builder: Int64Builder::new(),
             positive_offset_builder: Int32Builder::new(),
-            positive_bucket_counts_builder: ListBuilder::new(UInt64Builder::new()),
+            positive_bucket_counts_builder: ListBuilder::new(Int64Builder::new()),
             negative_offset_builder: Int32Builder::new(),
-            negative_bucket_counts_builder: ListBuilder::new(UInt64Builder::new()),
+            negative_bucket_counts_builder: ListBuilder::new(Int64Builder::new()),
             min_builder: Float64Builder::new(),
             max_builder: Float64Builder::new(),
         }
@@ -695,10 +698,11 @@ impl ExponentialHistogramBuilder {
             scope_ctx,
         )?;
 
-        self.count_builder.append_value(point.count);
+        self.count_builder.append_value(point.count as i64);
         self.sum_builder.append_value(point.sum.unwrap_or(0.0));
         self.scale_builder.append_value(point.scale);
-        self.zero_count_builder.append_value(point.zero_count);
+        self.zero_count_builder
+            .append_value(point.zero_count as i64);
 
         // Positive buckets
         if let Some(positive) = &point.positive {
@@ -706,7 +710,7 @@ impl ExponentialHistogramBuilder {
             for &count in &positive.bucket_counts {
                 self.positive_bucket_counts_builder
                     .values()
-                    .append_value(count);
+                    .append_value(count as i64);
             }
         } else {
             self.positive_offset_builder.append_value(0);
@@ -719,7 +723,7 @@ impl ExponentialHistogramBuilder {
             for &count in &negative.bucket_counts {
                 self.negative_bucket_counts_builder
                     .values()
-                    .append_value(count);
+                    .append_value(count as i64);
             }
         } else {
             self.negative_offset_builder.append_value(0);
@@ -749,11 +753,11 @@ impl ExponentialHistogramBuilder {
         // Convert list arrays to have non-nullable items (schema requirement)
         let positive_bucket_counts = list_array_with_non_nullable_items(
             self.positive_bucket_counts_builder.finish(),
-            DataType::UInt64,
+            DataType::Int64,
         );
         let negative_bucket_counts = list_array_with_non_nullable_items(
             self.negative_bucket_counts_builder.finish(),
-            DataType::UInt64,
+            DataType::Int64,
         );
 
         let batch = RecordBatch::try_new(
@@ -787,7 +791,7 @@ impl ExponentialHistogramBuilder {
 // Summary builder
 struct SummaryBuilder {
     base: BaseColumnsBuilder,
-    count_builder: UInt64Builder,
+    count_builder: Int64Builder,
     sum_builder: Float64Builder,
     quantile_values_builder: ListBuilder<Float64Builder>,
     quantile_quantiles_builder: ListBuilder<Float64Builder>,
@@ -797,7 +801,7 @@ impl SummaryBuilder {
     fn new() -> Self {
         Self {
             base: BaseColumnsBuilder::new(),
-            count_builder: UInt64Builder::new(),
+            count_builder: Int64Builder::new(),
             sum_builder: Float64Builder::new(),
             quantile_values_builder: ListBuilder::new(Float64Builder::new()),
             quantile_quantiles_builder: ListBuilder::new(Float64Builder::new()),
@@ -820,7 +824,7 @@ impl SummaryBuilder {
             scope_ctx,
         )?;
 
-        self.count_builder.append_value(point.count);
+        self.count_builder.append_value(point.count as i64);
         self.sum_builder.append_value(point.sum);
 
         // Quantile values and quantiles

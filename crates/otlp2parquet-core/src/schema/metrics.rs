@@ -13,29 +13,36 @@ use std::sync::{Arc, OnceLock};
 
 use crate::otlp::field_names::arrow as field;
 
+/// Helper to create a Field with PARQUET:field_id metadata for Iceberg compatibility
+fn field_with_id(name: &str, data_type: DataType, nullable: bool, id: i32) -> Field {
+    let metadata = HashMap::from([("PARQUET:field_id".to_string(), id.to_string())]);
+    Field::new(name, data_type, nullable).with_metadata(metadata)
+}
+
 /// Returns the base fields shared by all metric types
 fn base_fields() -> Vec<Field> {
     let map_type = map_type();
 
     vec![
         // Timestamp - nanosecond precision, UTC
-        Field::new(
+        field_with_id(
             field::TIMESTAMP,
             DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())),
             false,
+            1,
         ),
         // Service identification
-        Field::new(field::SERVICE_NAME, DataType::Utf8, false),
+        field_with_id(field::SERVICE_NAME, DataType::Utf8, false, 2),
         // Metric metadata
-        Field::new(field::METRIC_NAME, DataType::Utf8, false),
-        Field::new(field::METRIC_DESCRIPTION, DataType::Utf8, true),
-        Field::new(field::METRIC_UNIT, DataType::Utf8, true),
+        field_with_id(field::METRIC_NAME, DataType::Utf8, false, 3),
+        field_with_id(field::METRIC_DESCRIPTION, DataType::Utf8, true, 4),
+        field_with_id(field::METRIC_UNIT, DataType::Utf8, true, 5),
         // Resource and scope information
-        Field::new(field::RESOURCE_ATTRIBUTES, map_type.clone(), false),
-        Field::new(field::SCOPE_NAME, DataType::Utf8, true),
-        Field::new(field::SCOPE_VERSION, DataType::Utf8, true),
+        field_with_id(field::RESOURCE_ATTRIBUTES, map_type.clone(), false, 6),
+        field_with_id(field::SCOPE_NAME, DataType::Utf8, true, 7),
+        field_with_id(field::SCOPE_VERSION, DataType::Utf8, true, 8),
         // Data point attributes
-        Field::new(field::ATTRIBUTES, map_type, false),
+        field_with_id(field::ATTRIBUTES, map_type, false, 9),
     ]
 }
 
@@ -70,7 +77,12 @@ pub fn otel_metrics_gauge_schema_arc() -> Arc<Schema> {
 
 fn build_gauge_schema() -> Schema {
     let mut fields = base_fields();
-    fields.push(Field::new(field::VALUE_COL, DataType::Float64, false));
+    fields.push(field_with_id(
+        field::VALUE_COL,
+        DataType::Float64,
+        false,
+        10,
+    ));
 
     let mut metadata = HashMap::new();
     metadata.insert(
@@ -95,13 +107,24 @@ pub fn otel_metrics_sum_schema_arc() -> Arc<Schema> {
 
 fn build_sum_schema() -> Schema {
     let mut fields = base_fields();
-    fields.push(Field::new(field::VALUE_COL, DataType::Float64, false));
-    fields.push(Field::new(
+    fields.push(field_with_id(
+        field::VALUE_COL,
+        DataType::Float64,
+        false,
+        10,
+    ));
+    fields.push(field_with_id(
         field::AGGREGATION_TEMPORALITY,
         DataType::Int32,
         false,
+        11,
     ));
-    fields.push(Field::new(field::IS_MONOTONIC, DataType::Boolean, false));
+    fields.push(field_with_id(
+        field::IS_MONOTONIC,
+        DataType::Boolean,
+        false,
+        12,
+    ));
 
     let mut metadata = HashMap::new();
     metadata.insert(
@@ -126,20 +149,22 @@ pub fn otel_metrics_histogram_schema_arc() -> Arc<Schema> {
 
 fn build_histogram_schema() -> Schema {
     let mut fields = base_fields();
-    fields.push(Field::new(field::COUNT, DataType::UInt64, false));
-    fields.push(Field::new(field::SUM, DataType::Float64, false));
-    fields.push(Field::new(
+    fields.push(field_with_id(field::COUNT, DataType::Int64, false, 10));
+    fields.push(field_with_id(field::SUM, DataType::Float64, false, 11));
+    fields.push(field_with_id(
         field::BUCKET_COUNTS,
-        DataType::List(Arc::new(Field::new("item", DataType::UInt64, false))),
+        DataType::List(Arc::new(Field::new("item", DataType::Int64, false))),
         false,
+        12,
     ));
-    fields.push(Field::new(
+    fields.push(field_with_id(
         field::EXPLICIT_BOUNDS,
         DataType::List(Arc::new(Field::new("item", DataType::Float64, false))),
         false,
+        13,
     ));
-    fields.push(Field::new(field::MIN, DataType::Float64, true));
-    fields.push(Field::new(field::MAX, DataType::Float64, true));
+    fields.push(field_with_id(field::MIN, DataType::Float64, true, 14));
+    fields.push(field_with_id(field::MAX, DataType::Float64, true, 15));
 
     let mut metadata = HashMap::new();
     metadata.insert(
@@ -169,24 +194,36 @@ pub fn otel_metrics_exponential_histogram_schema_arc() -> Arc<Schema> {
 
 fn build_exponential_histogram_schema() -> Schema {
     let mut fields = base_fields();
-    fields.push(Field::new(field::COUNT, DataType::UInt64, false));
-    fields.push(Field::new(field::SUM, DataType::Float64, false));
-    fields.push(Field::new(field::SCALE, DataType::Int32, false));
-    fields.push(Field::new(field::ZERO_COUNT, DataType::UInt64, false));
-    fields.push(Field::new(field::POSITIVE_OFFSET, DataType::Int32, false));
-    fields.push(Field::new(
+    fields.push(field_with_id(field::COUNT, DataType::Int64, false, 10));
+    fields.push(field_with_id(field::SUM, DataType::Float64, false, 11));
+    fields.push(field_with_id(field::SCALE, DataType::Int32, false, 12));
+    fields.push(field_with_id(field::ZERO_COUNT, DataType::Int64, false, 13));
+    fields.push(field_with_id(
+        field::POSITIVE_OFFSET,
+        DataType::Int32,
+        false,
+        14,
+    ));
+    fields.push(field_with_id(
         field::POSITIVE_BUCKET_COUNTS,
-        DataType::List(Arc::new(Field::new("item", DataType::UInt64, false))),
+        DataType::List(Arc::new(Field::new("item", DataType::Int64, false))),
         false,
+        15,
     ));
-    fields.push(Field::new(field::NEGATIVE_OFFSET, DataType::Int32, false));
-    fields.push(Field::new(
+    fields.push(field_with_id(
+        field::NEGATIVE_OFFSET,
+        DataType::Int32,
+        false,
+        16,
+    ));
+    fields.push(field_with_id(
         field::NEGATIVE_BUCKET_COUNTS,
-        DataType::List(Arc::new(Field::new("item", DataType::UInt64, false))),
+        DataType::List(Arc::new(Field::new("item", DataType::Int64, false))),
         false,
+        17,
     ));
-    fields.push(Field::new(field::MIN, DataType::Float64, true));
-    fields.push(Field::new(field::MAX, DataType::Float64, true));
+    fields.push(field_with_id(field::MIN, DataType::Float64, true, 18));
+    fields.push(field_with_id(field::MAX, DataType::Float64, true, 19));
 
     let mut metadata = HashMap::new();
     metadata.insert(
@@ -214,17 +251,19 @@ pub fn otel_metrics_summary_schema_arc() -> Arc<Schema> {
 
 fn build_summary_schema() -> Schema {
     let mut fields = base_fields();
-    fields.push(Field::new(field::COUNT, DataType::UInt64, false));
-    fields.push(Field::new(field::SUM, DataType::Float64, false));
-    fields.push(Field::new(
+    fields.push(field_with_id(field::COUNT, DataType::Int64, false, 10));
+    fields.push(field_with_id(field::SUM, DataType::Float64, false, 11));
+    fields.push(field_with_id(
         field::QUANTILE_VALUES,
         DataType::List(Arc::new(Field::new("item", DataType::Float64, false))),
         false,
+        12,
     ));
-    fields.push(Field::new(
+    fields.push(field_with_id(
         field::QUANTILE_QUANTILES,
         DataType::List(Arc::new(Field::new("item", DataType::Float64, false))),
         false,
+        13,
     ));
 
     let mut metadata = HashMap::new();

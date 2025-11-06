@@ -13,6 +13,12 @@ use std::sync::{Arc, OnceLock};
 
 use crate::otlp::field_names::{arrow as field, semconv};
 
+/// Helper to create a Field with PARQUET:field_id metadata for Iceberg compatibility
+fn field_with_id(name: &str, data_type: DataType, nullable: bool, id: i32) -> Field {
+    let metadata = HashMap::from([("PARQUET:field_id".to_string(), id.to_string())]);
+    Field::new(name, data_type, nullable).with_metadata(metadata)
+}
+
 /// Returns the Arrow schema for OpenTelemetry logs compatible with ClickHouse
 pub fn otel_logs_schema() -> Schema {
     otel_logs_schema_arc().as_ref().clone()
@@ -26,40 +32,48 @@ pub fn otel_logs_schema_arc() -> Arc<Schema> {
 
 fn build_schema() -> Schema {
     let fields = vec![
-        // Timestamps - nanosecond precision, UTC
-        Field::new(
+        // Timestamps - Timestamp: nanosecond precision, TimestampTime: microsecond precision (for Iceberg compatibility)
+        field_with_id(
             field::TIMESTAMP,
             DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())),
             false,
+            1,
         ),
-        Field::new(
+        field_with_id(
             field::TIMESTAMP_TIME,
-            DataType::Timestamp(TimeUnit::Second, Some("UTC".into())),
+            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
             false,
+            2,
         ),
-        Field::new(
+        field_with_id(
             field::OBSERVED_TIMESTAMP,
             DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())),
             false,
+            3,
         ),
         // Trace context
-        Field::new(field::TRACE_ID, DataType::FixedSizeBinary(16), false),
-        Field::new(field::SPAN_ID, DataType::FixedSizeBinary(8), false),
-        Field::new(field::TRACE_FLAGS, DataType::UInt32, false),
+        field_with_id(field::TRACE_ID, DataType::FixedSizeBinary(16), false, 4),
+        field_with_id(field::SPAN_ID, DataType::FixedSizeBinary(8), false, 5),
+        field_with_id(field::TRACE_FLAGS, DataType::UInt32, false, 6),
         // Severity
-        Field::new(field::SEVERITY_TEXT, DataType::Utf8, false),
-        Field::new(field::SEVERITY_NUMBER, DataType::Int32, false),
+        field_with_id(field::SEVERITY_TEXT, DataType::Utf8, false, 7),
+        field_with_id(field::SEVERITY_NUMBER, DataType::Int32, false, 8),
         // Body as structured AnyValue
-        any_value_field(field::BODY, true),
+        field_with_id(
+            field::BODY,
+            DataType::Struct(any_value_fields_for_builder()),
+            true,
+            9,
+        ),
         // Resource attributes - extracted common fields
-        Field::new(field::SERVICE_NAME, DataType::Utf8, false),
-        Field::new(field::SERVICE_NAMESPACE, DataType::Utf8, true),
-        Field::new(field::SERVICE_INSTANCE_ID, DataType::Utf8, true),
-        Field::new(field::RESOURCE_SCHEMA_URL, DataType::Utf8, true),
+        field_with_id(field::SERVICE_NAME, DataType::Utf8, false, 10),
+        field_with_id(field::SERVICE_NAMESPACE, DataType::Utf8, true, 11),
+        field_with_id(field::SERVICE_INSTANCE_ID, DataType::Utf8, true, 12),
+        field_with_id(field::RESOURCE_SCHEMA_URL, DataType::Utf8, true, 13),
         // Scope
-        Field::new(field::SCOPE_NAME, DataType::Utf8, false),
-        Field::new(field::SCOPE_VERSION, DataType::Utf8, true),
-        Field::new(
+        field_with_id(field::SCOPE_NAME, DataType::Utf8, false, 14),
+        field_with_id(field::SCOPE_VERSION, DataType::Utf8, true, 15),
+        field_with_id(
             field::SCOPE_ATTRIBUTES,
             DataType::Map(
                 Arc::new(Field::new(
@@ -67,7 +81,11 @@ fn build_schema() -> Schema {
                     DataType::Struct(
                         vec![
                             Field::new(field::KEY, DataType::Utf8, false),
-                            any_value_field(field::VALUE, true),
+                            Field::new(
+                                field::VALUE,
+                                DataType::Struct(any_value_fields_for_builder()),
+                                true,
+                            ),
                         ]
                         .into(),
                     ),
@@ -76,10 +94,11 @@ fn build_schema() -> Schema {
                 false,
             ),
             false,
+            16,
         ),
-        Field::new(field::SCOPE_SCHEMA_URL, DataType::Utf8, true),
+        field_with_id(field::SCOPE_SCHEMA_URL, DataType::Utf8, true, 17),
         // Remaining attributes as Map<String, AnyValue>
-        Field::new(
+        field_with_id(
             field::RESOURCE_ATTRIBUTES,
             DataType::Map(
                 Arc::new(Field::new(
@@ -87,7 +106,11 @@ fn build_schema() -> Schema {
                     DataType::Struct(
                         vec![
                             Field::new(field::KEY, DataType::Utf8, false),
-                            any_value_field(field::VALUE, true),
+                            Field::new(
+                                field::VALUE,
+                                DataType::Struct(any_value_fields_for_builder()),
+                                true,
+                            ),
                         ]
                         .into(),
                     ),
@@ -96,8 +119,9 @@ fn build_schema() -> Schema {
                 false,
             ),
             false,
+            18,
         ),
-        Field::new(
+        field_with_id(
             field::LOG_ATTRIBUTES,
             DataType::Map(
                 Arc::new(Field::new(
@@ -105,7 +129,11 @@ fn build_schema() -> Schema {
                     DataType::Struct(
                         vec![
                             Field::new(field::KEY, DataType::Utf8, false),
-                            any_value_field(field::VALUE, true),
+                            Field::new(
+                                field::VALUE,
+                                DataType::Struct(any_value_fields_for_builder()),
+                                true,
+                            ),
                         ]
                         .into(),
                     ),
@@ -114,6 +142,7 @@ fn build_schema() -> Schema {
                 false,
             ),
             false,
+            19,
         ),
     ];
 
@@ -139,7 +168,8 @@ pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
     semconv::SERVICE_INSTANCE_ID,
 ];
 
-pub(crate) fn any_value_fields() -> Fields {
+/// AnyValue fields for runtime array builders (no field_id metadata)
+pub(crate) fn any_value_fields_for_builder() -> Fields {
     vec![
         Field::new(field::TYPE, DataType::Utf8, false),
         Field::new(field::STRING_VALUE, DataType::Utf8, true),
@@ -150,10 +180,6 @@ pub(crate) fn any_value_fields() -> Fields {
         Field::new(field::JSON_VALUE, DataType::LargeUtf8, true),
     ]
     .into()
-}
-
-fn any_value_field(name: &str, nullable: bool) -> Field {
-    Field::new(name, DataType::Struct(any_value_fields()), nullable)
 }
 
 #[cfg(test)]

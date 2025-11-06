@@ -45,6 +45,8 @@ pub struct IcebergCatalog<T: HttpClient> {
     http: T,
     /// Base URL of the REST catalog (e.g., "<https://s3tables.us-east-1.amazonaws.com/iceberg>")
     base_url: String,
+    /// Catalog prefix from config (e.g., "main" for Nessie branch)
+    prefix: String,
     /// Namespace for tables
     namespace: NamespaceIdent,
     /// Map of signal/metric type to table name
@@ -53,32 +55,211 @@ pub struct IcebergCatalog<T: HttpClient> {
 }
 
 impl<T: HttpClient> IcebergCatalog<T> {
-    /// Create a new Iceberg catalog client
+    /// Create a new Iceberg catalog client with explicit prefix
     pub fn new(
         http: T,
         base_url: String,
+        prefix: String,
         namespace: NamespaceIdent,
         tables: HashMap<String, String>,
     ) -> Self {
         Self {
             http,
             base_url,
+            prefix,
             namespace,
             tables,
         }
     }
 
+    /// Fetch catalog configuration to get the prefix
+    ///
+    /// Calls: GET /v1/config
+    #[instrument(skip(self))]
+    async fn fetch_config(&self) -> Result<crate::types::CatalogConfig> {
+        use crate::types::CatalogConfig;
+
+        let url = format!("{}/v1/config", self.base_url);
+        debug!("Fetching catalog config from: {}", url);
+
+        let response = self
+            .http
+            .get(
+                &url,
+                vec![("Accept".to_string(), "application/json".to_string())],
+            )
+            .await
+            .context("Failed to fetch catalog config")?;
+
+        if !response.is_success() {
+            return Err(self.handle_error_response(&response)?);
+        }
+
+        let config: CatalogConfig = response.json().context("Failed to parse CatalogConfig")?;
+
+        Ok(config)
+    }
+
+    /// Create a new Iceberg catalog client by fetching the config
+    pub async fn from_config(
+        http: T,
+        base_url: String,
+        namespace: NamespaceIdent,
+        tables: HashMap<String, String>,
+    ) -> Result<Self> {
+        // Create a temporary instance to fetch config
+        let temp = Self {
+            http,
+            base_url: base_url.clone(),
+            prefix: String::new(),
+            namespace: namespace.clone(),
+            tables: tables.clone(),
+        };
+
+        // Fetch config to get prefix
+        let config = temp.fetch_config().await?;
+        let prefix = config
+            .defaults
+            .get("prefix")
+            .cloned()
+            .unwrap_or_else(|| String::from(""));
+
+        debug!("Using catalog prefix: '{}'", prefix);
+
+        // Create final instance with prefix
+        Ok(Self {
+            http: temp.http,
+            base_url: temp.base_url,
+            prefix,
+            namespace: temp.namespace,
+            tables: temp.tables,
+        })
+    }
+
+    /// Create a namespace in the catalog
+    ///
+    /// Calls: POST /v1/{prefix}/namespaces
+    #[instrument(skip(self))]
+    pub async fn create_namespace(&self) -> Result<()> {
+        let url = if self.prefix.is_empty() {
+            format!("{}/v1/namespaces", self.base_url)
+        } else {
+            format!("{}/v1/{}/namespaces", self.base_url, self.prefix)
+        };
+
+        debug!("Creating namespace: {}", self.namespace.as_str());
+
+        let request = serde_json::json!({
+            "namespace": self.namespace.parts(),
+            "properties": {}
+        });
+
+        let body =
+            serde_json::to_vec(&request).context("Failed to serialize create namespace request")?;
+
+        let response = self
+            .http
+            .post(
+                &url,
+                vec![
+                    ("Content-Type".to_string(), "application/json".to_string()),
+                    ("Accept".to_string(), "application/json".to_string()),
+                ],
+                body,
+            )
+            .await
+            .context("Failed to create namespace")?;
+
+        // 200 = created, 409 = already exists (both are OK)
+        if response.is_success() || response.status == 409 {
+            info!("Namespace '{}' ready", self.namespace.as_str());
+            Ok(())
+        } else {
+            Err(self.handle_error_response(&response)?)
+        }
+    }
+
+    /// Create a table in the catalog
+    ///
+    /// Calls: POST /v1/{prefix}/namespaces/{namespace}/tables
+    #[instrument(skip(self, schema), fields(table = %table_name))]
+    pub async fn create_table(
+        &self,
+        table_name: &str,
+        schema: arrow::datatypes::Schema,
+    ) -> Result<()> {
+        let url = if self.prefix.is_empty() {
+            format!(
+                "{}/v1/namespaces/{}/tables",
+                self.base_url,
+                self.namespace.as_str()
+            )
+        } else {
+            format!(
+                "{}/v1/{}/namespaces/{}/tables",
+                self.base_url,
+                self.prefix,
+                self.namespace.as_str()
+            )
+        };
+
+        debug!("Creating table: {}", table_name);
+
+        // Convert Arrow schema to Iceberg schema
+        let iceberg_schema = arrow_to_iceberg_schema(&schema)?;
+
+        let request = serde_json::json!({
+            "name": table_name,
+            "schema": iceberg_schema,
+            "stage-create": false
+        });
+
+        let body =
+            serde_json::to_vec(&request).context("Failed to serialize create table request")?;
+
+        let response = self
+            .http
+            .post(
+                &url,
+                vec![
+                    ("Content-Type".to_string(), "application/json".to_string()),
+                    ("Accept".to_string(), "application/json".to_string()),
+                ],
+                body,
+            )
+            .await
+            .context("Failed to create table")?;
+
+        // 200 = created, 409 = already exists (both are OK)
+        if response.is_success() || response.status == 409 {
+            info!("Table '{}' ready", table_name);
+            Ok(())
+        } else {
+            Err(self.handle_error_response(&response)?)
+        }
+    }
+
     /// Load table metadata from the catalog
     ///
-    /// Calls: GET /v1/{namespace}/tables/{table}
+    /// Calls: GET /v1/{prefix}/namespaces/{namespace}/tables/{table}
     #[instrument(skip(self), fields(table = %table_name))]
     async fn load_table(&self, table_name: &str) -> Result<TableMetadata> {
-        let url = format!(
-            "{}/v1/namespaces/{}/tables/{}",
-            self.base_url,
-            self.namespace.as_str(),
-            table_name
-        );
+        let url = if self.prefix.is_empty() {
+            format!(
+                "{}/v1/namespaces/{}/tables/{}",
+                self.base_url,
+                self.namespace.as_str(),
+                table_name
+            )
+        } else {
+            format!(
+                "{}/v1/{}/namespaces/{}/tables/{}",
+                self.base_url,
+                self.prefix,
+                self.namespace.as_str(),
+                table_name
+            )
+        };
 
         debug!("Loading table metadata from: {}", url);
 
@@ -104,15 +285,25 @@ impl<T: HttpClient> IcebergCatalog<T> {
 
     /// Commit a transaction to the catalog
     ///
-    /// Calls: POST /v1/{namespace}/tables/{table}/transactions/commit
+    /// Calls: POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/transactions/commit
     #[instrument(skip(self, data_files), fields(table = %table_name, num_files = data_files.len()))]
     async fn commit_transaction(&self, table_name: &str, data_files: Vec<DataFile>) -> Result<()> {
-        let url = format!(
-            "{}/v1/namespaces/{}/tables/{}/transactions/commit",
-            self.base_url,
-            self.namespace.as_str(),
-            table_name
-        );
+        let url = if self.prefix.is_empty() {
+            format!(
+                "{}/v1/namespaces/{}/tables/{}/transactions/commit",
+                self.base_url,
+                self.namespace.as_str(),
+                table_name
+            )
+        } else {
+            format!(
+                "{}/v1/{}/namespaces/{}/tables/{}/transactions/commit",
+                self.base_url,
+                self.prefix,
+                self.namespace.as_str(),
+                table_name
+            )
+        };
 
         debug!("Committing {} files to: {}", data_files.len(), url);
 
@@ -240,6 +431,152 @@ impl<T: HttpClient> IcebergCatalog<T> {
     }
 }
 
+/// Convert Arrow schema to Iceberg schema JSON
+///
+/// Iceberg schema format:
+/// ```json
+/// {
+///   "type": "struct",
+///   "fields": [
+///     {"id": 1, "name": "field_name", "required": true, "type": "string"}
+///   ]
+/// }
+/// ```
+fn arrow_to_iceberg_schema(schema: &arrow::datatypes::Schema) -> Result<serde_json::Value> {
+    let fields: Result<Vec<_>> = schema
+        .fields()
+        .iter()
+        .map(|field| {
+            // Extract field_id from PARQUET:field_id metadata
+            let field_id: i32 = field
+                .metadata()
+                .get("PARQUET:field_id")
+                .and_then(|s| s.parse().ok())
+                .ok_or_else(|| {
+                    anyhow!(
+                        "Field '{}' missing PARQUET:field_id metadata required for Iceberg",
+                        field.name()
+                    )
+                })?;
+
+            let iceberg_type = arrow_type_to_iceberg(field.data_type())?;
+
+            Ok(serde_json::json!({
+                "id": field_id,
+                "name": field.name(),
+                "required": !field.is_nullable(),
+                "type": iceberg_type
+            }))
+        })
+        .collect();
+
+    Ok(serde_json::json!({
+        "type": "struct",
+        "fields": fields?
+    }))
+}
+
+/// Convert Arrow DataType to Iceberg type string/object
+fn arrow_type_to_iceberg(data_type: &arrow::datatypes::DataType) -> Result<serde_json::Value> {
+    use arrow::datatypes::DataType;
+    use arrow::datatypes::TimeUnit;
+
+    match data_type {
+        DataType::Boolean => Ok(serde_json::json!("boolean")),
+        DataType::Int8 => Ok(serde_json::json!("int")),
+        DataType::Int16 => Ok(serde_json::json!("int")),
+        DataType::Int32 => Ok(serde_json::json!("int")),
+        DataType::Int64 => Ok(serde_json::json!("long")),
+        DataType::UInt8 => Ok(serde_json::json!("int")),
+        DataType::UInt16 => Ok(serde_json::json!("int")),
+        DataType::UInt32 => Ok(serde_json::json!("long")),
+        DataType::UInt64 => Ok(serde_json::json!("long")),
+        DataType::Float32 => Ok(serde_json::json!("float")),
+        DataType::Float64 => Ok(serde_json::json!("double")),
+        DataType::Utf8 => Ok(serde_json::json!("string")),
+        DataType::LargeUtf8 => Ok(serde_json::json!("string")),
+        DataType::Binary => Ok(serde_json::json!("binary")),
+        DataType::LargeBinary => Ok(serde_json::json!("binary")),
+        DataType::FixedSizeBinary(size) => Ok(serde_json::json!(format!("fixed[{}]", size))),
+        DataType::Timestamp(TimeUnit::Microsecond, _) => Ok(serde_json::json!("timestamp")),
+        DataType::Timestamp(TimeUnit::Nanosecond, _) => Ok(serde_json::json!("timestamp")),
+        DataType::Timestamp(_, _) => Ok(serde_json::json!("timestamp")),
+        DataType::Date32 => Ok(serde_json::json!("date")),
+        DataType::Date64 => Ok(serde_json::json!("date")),
+        DataType::Decimal128(precision, scale) => Ok(serde_json::json!({
+            "type": "decimal",
+            "precision": precision,
+            "scale": scale
+        })),
+        DataType::Struct(fields) => {
+            let iceberg_fields: Result<Vec<_>> = fields
+                .iter()
+                .enumerate()
+                .map(|(idx, field)| {
+                    // For nested struct fields, use index as field_id if not present
+                    let field_id: i32 = field
+                        .metadata()
+                        .get("PARQUET:field_id")
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or((1000 + idx) as i32); // Start nested fields at 1000+
+
+                    let iceberg_type = arrow_type_to_iceberg(field.data_type())?;
+
+                    Ok(serde_json::json!({
+                        "id": field_id,
+                        "name": field.name(),
+                        "required": !field.is_nullable(),
+                        "type": iceberg_type
+                    }))
+                })
+                .collect();
+
+            Ok(serde_json::json!({
+                "type": "struct",
+                "fields": iceberg_fields?
+            }))
+        }
+        DataType::List(field) | DataType::LargeList(field) => {
+            // List element ID convention: use 1000 for nested element
+            let element_id = field
+                .metadata()
+                .get("PARQUET:field_id")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(1000);
+
+            Ok(serde_json::json!({
+                "type": "list",
+                "element-id": element_id,
+                "element-required": !field.is_nullable(),
+                "element": arrow_type_to_iceberg(field.data_type())?
+            }))
+        }
+        DataType::Map(field, _) => {
+            // Map expects a struct with "key" and "value" fields
+            if let DataType::Struct(entries) = field.data_type() {
+                if entries.len() == 2 {
+                    let key_field = &entries[0];
+                    let value_field = &entries[1];
+
+                    return Ok(serde_json::json!({
+                        "type": "map",
+                        "key-id": 1001,
+                        "key": arrow_type_to_iceberg(key_field.data_type())?,
+                        "value-id": 1002,
+                        "value-required": !value_field.is_nullable(),
+                        "value": arrow_type_to_iceberg(value_field.data_type())?
+                    }));
+                }
+            }
+            Err(anyhow!("Map field must contain struct with key and value"))
+        }
+        _ => Err(anyhow!(
+            "Unsupported Arrow type for Iceberg conversion: {:?}",
+            data_type
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,6 +637,7 @@ mod tests {
         let catalog = IcebergCatalog::new(
             mock,
             "https://catalog.example.com".to_string(),
+            String::new(),
             NamespaceIdent::from_vec(vec!["otel".to_string()]).unwrap(),
             tables,
         );
@@ -317,6 +655,7 @@ mod tests {
         let catalog = IcebergCatalog::new(
             mock,
             "https://catalog.example.com".to_string(),
+            String::new(),
             NamespaceIdent::from_vec(vec!["otel".to_string()]).unwrap(),
             tables,
         );
@@ -334,6 +673,7 @@ mod tests {
         let catalog = IcebergCatalog::new(
             mock,
             "https://catalog.example.com".to_string(),
+            String::new(),
             NamespaceIdent::from_vec(vec!["otel".to_string()]).unwrap(),
             tables,
         );
@@ -410,6 +750,7 @@ mod tests {
         let catalog = IcebergCatalog::new(
             mock,
             "https://catalog.example.com".to_string(),
+            String::new(),
             NamespaceIdent::from_vec(vec!["otel".to_string()]).unwrap(),
             tables,
         );
@@ -433,6 +774,7 @@ mod tests {
         let catalog = IcebergCatalog::new(
             mock,
             "https://catalog.example.com".to_string(),
+            String::new(),
             NamespaceIdent::from_vec(vec!["otel".to_string()]).unwrap(),
             tables,
         );
@@ -513,6 +855,7 @@ mod tests {
         let catalog = IcebergCatalog::new(
             mock,
             "https://catalog.example.com".to_string(),
+            String::new(),
             NamespaceIdent::from_vec(vec!["otel".to_string()]).unwrap(),
             tables,
         );
@@ -547,6 +890,7 @@ mod tests {
         let catalog = IcebergCatalog::new(
             mock,
             "https://catalog.example.com".to_string(),
+            String::new(),
             NamespaceIdent::from_vec(vec!["otel".to_string()]).unwrap(),
             tables,
         );
@@ -609,6 +953,7 @@ mod tests {
         let catalog = IcebergCatalog::new(
             mock,
             "https://catalog.example.com".to_string(),
+            String::new(),
             NamespaceIdent::from_vec(vec!["otel".to_string()]).unwrap(),
             tables,
         );
