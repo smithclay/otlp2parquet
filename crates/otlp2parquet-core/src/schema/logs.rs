@@ -32,72 +32,19 @@ pub fn otel_logs_schema_arc() -> Arc<Schema> {
 
 fn build_schema() -> Schema {
     let fields = vec![
-        // Timestamps - Timestamp: nanosecond precision, TimestampTime: microsecond precision (for Iceberg compatibility)
+        // ============ Common Fields (IDs 1-20) ============
+        // Shared across all signal types for cross-signal queries and schema evolution
         field_with_id(
             field::TIMESTAMP,
             DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())),
             false,
             1,
         ),
-        field_with_id(
-            field::TIMESTAMP_TIME,
-            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
-            false,
-            2,
-        ),
-        field_with_id(
-            field::OBSERVED_TIMESTAMP,
-            DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())),
-            false,
-            3,
-        ),
-        // Trace context
-        field_with_id(field::TRACE_ID, DataType::FixedSizeBinary(16), false, 4),
-        field_with_id(field::SPAN_ID, DataType::FixedSizeBinary(8), false, 5),
-        field_with_id(field::TRACE_FLAGS, DataType::UInt32, false, 6),
-        // Severity
-        field_with_id(field::SEVERITY_TEXT, DataType::Utf8, false, 7),
-        field_with_id(field::SEVERITY_NUMBER, DataType::Int32, false, 8),
-        // Body as structured AnyValue
-        field_with_id(
-            field::BODY,
-            DataType::Struct(any_value_fields_for_builder()),
-            true,
-            9,
-        ),
-        // Resource attributes - extracted common fields
-        field_with_id(field::SERVICE_NAME, DataType::Utf8, false, 10),
-        field_with_id(field::SERVICE_NAMESPACE, DataType::Utf8, true, 11),
-        field_with_id(field::SERVICE_INSTANCE_ID, DataType::Utf8, true, 12),
-        field_with_id(field::RESOURCE_SCHEMA_URL, DataType::Utf8, true, 13),
-        // Scope
-        field_with_id(field::SCOPE_NAME, DataType::Utf8, false, 14),
-        field_with_id(field::SCOPE_VERSION, DataType::Utf8, true, 15),
-        field_with_id(
-            field::SCOPE_ATTRIBUTES,
-            DataType::Map(
-                Arc::new(Field::new(
-                    field::ENTRIES,
-                    DataType::Struct(
-                        vec![
-                            Field::new(field::KEY, DataType::Utf8, false),
-                            Field::new(
-                                field::VALUE,
-                                DataType::Struct(any_value_fields_for_builder()),
-                                true,
-                            ),
-                        ]
-                        .into(),
-                    ),
-                    false,
-                )),
-                false,
-            ),
-            false,
-            16,
-        ),
-        field_with_id(field::SCOPE_SCHEMA_URL, DataType::Utf8, true, 17),
-        // Remaining attributes as Map<String, AnyValue>
+        field_with_id(field::TRACE_ID, DataType::FixedSizeBinary(16), false, 2),
+        field_with_id(field::SPAN_ID, DataType::FixedSizeBinary(8), false, 3),
+        field_with_id(field::SERVICE_NAME, DataType::Utf8, false, 4),
+        field_with_id(field::SERVICE_NAMESPACE, DataType::Utf8, true, 5),
+        field_with_id(field::SERVICE_INSTANCE_ID, DataType::Utf8, true, 6),
         field_with_id(
             field::RESOURCE_ATTRIBUTES,
             DataType::Map(
@@ -119,7 +66,56 @@ fn build_schema() -> Schema {
                 false,
             ),
             false,
-            18,
+            7,
+        ),
+        field_with_id(field::RESOURCE_SCHEMA_URL, DataType::Utf8, true, 8),
+        field_with_id(field::SCOPE_NAME, DataType::Utf8, false, 9),
+        field_with_id(field::SCOPE_VERSION, DataType::Utf8, true, 10),
+        field_with_id(
+            field::SCOPE_ATTRIBUTES,
+            DataType::Map(
+                Arc::new(Field::new(
+                    field::ENTRIES,
+                    DataType::Struct(
+                        vec![
+                            Field::new(field::KEY, DataType::Utf8, false),
+                            Field::new(
+                                field::VALUE,
+                                DataType::Struct(any_value_fields_for_builder()),
+                                true,
+                            ),
+                        ]
+                        .into(),
+                    ),
+                    false,
+                )),
+                false,
+            ),
+            false,
+            11,
+        ),
+        field_with_id(field::SCOPE_SCHEMA_URL, DataType::Utf8, true, 12),
+        // ============ Logs-Specific Fields (IDs 21+) ============
+        field_with_id(
+            field::TIMESTAMP_TIME,
+            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+            false,
+            21,
+        ),
+        field_with_id(
+            field::OBSERVED_TIMESTAMP,
+            DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())),
+            false,
+            22,
+        ),
+        field_with_id(field::TRACE_FLAGS, DataType::UInt32, false, 23),
+        field_with_id(field::SEVERITY_TEXT, DataType::Utf8, false, 24),
+        field_with_id(field::SEVERITY_NUMBER, DataType::Int32, false, 25),
+        field_with_id(
+            field::BODY,
+            DataType::Struct(any_value_fields_for_builder()),
+            true,
+            26,
         ),
         field_with_id(
             field::LOG_ATTRIBUTES,
@@ -142,7 +138,7 @@ fn build_schema() -> Schema {
                 false,
             ),
             false,
-            19,
+            27,
         ),
     ];
 
@@ -191,21 +187,20 @@ mod tests {
         let schema = otel_logs_schema();
         assert_eq!(schema.fields().len(), 19);
 
-        // Verify timestamp fields
+        // Verify common fields (IDs 1-12)
         assert_eq!(schema.field(0).name(), field::TIMESTAMP);
-        assert_eq!(schema.field(1).name(), field::TIMESTAMP_TIME);
-        assert_eq!(schema.field(2).name(), field::OBSERVED_TIMESTAMP);
+        assert_eq!(schema.field(1).name(), field::TRACE_ID);
+        assert_eq!(schema.field(2).name(), field::SPAN_ID);
+        assert_eq!(schema.field(3).name(), field::SERVICE_NAME);
+        assert_eq!(schema.field(6).name(), field::RESOURCE_ATTRIBUTES);
+        assert_eq!(schema.field(7).name(), field::RESOURCE_SCHEMA_URL);
+        assert_eq!(schema.field(8).name(), field::SCOPE_NAME);
+        assert_eq!(schema.field(10).name(), field::SCOPE_ATTRIBUTES);
+        assert_eq!(schema.field(11).name(), field::SCOPE_SCHEMA_URL);
 
-        // Verify trace fields
-        assert_eq!(schema.field(3).name(), field::TRACE_ID);
-        assert_eq!(schema.field(4).name(), field::SPAN_ID);
-
-        // Verify service fields
-        assert_eq!(schema.field(9).name(), field::SERVICE_NAME);
-
-        // Verify new schema URL fields
-        assert_eq!(schema.field(12).name(), field::RESOURCE_SCHEMA_URL);
-        assert_eq!(schema.field(16).name(), field::SCOPE_SCHEMA_URL);
-        assert_eq!(schema.field(15).name(), field::SCOPE_ATTRIBUTES);
+        // Verify logs-specific fields (IDs 21+)
+        assert_eq!(schema.field(12).name(), field::TIMESTAMP_TIME);
+        assert_eq!(schema.field(13).name(), field::OBSERVED_TIMESTAMP);
+        assert_eq!(schema.field(18).name(), field::LOG_ATTRIBUTES);
     }
 }

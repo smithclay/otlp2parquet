@@ -38,28 +38,31 @@ fn build_schema() -> Schema {
         DataType::List(Arc::new(Field::new("item", map_type.clone(), false)));
 
     let fields = vec![
+        // ============ Common Fields (IDs 1-20) ============
+        // Shared across all signal types for cross-signal queries and schema evolution
         field_with_id(field::TIMESTAMP, timestamp_ns.clone(), false, 1),
         field_with_id(field::TRACE_ID, DataType::Utf8, false, 2),
         field_with_id(field::SPAN_ID, DataType::Utf8, false, 3),
-        field_with_id(field::PARENT_SPAN_ID, DataType::Utf8, true, 4),
-        field_with_id(field::TRACE_STATE, DataType::Utf8, true, 5),
-        field_with_id(field::SPAN_NAME, DataType::Utf8, false, 6),
-        field_with_id(field::SPAN_KIND, DataType::Utf8, false, 7),
-        field_with_id(field::SERVICE_NAME, DataType::Utf8, true, 8),
-        field_with_id(field::RESOURCE_ATTRIBUTES, map_type.clone(), false, 9),
-        field_with_id(field::SCOPE_NAME, DataType::Utf8, true, 10),
-        field_with_id(field::SCOPE_VERSION, DataType::Utf8, true, 11),
-        field_with_id(field::SPAN_ATTRIBUTES, map_type.clone(), false, 12),
-        field_with_id(field::DURATION, DataType::Int64, false, 13),
-        field_with_id(field::STATUS_CODE, DataType::Utf8, true, 14),
-        field_with_id(field::STATUS_MESSAGE, DataType::Utf8, true, 15),
-        field_with_id(field::EVENTS_TIMESTAMP, events_timestamp_list, false, 16),
-        field_with_id(field::EVENTS_NAME, events_name_list, false, 17),
-        field_with_id(field::EVENTS_ATTRIBUTES, events_attributes_list, false, 18),
-        field_with_id(field::LINKS_TRACE_ID, links_trace_id_list, false, 19),
-        field_with_id(field::LINKS_SPAN_ID, links_span_id_list, false, 20),
-        field_with_id(field::LINKS_TRACE_STATE, links_trace_state_list, false, 21),
-        field_with_id(field::LINKS_ATTRIBUTES, links_attributes_list, false, 22),
+        field_with_id(field::SERVICE_NAME, DataType::Utf8, true, 4),
+        field_with_id(field::RESOURCE_ATTRIBUTES, map_type.clone(), false, 7),
+        field_with_id(field::SCOPE_NAME, DataType::Utf8, true, 9),
+        field_with_id(field::SCOPE_VERSION, DataType::Utf8, true, 10),
+        // ============ Traces-Specific Fields (IDs 51+) ============
+        field_with_id(field::PARENT_SPAN_ID, DataType::Utf8, true, 51),
+        field_with_id(field::TRACE_STATE, DataType::Utf8, true, 52),
+        field_with_id(field::SPAN_NAME, DataType::Utf8, false, 53),
+        field_with_id(field::SPAN_KIND, DataType::Utf8, false, 54),
+        field_with_id(field::SPAN_ATTRIBUTES, map_type.clone(), false, 55),
+        field_with_id(field::DURATION, DataType::Int64, false, 56),
+        field_with_id(field::STATUS_CODE, DataType::Utf8, true, 57),
+        field_with_id(field::STATUS_MESSAGE, DataType::Utf8, true, 58),
+        field_with_id(field::EVENTS_TIMESTAMP, events_timestamp_list, false, 59),
+        field_with_id(field::EVENTS_NAME, events_name_list, false, 60),
+        field_with_id(field::EVENTS_ATTRIBUTES, events_attributes_list, false, 61),
+        field_with_id(field::LINKS_TRACE_ID, links_trace_id_list, false, 62),
+        field_with_id(field::LINKS_SPAN_ID, links_span_id_list, false, 63),
+        field_with_id(field::LINKS_TRACE_STATE, links_trace_state_list, false, 64),
+        field_with_id(field::LINKS_ATTRIBUTES, links_attributes_list, false, 65),
     ];
 
     let mut metadata = HashMap::new();
@@ -96,8 +99,17 @@ mod tests {
     fn test_schema_layout() {
         let schema = otel_traces_schema();
         assert_eq!(schema.fields().len(), 22);
+
+        // Verify common fields
         assert_eq!(schema.field(0).name(), field::TIMESTAMP);
-        assert_eq!(schema.field(7).name(), field::SERVICE_NAME);
+        assert_eq!(schema.field(1).name(), field::TRACE_ID);
+        assert_eq!(schema.field(2).name(), field::SPAN_ID);
+        assert_eq!(schema.field(3).name(), field::SERVICE_NAME);
+        assert_eq!(schema.field(4).name(), field::RESOURCE_ATTRIBUTES);
+        assert_eq!(schema.field(5).name(), field::SCOPE_NAME);
+
+        // Verify traces-specific fields
+        assert_eq!(schema.field(7).name(), field::PARENT_SPAN_ID);
         assert_eq!(schema.field(11).name(), field::SPAN_ATTRIBUTES);
         assert_eq!(schema.field(21).name(), field::LINKS_ATTRIBUTES);
     }

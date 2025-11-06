@@ -78,10 +78,10 @@ impl ArrowConverter {
                 .with_data_type(schema.field(0).data_type().clone()),
             timestamp_time_builder: TimestampMicrosecondBuilder::with_capacity(capacity)
                 .with_timezone("UTC")
-                .with_data_type(schema.field(1).data_type().clone()),
+                .with_data_type(schema.field(12).data_type().clone()),
             observed_timestamp_builder: TimestampNanosecondBuilder::with_capacity(capacity)
                 .with_timezone("UTC")
-                .with_data_type(schema.field(2).data_type().clone()),
+                .with_data_type(schema.field(13).data_type().clone()),
             trace_id_builder: FixedSizeBinaryBuilder::with_capacity(capacity, TRACE_ID_SIZE),
             span_id_builder: FixedSizeBinaryBuilder::with_capacity(capacity, SPAN_ID_SIZE),
             trace_flags_builder: UInt32Builder::with_capacity(capacity),
@@ -173,24 +173,26 @@ impl ArrowConverter {
         let batch = RecordBatch::try_new(
             schema,
             vec![
+                // Common fields (IDs 1-12)
                 Arc::new(self.timestamp_builder.finish()),
-                Arc::new(self.timestamp_time_builder.finish()),
-                Arc::new(self.observed_timestamp_builder.finish()),
                 Arc::new(self.trace_id_builder.finish()),
                 Arc::new(self.span_id_builder.finish()),
-                Arc::new(self.trace_flags_builder.finish()),
-                Arc::new(self.severity_text_builder.finish()),
-                Arc::new(self.severity_number_builder.finish()),
-                Arc::new(self.body_builder.finish()),
                 Arc::new(self.service_name_builder.finish()),
                 Arc::new(self.service_namespace_builder.finish()),
                 Arc::new(self.service_instance_id_builder.finish()),
+                Arc::new(self.resource_attributes_builder.finish()),
                 Arc::new(self.resource_schema_url_builder.finish()),
                 Arc::new(self.scope_name_builder.finish()),
                 Arc::new(self.scope_version_builder.finish()),
                 Arc::new(self.scope_attributes_builder.finish()),
                 Arc::new(self.scope_schema_url_builder.finish()),
-                Arc::new(self.resource_attributes_builder.finish()),
+                // Logs-specific fields (IDs 21+)
+                Arc::new(self.timestamp_time_builder.finish()),
+                Arc::new(self.observed_timestamp_builder.finish()),
+                Arc::new(self.trace_flags_builder.finish()),
+                Arc::new(self.severity_text_builder.finish()),
+                Arc::new(self.severity_number_builder.finish()),
+                Arc::new(self.body_builder.finish()),
                 Arc::new(self.log_attributes_builder.finish()),
             ],
         )?;

@@ -452,15 +452,18 @@ impl GaugeBuilder {
         let batch = RecordBatch::try_new(
             schema,
             vec![
+                // Common fields (IDs 1, 4, 7, 9, 10)
                 Arc::new(self.base.timestamp_builder.finish()),
                 Arc::new(self.base.service_name_builder.finish()),
-                Arc::new(self.base.metric_name_builder.finish()),
-                Arc::new(self.base.metric_description_builder.finish()),
-                Arc::new(self.base.metric_unit_builder.finish()),
                 Arc::new(self.base.resource_attributes_builder.finish()),
                 Arc::new(self.base.scope_name_builder.finish()),
                 Arc::new(self.base.scope_version_builder.finish()),
+                // Metrics base fields (IDs 101-104)
+                Arc::new(self.base.metric_name_builder.finish()),
+                Arc::new(self.base.metric_description_builder.finish()),
+                Arc::new(self.base.metric_unit_builder.finish()),
                 Arc::new(self.base.attributes_builder.finish()),
+                // Gauge-specific fields (IDs 110+)
                 Arc::new(self.value_builder.finish()),
             ],
         )?;
@@ -521,15 +524,18 @@ impl SumBuilder {
         let batch = RecordBatch::try_new(
             schema,
             vec![
+                // Common fields (IDs 1, 4, 7, 9, 10)
                 Arc::new(self.base.timestamp_builder.finish()),
                 Arc::new(self.base.service_name_builder.finish()),
-                Arc::new(self.base.metric_name_builder.finish()),
-                Arc::new(self.base.metric_description_builder.finish()),
-                Arc::new(self.base.metric_unit_builder.finish()),
                 Arc::new(self.base.resource_attributes_builder.finish()),
                 Arc::new(self.base.scope_name_builder.finish()),
                 Arc::new(self.base.scope_version_builder.finish()),
+                // Metrics base fields (IDs 101-104)
+                Arc::new(self.base.metric_name_builder.finish()),
+                Arc::new(self.base.metric_description_builder.finish()),
+                Arc::new(self.base.metric_unit_builder.finish()),
                 Arc::new(self.base.attributes_builder.finish()),
+                // Sum-specific fields (IDs 110+)
                 Arc::new(self.value_builder.finish()),
                 Arc::new(self.aggregation_temporality_builder.finish()),
                 Arc::new(self.is_monotonic_builder.finish()),
@@ -629,15 +635,18 @@ impl HistogramBuilder {
         let batch = RecordBatch::try_new(
             schema,
             vec![
+                // Common fields (IDs 1, 4, 7, 9, 10)
                 Arc::new(self.base.timestamp_builder.finish()),
                 Arc::new(self.base.service_name_builder.finish()),
-                Arc::new(self.base.metric_name_builder.finish()),
-                Arc::new(self.base.metric_description_builder.finish()),
-                Arc::new(self.base.metric_unit_builder.finish()),
                 Arc::new(self.base.resource_attributes_builder.finish()),
                 Arc::new(self.base.scope_name_builder.finish()),
                 Arc::new(self.base.scope_version_builder.finish()),
+                // Metrics base fields (IDs 101-104)
+                Arc::new(self.base.metric_name_builder.finish()),
+                Arc::new(self.base.metric_description_builder.finish()),
+                Arc::new(self.base.metric_unit_builder.finish()),
                 Arc::new(self.base.attributes_builder.finish()),
+                // Histogram-specific fields (IDs 110+)
                 Arc::new(self.count_builder.finish()),
                 Arc::new(self.sum_builder.finish()),
                 Arc::new(bucket_counts),
@@ -763,15 +772,18 @@ impl ExponentialHistogramBuilder {
         let batch = RecordBatch::try_new(
             schema,
             vec![
+                // Common fields (IDs 1, 4, 7, 9, 10)
                 Arc::new(self.base.timestamp_builder.finish()),
                 Arc::new(self.base.service_name_builder.finish()),
-                Arc::new(self.base.metric_name_builder.finish()),
-                Arc::new(self.base.metric_description_builder.finish()),
-                Arc::new(self.base.metric_unit_builder.finish()),
                 Arc::new(self.base.resource_attributes_builder.finish()),
                 Arc::new(self.base.scope_name_builder.finish()),
                 Arc::new(self.base.scope_version_builder.finish()),
+                // Metrics base fields (IDs 101-104)
+                Arc::new(self.base.metric_name_builder.finish()),
+                Arc::new(self.base.metric_description_builder.finish()),
+                Arc::new(self.base.metric_unit_builder.finish()),
                 Arc::new(self.base.attributes_builder.finish()),
+                // ExponentialHistogram-specific fields (IDs 110+)
                 Arc::new(self.count_builder.finish()),
                 Arc::new(self.sum_builder.finish()),
                 Arc::new(self.scale_builder.finish()),
@@ -860,15 +872,18 @@ impl SummaryBuilder {
         let batch = RecordBatch::try_new(
             schema,
             vec![
+                // Common fields (IDs 1, 4, 7, 9, 10)
                 Arc::new(self.base.timestamp_builder.finish()),
                 Arc::new(self.base.service_name_builder.finish()),
-                Arc::new(self.base.metric_name_builder.finish()),
-                Arc::new(self.base.metric_description_builder.finish()),
-                Arc::new(self.base.metric_unit_builder.finish()),
                 Arc::new(self.base.resource_attributes_builder.finish()),
                 Arc::new(self.base.scope_name_builder.finish()),
                 Arc::new(self.base.scope_version_builder.finish()),
+                // Metrics base fields (IDs 101-104)
+                Arc::new(self.base.metric_name_builder.finish()),
+                Arc::new(self.base.metric_description_builder.finish()),
+                Arc::new(self.base.metric_unit_builder.finish()),
                 Arc::new(self.base.attributes_builder.finish()),
+                // Summary-specific fields (IDs 110+)
                 Arc::new(self.count_builder.finish()),
                 Arc::new(self.sum_builder.finish()),
                 Arc::new(quantile_values),
