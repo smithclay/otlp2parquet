@@ -2517,6 +2517,7 @@ name = "otlp2parquet-lambda"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrow",
  "aws_lambda_events",
  "base64 0.22.1",
  "lambda_runtime",
@@ -2545,6 +2546,7 @@ name = "otlp2parquet-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrow",
  "axum",
  "metrics",
  "otlp2parquet-batch",
@@ -2552,6 +2554,7 @@ dependencies = [
  "otlp2parquet-core",
  "otlp2parquet-iceberg",
  "otlp2parquet-storage",
+ "prost",
  "serde_json",
  "tokio",
  "tower 0.4.13",

@@ -3,14 +3,18 @@
 // Serializes Arrow RecordBatches, computes a Blake3 content hash while
 // encoding, and uploads the resulting Parquet bytes to OpenDAL storage.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use arrow::array::RecordBatch;
 use arrow::datatypes::SchemaRef;
 use chrono::{DateTime, Utc};
 use opendal::Operator;
-use parquet::file::metadata::ParquetMetaData;
+use parquet::basic::ColumnOrder;
+use parquet::file::metadata::{
+    FileMetaData as PhysicalFileMetaData, ParquetMetaData, RowGroupMetaData,
+};
 use parquet::file::properties::{EnabledStatistics, WriterProperties};
-use parquet::format::KeyValue;
+use parquet::format::{ColumnOrder as TColumnOrder, FileMetaData as ThriftFileMetaData, KeyValue};
+use parquet::schema::types::{self, SchemaDescriptor};
 use std::io::{self, Write};
 use std::sync::{Arc, OnceLock};
 
@@ -223,26 +227,23 @@ impl ParquetWriter {
         let mut sink = HashingBuffer::new();
         let props = writer_properties().clone();
         let schema: SchemaRef = batches[0].schema();
-        {
+        let file_metadata = {
             let mut writer =
                 parquet::arrow::ArrowWriter::try_new(&mut sink, schema.clone(), Some(props))?;
 
             for batch in batches {
                 writer.write(batch)?;
             }
-            writer.close()?;
-        }
+            writer.close()?
+        };
 
         let (buffer, hash) = sink.finish();
         let file_size = buffer.len() as u64;
 
-        // Parse the parquet bytes to extract full metadata
-        use bytes::Bytes;
-        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-        let bytes = Bytes::from(buffer.clone());
-        let reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
-            .context("failed to parse parquet metadata from bytes")?;
-        let parquet_metadata = Arc::new(reader.metadata().as_ref().clone());
+        let parquet_metadata = Arc::new(
+            build_parquet_metadata(file_metadata)
+                .context("failed to reconstruct parquet metadata from writer")?,
+        );
         let row_count = parquet_metadata.file_metadata().num_rows();
         let completed_at = Utc::now();
 
@@ -270,6 +271,61 @@ impl ParquetWriter {
     }
 }
 
+fn build_parquet_metadata(file_metadata: ThriftFileMetaData) -> Result<ParquetMetaData> {
+    let schema = types::from_thrift(&file_metadata.schema)
+        .map_err(|e| anyhow!("failed to decode parquet schema: {}", e))?;
+    let schema_descr = Arc::new(SchemaDescriptor::new(schema));
+
+    let column_orders = parse_column_orders(file_metadata.column_orders, &schema_descr)?;
+
+    let mut row_groups = Vec::with_capacity(file_metadata.row_groups.len());
+    for row_group in file_metadata.row_groups {
+        let metadata = RowGroupMetaData::from_thrift(schema_descr.clone(), row_group)
+            .map_err(|e| anyhow!("failed to decode row group metadata: {}", e))?;
+        row_groups.push(metadata);
+    }
+
+    let physical_metadata = PhysicalFileMetaData::new(
+        file_metadata.version,
+        file_metadata.num_rows,
+        file_metadata.created_by,
+        file_metadata.key_value_metadata,
+        schema_descr,
+        column_orders,
+    );
+
+    Ok(ParquetMetaData::new(physical_metadata, row_groups))
+}
+
+fn parse_column_orders(
+    orders: Option<Vec<TColumnOrder>>,
+    schema_descr: &SchemaDescriptor,
+) -> Result<Option<Vec<ColumnOrder>>> {
+    match orders {
+        Some(order_defs) => {
+            if order_defs.len() != schema_descr.num_columns() {
+                return Err(anyhow!("column order length mismatch"));
+            }
+
+            let mut parsed = Vec::with_capacity(order_defs.len());
+            for (idx, column) in schema_descr.columns().iter().enumerate() {
+                match &order_defs[idx] {
+                    TColumnOrder::TYPEORDER(_) => {
+                        let sort_order = ColumnOrder::get_sort_order(
+                            column.logical_type(),
+                            column.converted_type(),
+                            column.physical_type(),
+                        );
+                        parsed.push(ColumnOrder::TYPE_DEFINED_ORDER(sort_order));
+                    }
+                }
+            }
+            Ok(Some(parsed))
+        }
+        None => Ok(None),
+    }
+}
+
 /// Synchronous helper for benchmarking: write batches to in-memory buffer
 /// without async/storage overhead
 pub fn write_batches_to_parquet<W: Write + Send>(
@@ -287,7 +343,7 @@ pub fn write_batches_to_parquet<W: Write + Send>(
     for batch in batches {
         arrow_writer.write(&batch)?;
     }
-    arrow_writer.close()?;
+    let _ = arrow_writer.close()?;
     Ok(())
 }
 
@@ -306,7 +362,7 @@ pub fn write_batches_with_hash(batches: Vec<RecordBatch>) -> Result<(Vec<u8>, Bl
         for batch in batches {
             writer.write(&batch)?;
         }
-        writer.close()?;
+        let _ = writer.close()?;
     }
 
     Ok(sink.finish())

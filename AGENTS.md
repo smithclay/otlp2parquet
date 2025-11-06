@@ -2,7 +2,7 @@
 **Universal OTel Logs, Metrics & Traces Ingestion Pipeline (Rust)**
 
 ## Mission
-Build a Rust binary that ingests OpenTelemetry logs, metrics, and traces via OTLP HTTP (protobuf/JSON/JSONL), converts to Arrow RecordBatch, writes Parquet files to object storage. Must compile to <3MB compressed WASM for Cloudflare Workers free plan AND native binary for AWS Lambda.
+Build a Rust workspace that ingests OpenTelemetry logs, metrics, and traces via OTLP HTTP (protobuf/JSON/JSONL), converts to Arrow RecordBatch, writes Parquet files to object storage with optional Apache Iceberg catalog integration. Must compile to <3MB compressed WASM for Cloudflare Workers free plan AND native binary for AWS Lambda.
 
 ---
 
@@ -32,6 +32,20 @@ Build a Rust binary that ingests OpenTelemetry logs, metrics, and traces via OTL
    - CF Workers: R2 only (WASM constraint)
    - **Philosophy**: Leverage mature external abstractions vs NIH
 
+5. **Configuration: TOML + Environment Variables**
+   - `config.toml` for structured config (server, batch, storage, iceberg)
+   - Environment variables with `OTLP2PARQUET_` prefix override TOML
+   - Platform-specific defaults auto-detected at runtime
+
+6. **Workspace Architecture**
+   - `otlp2parquet-core` - Schema definitions and core types
+   - `otlp2parquet-batch` - In-memory batching logic
+   - `otlp2parquet-config` - Configuration parsing and defaults
+   - `otlp2parquet-storage` - OpenDAL storage abstraction
+   - `otlp2parquet-iceberg` - Iceberg REST catalog integration
+   - `otlp2parquet-proto` - OTLP protobuf definitions
+   - Platform-specific: `cloudflare`, `lambda`, `server`
+
 ## Supported Signals
 
 ### ✅ Logs
@@ -56,6 +70,15 @@ Build a Rust binary that ingests OpenTelemetry logs, metrics, and traces via OTL
 - Partition: `traces/{service}/year={year}/month={month}/day={day}/hour={hour}/file.parquet`
 - Includes spans with events, links, attributes, and status
 
+## Apache Iceberg Integration
+
+**Optional layer on top of Parquet files** - Provides ACID transactions, schema evolution, and faster queries
+- **Platforms**: Server and Lambda only (not WASM/Cloudflare)
+- **Protocol**: Iceberg REST Catalog API (AWS S3 Tables, Glue, Tabular, Polaris)
+- **Configuration**: Via `config.toml` `[iceberg]` section or `OTLP2PARQUET_ICEBERG_*` env vars
+- **Behavior**: Two-step commit (write Parquet → commit to catalog)
+- **Resilience**: Catalog failures log warnings but don't block ingestion
+- **Tables**: One per schema (logs, traces, 5 metric types)
 
 ## Notes for AI Agent
 
@@ -93,6 +116,8 @@ Build a Rust binary that ingests OpenTelemetry logs, metrics, and traces via OTL
 - **Prefer `&str` over `String`** where possible
 - **Use `Arc` for shared data** (schema, config)
 - **Profile before optimizing** - `make wasm-profile` to measure
+- **HTTP client**: `reqwest` used for both WASM and native (unified)
+- **Iceberg REST**: Thin custom client to minimize dependencies and binary size
 
 ### Build & Deployment
 - **Document tradeoffs** made for size

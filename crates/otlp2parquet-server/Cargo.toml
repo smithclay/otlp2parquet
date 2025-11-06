@@ -11,6 +11,8 @@ otlp2parquet-batch = { path = "../otlp2parquet-batch" }
 otlp2parquet-config = { path = "../otlp2parquet-config" }
 otlp2parquet-storage = { path = "../otlp2parquet-storage", features = ["services-fs", "services-s3"] }
 otlp2parquet-iceberg = { path = "../otlp2parquet-iceberg" }
+arrow = { workspace = true }
+prost = { workspace = true }
 
 # HTTP server
 axum = { version = "0.7", default-features = false, features = ["tokio", "http1", "http2", "json"] }

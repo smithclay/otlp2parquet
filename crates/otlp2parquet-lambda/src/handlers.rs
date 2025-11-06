@@ -3,6 +3,7 @@
 // Handles the core logic of processing OTLP requests and generating responses
 
 use anyhow::Result;
+use arrow::array::{Array, RecordBatch, StringArray, TimestampNanosecondArray};
 use base64::Engine;
 use otlp2parquet_core::otlp;
 use serde_json::json;
@@ -103,20 +104,25 @@ async fn process_logs(
         }
     };
 
-    // Convert directly to Arrow (no batching)
-    let batch = match state.passthrough.ingest(&request) {
-        Ok(batch) => batch,
-        Err(err) => {
-            eprintln!("Failed to convert OTLP to Arrow: {}", err);
-            return HttpResponseData::json(
-                500,
-                json!({ "error": "internal encoding failure" }).to_string(),
-            );
-        }
-    };
+    let per_service_requests = otlp::logs::split_request_by_service(request);
+    let mut uploads = Vec::new();
+    let mut total_records = 0usize;
 
-    let metadata = batch.metadata.clone();
-    let uploads = vec![batch];
+    for subset in per_service_requests {
+        match state.passthrough.ingest(&subset) {
+            Ok(batch) => {
+                total_records += batch.metadata.record_count;
+                uploads.push(batch);
+            }
+            Err(err) => {
+                eprintln!("Failed to convert OTLP to Arrow: {}", err);
+                return HttpResponseData::json(
+                    500,
+                    json!({ "error": "internal encoding failure" }).to_string(),
+                );
+            }
+        }
+    }
 
     let mut uploaded_paths = Vec::new();
     for batch in uploads {
@@ -158,7 +164,7 @@ async fn process_logs(
         200,
         json!({
             "status": "ok",
-            "records_processed": metadata.record_count,
+            "records_processed": total_records,
             "flush_count": uploaded_paths.len(),
             "partitions": uploaded_paths,
         })
@@ -187,20 +193,73 @@ async fn process_metrics(
         }
     };
 
-    // Convert to Arrow (returns multiple batches, one per metric type)
+    let per_service_requests = otlp::metrics::split_request_by_service(request);
     let converter = otlp::metrics::ArrowConverter::new();
-    let (batches_by_type, metadata) = match converter.convert(request) {
-        Ok(result) => result,
-        Err(err) => {
-            eprintln!("Failed to convert OTLP metrics to Arrow: {}", err);
-            return HttpResponseData::json(
-                500,
-                json!({ "error": "internal encoding failure" }).to_string(),
-            );
-        }
-    };
+    let mut aggregated = otlp::metrics::MetricsMetadata::default();
+    let mut uploaded_paths = Vec::new();
 
-    if batches_by_type.is_empty() {
+    for subset in per_service_requests {
+        let (batches_by_type, subset_metadata) = match converter.convert(subset) {
+            Ok(result) => result,
+            Err(err) => {
+                eprintln!("Failed to convert OTLP metrics to Arrow: {}", err);
+                return HttpResponseData::json(
+                    500,
+                    json!({ "error": "internal encoding failure" }).to_string(),
+                );
+            }
+        };
+
+        aggregated.resource_metrics_count += subset_metadata.resource_metrics_count;
+        aggregated.scope_metrics_count += subset_metadata.scope_metrics_count;
+        aggregated.gauge_count += subset_metadata.gauge_count;
+        aggregated.sum_count += subset_metadata.sum_count;
+        aggregated.histogram_count += subset_metadata.histogram_count;
+        aggregated.exponential_histogram_count += subset_metadata.exponential_histogram_count;
+        aggregated.summary_count += subset_metadata.summary_count;
+
+        for (metric_type, batch) in batches_by_type {
+            let service_name = extract_service_name(&batch);
+            let timestamp_nanos = extract_first_timestamp(&batch);
+
+            match state
+                .parquet_writer
+                .write_batches_with_signal(
+                    &[batch],
+                    &service_name,
+                    timestamp_nanos,
+                    "metrics",
+                    Some(&metric_type),
+                )
+                .await
+            {
+                Ok(write_result) => {
+                    uploaded_paths.push(write_result.path.clone());
+
+                    if let Some(committer) = &state.iceberg_committer {
+                        if let Err(e) = committer
+                            .commit_with_signal("metrics", Some(&metric_type), &[write_result])
+                            .await
+                        {
+                            eprintln!(
+                                "Warning: Failed to commit {} metrics to Iceberg catalog: {}",
+                                metric_type, e
+                            );
+                        }
+                    }
+                }
+                Err(err) => {
+                    eprintln!("Failed to write {} metrics Parquet: {}", metric_type, err);
+                    return HttpResponseData::json(
+                        500,
+                        json!({ "error": "internal storage failure" }).to_string(),
+                    );
+                }
+            }
+        }
+    }
+
+    if uploaded_paths.is_empty() {
         return HttpResponseData::json(
             200,
             json!({
@@ -211,71 +270,67 @@ async fn process_metrics(
         );
     }
 
-    // Count total data points across all metric types
-    let total_data_points = metadata.gauge_count
-        + metadata.sum_count
-        + metadata.histogram_count
-        + metadata.exponential_histogram_count
-        + metadata.summary_count;
-
-    // Write each metric type batch to its own Parquet file
-    let mut uploaded_paths = Vec::new();
-    for (metric_type, batch) in batches_by_type {
-        let service_name = "default"; // TODO: Extract from metadata
-        let timestamp_nanos = 0; // TODO: Extract first timestamp from batch
-
-        match state
-            .parquet_writer
-            .write_batches_with_signal(
-                &[batch],
-                service_name,
-                timestamp_nanos,
-                "metrics",
-                Some(&metric_type),
-            )
-            .await
-        {
-            Ok(write_result) => {
-                uploaded_paths.push(write_result.path.clone());
-
-                // Commit to Iceberg catalog if configured (warn-and-succeed on error)
-                if let Some(committer) = &state.iceberg_committer {
-                    if let Err(e) = committer
-                        .commit_with_signal("metrics", Some(&metric_type), &[write_result])
-                        .await
-                    {
-                        eprintln!(
-                            "Warning: Failed to commit {} metrics to Iceberg catalog: {}",
-                            metric_type, e
-                        );
-                        // Continue - files are in S3 even if catalog commit failed
-                    }
-                }
-            }
-            Err(err) => {
-                eprintln!("Failed to write {} metrics Parquet: {}", metric_type, err);
-                return HttpResponseData::json(
-                    500,
-                    json!({ "error": "internal storage failure" }).to_string(),
-                );
-            }
-        }
-    }
+    let total_data_points = aggregated.gauge_count
+        + aggregated.sum_count
+        + aggregated.histogram_count
+        + aggregated.exponential_histogram_count
+        + aggregated.summary_count;
 
     HttpResponseData::json(
         200,
         json!({
             "status": "ok",
             "data_points_processed": total_data_points,
-            "gauge_count": metadata.gauge_count,
-            "sum_count": metadata.sum_count,
-            "histogram_count": metadata.histogram_count,
-            "exponential_histogram_count": metadata.exponential_histogram_count,
-            "summary_count": metadata.summary_count,
+            "gauge_count": aggregated.gauge_count,
+            "sum_count": aggregated.sum_count,
+            "histogram_count": aggregated.histogram_count,
+            "exponential_histogram_count": aggregated.exponential_histogram_count,
+            "summary_count": aggregated.summary_count,
             "partitions": uploaded_paths,
         })
         .to_string(),
     )
+}
+
+fn extract_service_name(batch: &RecordBatch) -> String {
+    let fallback = otlp::common::UNKNOWN_SERVICE_NAME;
+
+    if let Some(array) = batch.column(1).as_any().downcast_ref::<StringArray>() {
+        for idx in 0..array.len() {
+            if array.is_valid(idx) {
+                let value = array.value(idx);
+                if !value.is_empty() {
+                    return value.to_string();
+                }
+            }
+        }
+    }
+
+    fallback.to_string()
+}
+
+fn extract_first_timestamp(batch: &RecordBatch) -> i64 {
+    if let Some(array) = batch
+        .column(0)
+        .as_any()
+        .downcast_ref::<TimestampNanosecondArray>()
+    {
+        let mut min_value = i64::MAX;
+        for idx in 0..array.len() {
+            if array.is_valid(idx) {
+                let value = array.value(idx);
+                if value < min_value {
+                    min_value = value;
+                }
+            }
+        }
+
+        if min_value != i64::MAX {
+            return min_value;
+        }
+    }
+
+    0
 }
 
 /// Handle GET requests - health checks
