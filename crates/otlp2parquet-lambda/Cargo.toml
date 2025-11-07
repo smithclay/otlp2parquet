@@ -10,7 +10,6 @@ otlp2parquet-core = { path = "../otlp2parquet-core" }
 otlp2parquet-batch = { path = "../otlp2parquet-batch" }
 otlp2parquet-config = { path = "../otlp2parquet-config" }
 otlp2parquet-storage = { path = "../otlp2parquet-storage", features = ["services-s3"] }
-otlp2parquet-iceberg = { path = "../otlp2parquet-iceberg" }
 arrow = { workspace = true }
 
 # AWS Lambda runtime (provides tokio runtime)
@@ -23,6 +22,9 @@ base64 = "0.22"
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+urlencoding = "2.1"
 
 [[bin]]
 name = "bootstrap"

@@ -2,7 +2,7 @@
 //!
 //! Based on: <https://iceberg.apache.org/docs/latest/rest-api/>
 
-use crate::types::DataFile;
+use crate::iceberg::types::DataFile;
 use serde::{Deserialize, Serialize};
 
 /// Request to commit a transaction to an Iceberg table
@@ -49,7 +49,7 @@ pub enum SnapshotRefType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{DataContentType, DataFile, DataFileFormat};
+    use crate::iceberg::types::{DataContentType, DataFile, DataFileFormat};
     use std::collections::HashMap;
 
     #[test]

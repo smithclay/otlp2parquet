@@ -15,6 +15,8 @@ set -euo pipefail
 #   --delete                  Delete the stack and cleanup resources
 #   --help                    Show this help message
 
+# For local binary, to rebuild zip: cd crates/otlp2parquet-lambda && cargo lambda build --release --arm64
+
 # Default configuration
 ARCH="arm64"
 REGION="${AWS_REGION:-us-west-2}"
@@ -221,8 +223,9 @@ else
   info "Deployment bucket already exists."
 fi
 
-# Upload Lambda zip to S3
-S3_KEY="lambda/${ASSET_NAME}"
+# Upload Lambda zip to S3 with timestamp to force CloudFormation updates
+TIMESTAMP=$(date +%s)
+S3_KEY="lambda/${TIMESTAMP}/${ASSET_NAME}"
 info "Uploading Lambda binary to s3://${DEPLOYMENT_BUCKET}/${S3_KEY}..."
 
 aws s3 cp "$LAMBDA_ZIP" "s3://${DEPLOYMENT_BUCKET}/${S3_KEY}" --region "$REGION"

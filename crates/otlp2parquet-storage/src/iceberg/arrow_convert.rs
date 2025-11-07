@@ -2,7 +2,7 @@
 //!
 //! Converts Arrow schemas to our minimal Iceberg schema types for REST API compatibility.
 
-use crate::types::{NestedField, Schema, Type};
+use super::types::{NestedField, Schema, Type};
 use anyhow::{anyhow, Context, Result};
 use arrow::datatypes::{DataType, Field, Schema as ArrowSchema, TimeUnit};
 

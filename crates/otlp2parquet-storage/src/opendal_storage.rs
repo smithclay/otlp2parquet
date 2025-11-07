@@ -17,6 +17,11 @@ pub struct OpenDalStorage {
 }
 
 impl OpenDalStorage {
+    /// Create storage from an existing OpenDAL operator
+    pub fn from_operator(operator: Operator) -> Self {
+        Self { operator }
+    }
+
     /// Create storage for S3 (including R2 with custom endpoint)
     #[cfg(feature = "services-s3")]
     pub fn new_s3(

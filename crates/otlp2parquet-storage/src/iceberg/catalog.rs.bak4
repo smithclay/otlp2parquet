@@ -2,9 +2,9 @@
 //!
 //! Minimal implementation of Iceberg REST API for committing data files.
 
-use crate::http::{HttpClient, HttpResponse};
-use crate::protocol::{CommitTransactionRequest, ErrorResponse, TableUpdate};
-use crate::types::{DataFile, LoadTableResponse, TableMetadata};
+use super::http::{HttpClient, HttpResponse};
+use super::protocol::{CommitTransactionRequest, ErrorResponse, TableUpdate};
+use super::types::{DataFile, LoadTableResponse, TableMetadata};
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
 use tracing::{debug, info, instrument, warn};
@@ -75,9 +75,9 @@ impl<T: HttpClient> IcebergCatalog<T> {
     /// Fetch catalog configuration to get the prefix
     ///
     /// Calls: GET /v1/config
-    #[instrument(skip(self))]
-    async fn fetch_config(&self) -> Result<crate::types::CatalogConfig> {
-        use crate::types::CatalogConfig;
+    #[cfg_attr(not(target_arch = "wasm32"), instrument(skip(self)))]
+    async fn fetch_config(&self) -> Result<super::types::CatalogConfig> {
+        use super::types::CatalogConfig;
 
         let url = format!("{}/v1/config", self.base_url);
         debug!("Fetching catalog config from: {}", url);
@@ -139,7 +139,7 @@ impl<T: HttpClient> IcebergCatalog<T> {
     /// Create a namespace in the catalog
     ///
     /// Calls: POST /v1/{prefix}/namespaces
-    #[instrument(skip(self))]
+    #[cfg_attr(not(target_arch = "wasm32"), instrument(skip(self)))]
     pub async fn create_namespace(&self) -> Result<()> {
         let url = if self.prefix.is_empty() {
             format!("{}/v1/namespaces", self.base_url)
@@ -182,7 +182,7 @@ impl<T: HttpClient> IcebergCatalog<T> {
     /// Create a table in the catalog
     ///
     /// Calls: POST /v1/{prefix}/namespaces/{namespace}/tables
-    #[instrument(skip(self, schema), fields(table = %table_name))]
+    #[cfg_attr(not(target_arch = "wasm32"), instrument(skip(self, schema), fields(table = %table_name))]
     pub async fn create_table(
         &self,
         table_name: &str,
@@ -208,11 +208,16 @@ impl<T: HttpClient> IcebergCatalog<T> {
         // Convert Arrow schema to Iceberg schema
         let iceberg_schema = arrow_to_iceberg_schema(&schema)?;
 
+        // Build CreateTable request following Iceberg REST spec
+        // Reference: https://github.com/apache/iceberg/blob/main/open-api/rest-catalog-open-api.yaml
+        // For S3 Tables: only include required fields
         let request = serde_json::json!({
             "name": table_name,
             "schema": iceberg_schema,
             "stage-create": false
         });
+
+        info!("CreateTable request body: {}", serde_json::to_string_pretty(&request).unwrap_or_else(|_| "invalid json".to_string()));
 
         let body =
             serde_json::to_vec(&request).context("Failed to serialize create table request")?;
@@ -230,6 +235,17 @@ impl<T: HttpClient> IcebergCatalog<T> {
             .await
             .context("Failed to create table")?;
 
+        // Log response details for debugging
+        info!("CreateTable response status: {}", response.status);
+        if !response.is_success() && response.status != 409 {
+            let response_body = response.body_string().unwrap_or_else(|_| "<binary>".to_string());
+            warn!(
+                "CreateTable failed with status {}: {}",
+                response.status,
+                response_body
+            );
+        }
+
         // 200 = created, 409 = already exists (both are OK)
         if response.is_success() || response.status == 409 {
             info!("Table '{}' ready", table_name);
@@ -242,7 +258,7 @@ impl<T: HttpClient> IcebergCatalog<T> {
     /// Load table metadata from the catalog
     ///
     /// Calls: GET /v1/{prefix}/namespaces/{namespace}/tables/{table}
-    #[instrument(skip(self), fields(table = %table_name))]
+    #[cfg_attr(not(target_arch = "wasm32"), instrument(skip(self), fields(table = %table_name))]
     async fn load_table(&self, table_name: &str) -> Result<TableMetadata> {
         let url = if self.prefix.is_empty() {
             format!(
@@ -286,8 +302,8 @@ impl<T: HttpClient> IcebergCatalog<T> {
     /// Commit a transaction to the catalog
     ///
     /// Calls: POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/transactions/commit
-    #[instrument(skip(self, data_files), fields(table = %table_name, num_files = data_files.len()))]
-    async fn commit_transaction(&self, table_name: &str, data_files: Vec<DataFile>) -> Result<()> {
+    #[cfg_attr(not(target_arch = "wasm32"), instrument(skip(self, data_files), fields(table = %table_name, num_files = data_files.len()))]
+    pub async fn commit_transaction(&self, table_name: &str, data_files: Vec<DataFile>) -> Result<()> {
         let url = if self.prefix.is_empty() {
             format!(
                 "{}/v1/namespaces/{}/tables/{}/transactions/commit",
@@ -343,7 +359,7 @@ impl<T: HttpClient> IcebergCatalog<T> {
     /// - `signal_type`: "logs", "traces", or "metrics"
     /// - `metric_type`: For metrics only - "gauge", "sum", "histogram", etc.
     /// - `data_files`: Data files to commit
-    #[instrument(skip(self, data_files), fields(num_files = data_files.len()))]
+    #[cfg_attr(not(target_arch = "wasm32"), instrument(skip(self, data_files), fields(num_files = data_files.len()))]
     pub async fn commit_with_signal(
         &self,
         signal_type: &str,
@@ -433,16 +449,21 @@ impl<T: HttpClient> IcebergCatalog<T> {
 
 /// Convert Arrow schema to Iceberg schema JSON
 ///
-/// Iceberg schema format:
+/// Iceberg schema format (REST API):
 /// ```json
 /// {
 ///   "type": "struct",
+///   "schema-id": 0,
 ///   "fields": [
 ///     {"id": 1, "name": "field_name", "required": true, "type": "string"}
 ///   ]
 /// }
 /// ```
-fn arrow_to_iceberg_schema(schema: &arrow::datatypes::Schema) -> Result<serde_json::Value> {
+pub(crate) fn arrow_to_iceberg_schema(schema: &arrow::datatypes::Schema) -> Result<serde_json::Value> {
+    // Global ID allocator to ensure field ID uniqueness across entire schema
+    // Iceberg requires all field IDs to be unique within a schema
+    let next_id = std::cell::Cell::new(1000);
+
     let fields: Result<Vec<_>> = schema
         .fields()
         .iter()
@@ -459,7 +480,7 @@ fn arrow_to_iceberg_schema(schema: &arrow::datatypes::Schema) -> Result<serde_js
                     )
                 })?;
 
-            let iceberg_type = arrow_type_to_iceberg(field.data_type())?;
+            let iceberg_type = arrow_type_to_iceberg(field.data_type(), &next_id)?;
 
             Ok(serde_json::json!({
                 "id": field_id,
@@ -472,12 +493,18 @@ fn arrow_to_iceberg_schema(schema: &arrow::datatypes::Schema) -> Result<serde_js
 
     Ok(serde_json::json!({
         "type": "struct",
+        "schema-id": 0,
         "fields": fields?
     }))
 }
 
 /// Convert Arrow DataType to Iceberg type string/object
-fn arrow_type_to_iceberg(data_type: &arrow::datatypes::DataType) -> Result<serde_json::Value> {
+///
+/// Takes a Cell-based ID allocator to ensure unique field IDs across nested structures
+fn arrow_type_to_iceberg(
+    data_type: &arrow::datatypes::DataType,
+    next_id: &std::cell::Cell<i32>,
+) -> Result<serde_json::Value> {
     use arrow::datatypes::DataType;
     use arrow::datatypes::TimeUnit;
 
@@ -511,16 +538,19 @@ fn arrow_type_to_iceberg(data_type: &arrow::datatypes::DataType) -> Result<serde
         DataType::Struct(fields) => {
             let iceberg_fields: Result<Vec<_>> = fields
                 .iter()
-                .enumerate()
-                .map(|(idx, field)| {
-                    // For nested struct fields, use index as field_id if not present
+                .map(|field| {
+                    // For nested struct fields, allocate unique IDs
                     let field_id: i32 = field
                         .metadata()
                         .get("PARQUET:field_id")
                         .and_then(|s| s.parse().ok())
-                        .unwrap_or((1000 + idx) as i32); // Start nested fields at 1000+
+                        .unwrap_or_else(|| {
+                            let id = next_id.get();
+                            next_id.set(id + 1);
+                            id
+                        });
 
-                    let iceberg_type = arrow_type_to_iceberg(field.data_type())?;
+                    let iceberg_type = arrow_type_to_iceberg(field.data_type(), next_id)?;
 
                     Ok(serde_json::json!({
                         "id": field_id,
@@ -537,18 +567,22 @@ fn arrow_type_to_iceberg(data_type: &arrow::datatypes::DataType) -> Result<serde
             }))
         }
         DataType::List(field) | DataType::LargeList(field) => {
-            // List element ID convention: use 1000 for nested element
+            // Allocate unique element ID
             let element_id = field
                 .metadata()
                 .get("PARQUET:field_id")
                 .and_then(|s| s.parse().ok())
-                .unwrap_or(1000);
+                .unwrap_or_else(|| {
+                    let id = next_id.get();
+                    next_id.set(id + 1);
+                    id
+                });
 
             Ok(serde_json::json!({
                 "type": "list",
                 "element-id": element_id,
                 "element-required": !field.is_nullable(),
-                "element": arrow_type_to_iceberg(field.data_type())?
+                "element": arrow_type_to_iceberg(field.data_type(), next_id)?
             }))
         }
         DataType::Map(field, _) => {
@@ -558,13 +592,19 @@ fn arrow_type_to_iceberg(data_type: &arrow::datatypes::DataType) -> Result<serde
                     let key_field = &entries[0];
                     let value_field = &entries[1];
 
+                    // Allocate unique IDs for map key and value
+                    let key_id = next_id.get();
+                    next_id.set(key_id + 1);
+                    let value_id = next_id.get();
+                    next_id.set(value_id + 1);
+
                     return Ok(serde_json::json!({
                         "type": "map",
-                        "key-id": 1001,
-                        "key": arrow_type_to_iceberg(key_field.data_type())?,
-                        "value-id": 1002,
+                        "key-id": key_id,
+                        "key": arrow_type_to_iceberg(key_field.data_type(), next_id)?,
+                        "value-id": value_id,
                         "value-required": !value_field.is_nullable(),
-                        "value": arrow_type_to_iceberg(value_field.data_type())?
+                        "value": arrow_type_to_iceberg(value_field.data_type(), next_id)?
                     }));
                 }
             }
@@ -580,8 +620,8 @@ fn arrow_type_to_iceberg(data_type: &arrow::datatypes::DataType) -> Result<serde
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::http::{HttpClient, HttpResponse};
-    use crate::types::{DataContentType, DataFileFormat};
+    use crate::iceberg::http::{HttpClient, HttpResponse};
+    use crate::iceberg::types::{DataContentType, DataFileFormat};
     use async_trait::async_trait;
     use std::sync::Mutex;
 
@@ -700,7 +740,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_table_success() {
-        use crate::types::{
+        use crate::iceberg::types::{
             LoadTableResponse, NestedField, Schema as IcebergSchema, TableMetadata, Type,
         };
 
@@ -796,7 +836,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_with_signal_full_workflow() {
-        use crate::types::{
+        use crate::iceberg::types::{
             LoadTableResponse, NestedField, Schema as IcebergSchema, TableMetadata, Type,
         };
 
@@ -903,7 +943,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_with_metrics() {
-        use crate::types::{LoadTableResponse, Schema as IcebergSchema, TableMetadata};
+        use crate::iceberg::types::{LoadTableResponse, Schema as IcebergSchema, TableMetadata};
 
         let table_metadata = TableMetadata {
             format_version: 2,

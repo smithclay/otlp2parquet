@@ -22,7 +22,7 @@ use axum::{
 };
 use otlp2parquet_batch::{BatchConfig, BatchManager, PassthroughBatcher};
 use otlp2parquet_config::RuntimeConfig;
-use otlp2parquet_iceberg::IcebergCommitter;
+use otlp2parquet_storage::iceberg::IcebergCommitter;
 use otlp2parquet_storage::opendal_storage::OpenDalStorage;
 use otlp2parquet_storage::{set_parquet_row_group_size, ParquetWriter};
 use serde_json::json;
@@ -164,7 +164,7 @@ pub async fn run() -> Result<()> {
 
     // Initialize Iceberg committer if configured
     let iceberg_committer = {
-        use otlp2parquet_iceberg::init::{initialize_committer, InitResult};
+        use otlp2parquet_storage::iceberg::init::{initialize_committer, InitResult};
         match initialize_committer().await {
             InitResult::Success {
                 committer,

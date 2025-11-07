@@ -9,8 +9,10 @@ use std::sync::Arc;
 use anyhow::Result;
 use tracing::info;
 
-use crate::{
-    catalog::NamespaceIdent, IcebergCatalog, IcebergCommitter, IcebergRestConfig, ReqwestHttpClient,
+use super::{
+    catalog::{IcebergCatalog, NamespaceIdent},
+    http::ReqwestHttpClient,
+    IcebergCommitter, IcebergRestConfig,
 };
 
 /// Result of Iceberg initialization.
@@ -48,7 +50,7 @@ pub enum InitResult {
 /// # Example
 ///
 /// ```no_run
-/// use otlp2parquet_iceberg::init::{initialize_committer, InitResult};
+/// use otlp2parquet_storage::iceberg::init::{initialize_committer, InitResult};
 ///
 /// # async fn example() {
 /// match initialize_committer().await {
@@ -128,7 +130,7 @@ pub async fn initialize_committer() -> InitResult {
 ///
 /// * `catalog` - The Iceberg catalog client
 /// * `tables` - Map of signal/metric types to table names
-async fn initialize_tables<T: crate::http::HttpClient>(
+async fn initialize_tables<T: super::http::HttpClient>(
     catalog: &IcebergCatalog<T>,
     tables: &HashMap<String, String>,
 ) -> Result<()> {

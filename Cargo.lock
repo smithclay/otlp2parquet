@@ -2745,6 +2745,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nu-ansi-term"
+version = "0.50.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
+dependencies = [
+ "windows-sys 0.60.2",
+]
+
+[[package]]
 name = "num"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2984,30 +2993,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "otlp2parquet-iceberg"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arrow",
- "async-trait",
- "aws-credential-types",
- "aws-sigv4",
- "chrono",
- "otlp2parquet-core",
- "otlp2parquet-storage",
- "parquet",
- "reqwest",
- "serde",
- "serde_bytes",
- "serde_json",
- "tokio",
- "tracing",
- "url",
- "wasm-bindgen",
- "wasm-bindgen-futures",
-]
-
-[[package]]
 name = "otlp2parquet-lambda"
 version = "0.1.0"
 dependencies = [
@@ -3019,11 +3004,13 @@ dependencies = [
  "otlp2parquet-batch",
  "otlp2parquet-config",
  "otlp2parquet-core",
- "otlp2parquet-iceberg",
  "otlp2parquet-storage",
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "urlencoding",
 ]
 
 [[package]]
@@ -3047,7 +3034,6 @@ dependencies = [
  "otlp2parquet-batch",
  "otlp2parquet-config",
  "otlp2parquet-core",
- "otlp2parquet-iceberg",
  "otlp2parquet-storage",
  "prost",
  "serde_json",
@@ -3064,6 +3050,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrow",
+ "async-trait",
+ "aws-config",
+ "aws-credential-types",
+ "aws-sigv4",
  "blake3",
  "bytes",
  "chrono",
@@ -3072,10 +3062,18 @@ dependencies = [
  "httpmock",
  "once_cell",
  "opendal",
+ "otlp2parquet-core",
  "parquet",
+ "reqwest",
  "serde",
+ "serde_bytes",
  "serde_json",
  "tokio",
+ "tracing",
+ "url",
+ "uuid",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
@@ -4654,6 +4652,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2054a14f5307d601f88daf0553e1cbf472acc4f2c51afab632431cdcd72124d5"
 dependencies = [
  "matchers",
+ "nu-ansi-term",
  "once_cell",
  "regex-automata",
  "serde",

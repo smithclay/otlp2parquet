@@ -46,6 +46,8 @@ That's it! The deployment script automatically:
 
 ## Architecture
 
+### High-Level Data Flow
+
 ```
 ┌─────────────────┐
 │  OTLP Client    │
@@ -90,27 +92,155 @@ That's it! The deployment script automatically:
          └─────────────────────┘
 ```
 
+### Integrated Write Flow (Detailed)
+
+The S3 Tables integration uses an **atomic write-and-commit** pattern that ensures ACID guarantees:
+
+```
+Lambda Handler Invocation
+    │
+    ▼
+IcebergWriter::write_and_commit()
+    │
+    ├─→ Step 1: LoadTable/CreateTable
+    │   │   (REST API call to S3 Tables catalog)
+    │   │   GET /v1/namespaces/otel/tables/logs
+    │   │   └─→ Returns: { location: "s3://bucket/warehouse/otel/logs", schema: {...} }
+    │   │   OR
+    │   │   POST /v1/namespaces/otel/tables (if table doesn't exist)
+    │   │   └─→ Creates table from Arrow schema
+    │   └─→ Result: Table metadata with warehouse location
+    │
+    ├─→ Step 2: Generate Warehouse Path
+    │   │   format: {warehouse}/data/{timestamp}-{uuid}.parquet
+    │   └─→ Example: s3://bucket/warehouse/otel/logs/data/1730934123456789-a1b2c3.parquet
+    │
+    ├─→ Step 3: Write Parquet File
+    │   │   (OpenDAL → S3 API)
+    │   │   Arrow RecordBatch → Parquet writer → S3 PutObject
+    │   └─→ Result: ParquetWriteResult { path, row_count, file_size, column_sizes }
+    │
+    ├─→ Step 4: Build DataFile Metadata
+    │   │   Convert ParquetWriteResult → Iceberg DataFile
+    │   └─→ DataFile { file_path, record_count, file_size_in_bytes, column_sizes, ... }
+    │
+    └─→ Step 5: CommitTransaction
+        │   (REST API call to S3 Tables catalog)
+        │   POST /v1/namespaces/otel/tables/logs/transactions/commit
+        │   Body: { "updates": [{ "action": "append", "data-file": {...} }] }
+        │   └─→ Result: New snapshot committed atomically
+        │
+        └─→ Success: File is now visible to queries
+            Failure: Log warning, file written but not cataloged (can be fixed later)
+```
+
+**Key Design Decisions:**
+
+1. **Single Atomic Operation**: All steps happen in one Lambda invocation, ensuring the file write and catalog commit are closely coupled.
+
+2. **On-Demand Table Creation**: Tables are created lazily when first data arrives, using Arrow schemas from `otlp2parquet-core`.
+
+3. **Warehouse Path Generation**: Files are written directly to the warehouse location (not a staging area), with deterministic naming using timestamp+UUID.
+
+4. **Warn-and-Succeed Pattern**: Catalog commit failures log warnings but don't fail the Lambda invocation, ensuring ingestion resilience.
+
+5. **OpenDAL Abstraction**: Storage layer uses OpenDAL, allowing future support for other backends (R2, GCS, Azure) without changing Iceberg logic.
+
 ### Components
 
 **S3 Table Bucket**
 - Purpose-built AWS service for Apache Iceberg tables
-- Stores both Parquet data files AND Iceberg catalog metadata
-- Provides automatic table maintenance (compaction, snapshot cleanup)
-- No separate S3 bucket or Glue Catalog needed
+- Stores both Parquet data files AND Iceberg catalog metadata in a single bucket
+- Provides automatic table maintenance (compaction, snapshot cleanup, orphan file removal)
+- No separate S3 bucket or Glue Catalog needed - everything is self-contained
+- REST catalog endpoint: `https://s3tables.{region}.amazonaws.com/iceberg`
+- Warehouse location: `arn:aws:s3tables:{region}:{account}:bucket/{name}`
 
 **Lambda Function**
 - Runtime: `provided.al2023` (custom runtime for Rust binary)
 - Default: arm64 architecture (20% better price/performance vs x86_64)
-- Memory: 512MB (adjustable based on batch size)
-- Timeout: 60 seconds
+- Binary size: ~5MB uncompressed, ~2MB compressed
+- Cold start: 100-200ms typical
+- Memory: 512MB (adjustable based on batch size, affects CPU allocation)
+- Timeout: 60 seconds (increase for larger batches)
 - Triggered manually for testing (extend with API Gateway for production)
+
+**IcebergWriter Module** (Rust code)
+- `otlp2parquet-storage/src/iceberg/writer.rs` - Main orchestration logic
+- `IcebergCatalog` - REST client for S3 Tables catalog API
+- `OpenDAL` - Storage abstraction for S3/R2/filesystem writes
+- `ParquetWriter` - Arrow to Parquet conversion with column statistics
 
 **IAM Role**
 - CloudWatch Logs permissions (function logging)
-- S3 Tables API permissions (create tables, commit transactions)
-- S3 object permissions (read/write Parquet files)
+- S3 Tables API permissions (LoadTable, CreateTable, CommitTransaction)
+- S3 object permissions (GetObject, PutObject on warehouse bucket)
 
 ## Configuration
+
+### Operating Modes
+
+The Lambda function supports **dual-mode operation**, automatically detecting which mode to use based on environment variables:
+
+#### Mode 1: S3 Tables with Iceberg (Recommended)
+
+**Detection:** Presence of `OTLP2PARQUET_ICEBERG_REST_URI` environment variable
+
+**Configuration:**
+```bash
+OTLP2PARQUET_ICEBERG_REST_URI=https://s3tables.us-west-2.amazonaws.com/iceberg
+OTLP2PARQUET_ICEBERG_WAREHOUSE=arn:aws:s3tables:us-west-2:123456789012:bucket/otlp2parquet
+OTLP2PARQUET_ICEBERG_NAMESPACE=otel
+```
+
+**Behavior:**
+- Uses `IcebergWriter::write_and_commit()` for atomic write-and-commit operations
+- Tables created on-demand from Arrow schemas when first data arrives
+- Files written directly to warehouse location (no staging)
+- Catalog commits tracked per invocation
+- Failures logged but don't block ingestion (warn-and-succeed pattern)
+
+**Benefits:**
+- ACID transactions ensure data consistency
+- Schema evolution supported (add/remove/rename columns)
+- Faster queries via catalog metadata (file pruning, column statistics)
+- Time travel queries to historical snapshots
+- Multi-engine support (DuckDB, Spark, Athena, Trino)
+
+**When to use:**
+- Production deployments requiring data consistency
+- Multi-user query scenarios with concurrent reads/writes
+- Long-term data retention with schema evolution
+- Integration with modern data lake ecosystems
+
+#### Mode 2: Plain S3 without Iceberg (Legacy)
+
+**Detection:** Absence of `OTLP2PARQUET_ICEBERG_REST_URI` variable
+
+**Configuration:**
+```bash
+OTLP2PARQUET_STORAGE_BACKEND=s3
+OTLP2PARQUET_S3_BUCKET=my-parquet-bucket
+OTLP2PARQUET_S3_REGION=us-west-2
+```
+
+**Behavior:**
+- Uses `ParquetWriter` for direct S3 writes
+- Files written to partitioned directories: `{signal}/{service}/year=YYYY/month=MM/day=DD/hour=HH/`
+- No catalog integration
+- No metadata management
+
+**Benefits:**
+- Simple S3 storage without catalog overhead
+- Direct file access for custom tooling
+- Lower complexity for simple use cases
+- Compatible with any Parquet reader
+
+**When to use:**
+- Simple archival scenarios
+- Custom query pipelines that don't need Iceberg
+- Cost optimization for write-once, read-rarely patterns
+- Development and testing environments
 
 ### CloudFormation Parameters
 
@@ -120,20 +250,28 @@ When deploying the stack, you can customize these parameters:
 |-----------|-------------|---------|
 | `LambdaCodeBucket` | S3 bucket containing Lambda zip | (set by deploy script) |
 | `LambdaCodeKey` | S3 key for Lambda zip file | `lambda/otlp2parquet-lambda.zip` |
-| `LambdaArchitecture` | Lambda architecture | `arm64` |
+| `LambdaArchitecture` | Lambda architecture (arm64/x86_64) | `arm64` |
 
-### Environment Variables
+### Environment Variables Reference
 
-The Lambda function is configured with these environment variables (set automatically by CloudFormation):
+**S3 Tables Mode (default in template):**
 
 | Variable | Value | Purpose |
 |----------|-------|---------|
 | `OTLP2PARQUET_ICEBERG_REST_URI` | `https://s3tables.<region>.amazonaws.com/iceberg` | S3 Tables REST catalog endpoint |
-| `OTLP2PARQUET_ICEBERG_WAREHOUSE` | `arn:aws:s3tables:...` | Table bucket ARN |
+| `OTLP2PARQUET_ICEBERG_WAREHOUSE` | `arn:aws:s3tables:...` | Table bucket ARN (warehouse location) |
 | `OTLP2PARQUET_ICEBERG_NAMESPACE` | `otel` | Namespace for tables |
-| `RUST_LOG` | `info` | Rust logging level |
+| `RUST_LOG` | `info` | Rust logging level (debug/info/warn/error) |
 
-### Tables Created
+**Plain S3 Mode (comment out Iceberg vars, uncomment these):**
+
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `OTLP2PARQUET_STORAGE_BACKEND` | `s3` | Storage backend type |
+| `OTLP2PARQUET_S3_BUCKET` | `my-parquet-bucket` | S3 bucket name |
+| `OTLP2PARQUET_S3_REGION` | `us-west-2` | AWS region |
+
+### Tables Created (S3 Tables Mode Only)
 
 The Lambda automatically creates these Iceberg tables on first write:
 
@@ -144,6 +282,8 @@ The Lambda automatically creates these Iceberg tables on first write:
 - `otel.metrics_histogram` - Histogram metrics
 - `otel.metrics_exponential_histogram` - Exponential histogram metrics
 - `otel.metrics_summary` - Summary metrics
+
+**Table Schema:** Generated from Arrow schemas in `otlp2parquet-core` crate, following ClickHouse OTel exporter naming conventions.
 
 ## Querying Your Data
 
@@ -271,17 +411,127 @@ Lambda functions don't require VPC placement for S3 Tables access (S3 Tables is 
 2. Ensure VPC has NAT Gateway or VPC endpoints for S3 and S3 Tables
 3. Increase timeout to account for cold start latency
 
+### IAM Permissions (Detailed)
+
+The Lambda execution role requires two distinct sets of permissions:
+
+#### 1. S3 Tables Catalog API Permissions
+
+Required for Iceberg metadata operations (LoadTable, CreateTable, CommitTransaction):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "S3TablesCatalogAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3tables:GetTableMetadataLocation",
+        "s3tables:CreateTable",
+        "s3tables:UpdateTableMetadataLocation",
+        "s3tables:GetTableBucket",
+        "s3tables:GetNamespace",
+        "s3tables:CreateNamespace"
+      ],
+      "Resource": [
+        "arn:aws:s3tables:REGION:ACCOUNT:bucket/BUCKET_NAME",
+        "arn:aws:s3tables:REGION:ACCOUNT:bucket/BUCKET_NAME/namespace/*"
+      ]
+    }
+  ]
+}
+```
+
+**Action Descriptions:**
+- `GetTableMetadataLocation` - Load existing table metadata for writes
+- `CreateTable` - Create tables on-demand from Arrow schemas
+- `UpdateTableMetadataLocation` - Commit new snapshots to catalog
+- `GetTableBucket` - Access table bucket configuration
+- `GetNamespace` - Read namespace metadata
+- `CreateNamespace` - Create namespaces if they don't exist (optional)
+
+#### 2. S3 Object Data Permissions
+
+Required for reading/writing Parquet files in the warehouse location:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "S3TablesDataAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::WAREHOUSE_BUCKET_NAME/*",
+        "arn:aws:s3:::WAREHOUSE_BUCKET_NAME"
+      ]
+    }
+  ]
+}
+```
+
+**Action Descriptions:**
+- `PutObject` - Write Parquet files to warehouse location
+- `GetObject` - Read existing files (for metadata extraction)
+- `DeleteObject` - Remove orphaned files during maintenance (optional)
+- `ListBucket` - List warehouse contents (for debugging)
+
+#### 3. CloudWatch Logs Permissions
+
+Required for Lambda function logging:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CloudWatchLogsAccess",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:REGION:ACCOUNT:log-group:/aws/lambda/*"
+    }
+  ]
+}
+```
+
 ### IAM Best Practices
 
-The provided IAM role follows least-privilege:
-- Scoped to specific table bucket
-- No wildcard permissions
-- Separate policies for S3 Tables API vs S3 objects
+The provided IAM role follows least-privilege principles:
+- **Scoped resources**: Permissions limited to specific table bucket ARN
+- **No wildcard actions**: Only required S3 Tables API calls allowed
+- **Separate policies**: S3 Tables catalog vs S3 objects vs CloudWatch logs
+- **Minimal DeleteObject**: Only included if table maintenance is required
 
-For production, consider:
-- Using IAM roles per environment (dev/staging/prod)
-- Adding resource tags for cost allocation
-- Implementing SCPs for organization-wide guardrails
+**Production recommendations:**
+- Use IAM roles per environment (dev/staging/prod) with separate table buckets
+- Add resource tags for cost allocation: `Environment`, `Team`, `Project`
+- Implement SCPs for organization-wide guardrails (e.g., prevent public access)
+- Enable CloudTrail logging for S3 Tables API calls for audit trail
+- Use IAM policy conditions to restrict access by time/IP if needed:
+  ```json
+  "Condition": {
+    "IpAddress": {
+      "aws:SourceIp": ["10.0.0.0/8"]
+    }
+  }
+  ```
+
+**Troubleshooting IAM issues:**
+- Check CloudWatch logs for `AccessDenied` errors with specific action names
+- Use IAM Policy Simulator to test permissions before deployment
+- Verify table bucket ARN matches exactly in IAM policy Resource field
+- Ensure Lambda execution role has `AssumeRole` trust policy for `lambda.amazonaws.com`
 
 ### Cost Monitoring
 

@@ -4,8 +4,17 @@
 //! - Native (Lambda/Server): reqwest with AWS SigV4
 //! - WASM (Workers): reqwest with wasm-bindgen fetch
 
-use anyhow::{Context, Result};
+#[cfg(not(target_arch = "wasm32"))]
+use anyhow::Context;
+use anyhow::Result;
 use async_trait::async_trait;
+
+#[cfg(not(target_arch = "wasm32"))]
+use aws_credential_types::provider::ProvideCredentials;
+#[cfg(not(target_arch = "wasm32"))]
+use aws_sigv4::http_request::{sign, SignableBody, SignableRequest, SigningSettings};
+#[cfg(not(target_arch = "wasm32"))]
+use aws_sigv4::sign::v4;
 
 /// HTTP response from the Iceberg catalog
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,7 +59,60 @@ impl HttpResponse {
 ///
 /// Implementations provide platform-specific HTTP requests while maintaining
 /// a simple, common interface for the Iceberg catalog client.
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
+pub trait HttpClient: Send + Sync {
+    /// Execute an HTTP request
+    ///
+    /// # Parameters
+    /// - `method`: HTTP method (GET, POST, PUT, DELETE, etc.)
+    /// - `url`: Full URL to request
+    /// - `headers`: Request headers as (name, value) pairs
+    /// - `body`: Optional request body bytes
+    ///
+    /// # Returns
+    /// Returns the HTTP response or an error
+    async fn request(
+        &self,
+        method: &str,
+        url: &str,
+        headers: Vec<(String, String)>,
+        body: Option<Vec<u8>>,
+    ) -> Result<HttpResponse>;
+
+    /// Convenience method for GET requests
+    async fn get(&self, url: &str, headers: Vec<(String, String)>) -> Result<HttpResponse> {
+        self.request("GET", url, headers, None).await
+    }
+
+    /// Convenience method for POST requests
+    async fn post(
+        &self,
+        url: &str,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+    ) -> Result<HttpResponse> {
+        self.request("POST", url, headers, Some(body)).await
+    }
+
+    /// Convenience method for PUT requests
+    async fn put(
+        &self,
+        url: &str,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+    ) -> Result<HttpResponse> {
+        self.request("PUT", url, headers, Some(body)).await
+    }
+
+    /// Convenience method for DELETE requests
+    async fn delete(&self, url: &str, headers: Vec<(String, String)>) -> Result<HttpResponse> {
+        self.request("DELETE", url, headers, None).await
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[async_trait(?Send)]
 pub trait HttpClient: Send + Sync {
     /// Execute an HTTP request
     ///
@@ -106,18 +168,26 @@ pub trait HttpClient: Send + Sync {
 /// Works on both native and WASM targets. Reqwest automatically switches
 /// between native (hyper + rustls) and WASM (wasm-bindgen fetch) implementations.
 ///
-/// TODO: Add AWS SigV4 signing support for S3 Tables endpoints
+/// On native targets, automatically signs requests to S3 Tables endpoints using AWS SigV4
 pub struct ReqwestHttpClient {
     /// Reqwest HTTP client
     client: reqwest::Client,
+    /// AWS credentials provider for SigV4 signing (native only)
+    #[cfg(not(target_arch = "wasm32"))]
+    credentials_provider: Option<aws_credential_types::provider::SharedCredentialsProvider>,
 }
 
 impl ReqwestHttpClient {
     /// Create a new ReqwestHttpClient
     ///
+    /// On native platforms, detects S3 Tables endpoints and initializes AWS credentials
+    /// for SigV4 signing. On WASM, creates a basic client.
+    ///
     /// # Parameters
-    /// - `_base_url`: Base URL of the REST catalog (reserved for future SigV4 detection)
-    pub async fn new(_base_url: &str) -> Result<Self> {
+    /// - `base_url`: Base URL of the REST catalog (used to detect S3 Tables endpoints)
+    #[cfg_attr(target_arch = "wasm32", allow(unused_variables))]
+    pub async fn new(base_url: &str) -> Result<Self> {
+        #[allow(unused_mut)]
         let mut builder = reqwest::Client::builder();
 
         // Timeout only works on native (WASM uses browser's timeout)
@@ -130,12 +200,58 @@ impl ReqwestHttpClient {
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to create reqwest client: {}", e))?;
 
-        Ok(Self { client })
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // Check if this is an S3 Tables endpoint
+            let credentials_provider = if Self::is_s3_tables_endpoint(base_url) {
+                // Load AWS credentials from environment (Lambda execution role, EC2 instance profile, etc.)
+                // Use from_env() which works with Lambda's tokio runtime
+                let config = aws_config::from_env().load().await;
+                Some(config.credentials_provider().unwrap())
+            } else {
+                None
+            };
+
+            Ok(Self {
+                client,
+                credentials_provider,
+            })
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            Ok(Self { client })
+        }
     }
 
-    /// Create a client with custom configuration
+    /// Create a client with custom configuration (WASM only)
+    #[cfg(target_arch = "wasm32")]
     pub fn with_client(client: reqwest::Client) -> Self {
         Self { client }
+    }
+
+    /// Check if a URL is an S3 Tables endpoint
+    #[cfg(not(target_arch = "wasm32"))]
+    fn is_s3_tables_endpoint(url: &str) -> bool {
+        url.contains("s3tables") && url.contains("amazonaws.com")
+    }
+
+    /// Extract AWS region from S3 Tables URL
+    /// Example: https://s3tables.us-west-2.amazonaws.com/iceberg -> us-west-2
+    #[cfg(not(target_arch = "wasm32"))]
+    fn extract_region(url: &str) -> Option<String> {
+        url.parse::<url::Url>()
+            .ok()
+            .and_then(|parsed| parsed.host_str().map(String::from))
+            .and_then(|host| {
+                // Pattern: s3tables.{region}.amazonaws.com
+                let parts: Vec<&str> = host.split('.').collect();
+                if parts.len() >= 3 && parts[0] == "s3tables" && parts[2] == "amazonaws" {
+                    Some(parts[1].to_string())
+                } else {
+                    None
+                }
+            })
     }
 }
 
@@ -161,12 +277,79 @@ impl HttpClient for ReqwestHttpClient {
             ));
         }
 
+        // Apply AWS SigV4 signing if credentials are available
+        if let Some(ref creds_provider) = self.credentials_provider {
+            let region = Self::extract_region(url)
+                .ok_or_else(|| anyhow::anyhow!("Failed to extract AWS region from URL: {}", url))?;
+
+            // Get credentials
+            let credentials = creds_provider
+                .provide_credentials()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to get AWS credentials: {}", e))?;
+
+            // Build signable request
+            let parsed_url = url
+                .parse::<url::Url>()
+                .context("Failed to parse URL for signing")?;
+
+            let signable_headers: Vec<(&str, &str)> = headers
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str()))
+                .collect();
+
+            let signable_body = if let Some(ref body_bytes) = body {
+                SignableBody::Bytes(body_bytes)
+            } else {
+                SignableBody::Bytes(&[])
+            };
+
+            let signable_request = SignableRequest::new(
+                method,
+                parsed_url.as_str(),
+                signable_headers.into_iter(),
+                signable_body,
+            )
+            .expect("Failed to create signable request");
+
+            // Build identity from credentials
+            let identity = aws_credential_types::Credentials::new(
+                credentials.access_key_id(),
+                credentials.secret_access_key(),
+                credentials.session_token().map(String::from),
+                None, // expiration
+                "lambda-execution-role",
+            )
+            .into();
+
+            // Configure signing params using v4 module
+            let signing_params = v4::SigningParams::builder()
+                .identity(&identity)
+                .region(&region)
+                .name("s3tables")
+                .time(std::time::SystemTime::now())
+                .settings(SigningSettings::default())
+                .build()
+                .map_err(|e| anyhow::anyhow!("Failed to build signing params: {}", e))?
+                .into();
+
+            // Sign the request
+            let (signing_instructions, _signature) = sign(signable_request, &signing_params)
+                .map_err(|e| anyhow::anyhow!("Failed to sign request: {}", e))?
+                .into_parts();
+
+            // Apply signing headers
+            for (name, value) in signing_instructions.headers() {
+                headers.push((name.to_string(), value.to_string()));
+            }
+        }
+
         // Build reqwest request
         let mut request_builder = self
             .client
             .request(method.parse().context("Invalid HTTP method")?, url);
 
-        // Add headers
+        // Add headers (including signed headers if applicable)
         for (name, value) in &headers {
             request_builder = request_builder.header(name, value);
         }

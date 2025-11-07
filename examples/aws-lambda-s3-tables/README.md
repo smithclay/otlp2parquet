@@ -104,6 +104,69 @@ Tables created automatically:
 - `otel.metrics_exponential_histogram`
 - `otel.metrics_summary`
 
+## Operating Modes
+
+The Lambda function supports two operating modes:
+
+### Mode 1: S3 Tables with Iceberg (Recommended)
+
+Writes Parquet files directly to S3 Tables warehouse with integrated Iceberg catalog.
+
+**Environment Variables:**
+```bash
+OTLP2PARQUET_ICEBERG_REST_URI=https://s3tables.us-west-2.amazonaws.com/iceberg
+OTLP2PARQUET_ICEBERG_WAREHOUSE=arn:aws:s3tables:us-west-2:123456789012:bucket/otlp2parquet
+OTLP2PARQUET_ICEBERG_NAMESPACE=otel
+OTLP2PARQUET_STORAGE_BACKEND=s3
+OTLP2PARQUET_S3_BUCKET=my-data-bucket
+OTLP2PARQUET_S3_REGION=us-west-2
+```
+
+**Benefits:**
+- Atomic write-and-commit operations
+- ACID transactions for data consistency
+- Automatic table creation from Arrow schemas
+- Query via DuckDB, Spark, Athena with Iceberg catalog
+- Schema evolution and time travel
+- Efficient metadata management
+
+**When to use:**
+- Production deployments requiring data consistency
+- Multi-user query scenarios with concurrent reads/writes
+- Long-term data retention with schema evolution
+- Integration with modern data lake ecosystems
+
+### Mode 2: Plain S3 without Iceberg (Legacy)
+
+Writes Parquet files to regular S3 bucket without catalog integration.
+
+**Environment Variables:**
+```bash
+OTLP2PARQUET_STORAGE_BACKEND=s3
+OTLP2PARQUET_S3_BUCKET=my-parquet-bucket
+OTLP2PARQUET_S3_REGION=us-west-2
+```
+
+**Benefits:**
+- Simple S3 storage without catalog overhead
+- Direct file access for custom tooling
+- Lower complexity for simple use cases
+
+**When to use:**
+- Simple archival scenarios
+- Custom query pipelines that don't need Iceberg
+- Cost optimization for write-once, read-rarely patterns
+- Development and testing environments
+
+### Switching Between Modes
+
+To switch modes, update the `Environment.Variables` section in `template.yaml`:
+
+**For S3 Tables mode:** Keep the `OTLP2PARQUET_ICEBERG_*` variables set
+**For Plain S3 mode:** Comment out `OTLP2PARQUET_ICEBERG_*` variables
+
+The Lambda function automatically detects which mode to use based on the presence of `OTLP2PARQUET_ICEBERG_REST_URI`.
+
 ## Query Examples
 
 ### DuckDB

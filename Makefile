@@ -76,8 +76,14 @@ build-server: ## Build server binary only (default mode)
 	@cargo build --release
 
 .PHONY: build-lambda
-build-lambda: ## Build Lambda binary only
-	@cargo build --release -p otlp2parquet-lambda
+build-lambda: ## Build Lambda binary and create bootstrap-arm64.zip for deployment
+	@echo "==> Building Lambda binary with cargo-lambda..."
+	@cd crates/otlp2parquet-lambda && cargo lambda build --release --arm64
+	@echo "==> Creating bootstrap-arm64.zip..."
+	@cd target/lambda/bootstrap && zip -q ../bootstrap-arm64.zip bootstrap
+	@echo "==> Lambda deployment package ready at: target/lambda/bootstrap-arm64.zip"
+	@SIZE=$$(stat -f%z target/lambda/bootstrap-arm64.zip 2>/dev/null || stat -c%s target/lambda/bootstrap-arm64.zip 2>/dev/null); \
+	python3 -c "import sys; size=int(sys.argv[1]); print(f\"==> Package size: {size/1024:.1f} KB ({size/1024/1024:.2f} MB)\")" $$SIZE
 
 .PHONY: build-cloudflare
 build-cloudflare: ## Build Cloudflare Workers with worker-build

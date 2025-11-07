@@ -2,9 +2,9 @@
 //!
 //! Extracts metadata and statistics from Parquet files for Iceberg commits.
 
-use crate::types::{DataContentType, DataFile, DataFileFormat, Schema};
+use super::types::{DataContentType, DataFile, DataFileFormat, Schema};
+use crate::ParquetWriteResult;
 use anyhow::{Context, Result};
-use otlp2parquet_storage::ParquetWriteResult;
 use parquet::file::metadata::ParquetMetaData;
 use std::collections::HashMap;
 use tracing::debug;
@@ -159,7 +159,7 @@ pub fn build_data_file(result: &ParquetWriteResult, schema: &Schema) -> Result<D
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{NestedField, Type};
+    use crate::iceberg::types::{NestedField, Type};
 
     // Note: Full testing would require creating real ParquetMetaData,
     // which is complex. These tests verify the function signature and basic error handling.

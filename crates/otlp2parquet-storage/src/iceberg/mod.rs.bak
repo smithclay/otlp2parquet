@@ -52,7 +52,7 @@
 //! # Example Usage
 //!
 //! ```no_run
-//! use otlp2parquet_iceberg::init::{initialize_committer, InitResult};
+//! use otlp2parquet_storage::iceberg::init::{initialize_committer, InitResult};
 //!
 //! # async fn example() -> anyhow::Result<()> {
 //! // Initialize committer from environment variables
@@ -86,30 +86,28 @@
 //!
 //! This ensures ingestion is never blocked by catalog availability.
 
-pub mod init;
+// Re-export main types
+pub use catalog::IcebergCatalog;
+pub use writer::{IcebergWriter, IcebergConfig};
 
-// New minimal Iceberg implementation modules
+// Module declarations
 pub mod arrow_convert;
 pub mod catalog;
 pub mod datafile_convert;
 pub mod http;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod init;
 pub mod protocol;
 pub mod types;
 pub mod validation;
-
-// Re-export commonly used types
-pub use arrow_convert::arrow_to_iceberg_schema;
-pub use catalog::IcebergCatalog;
-pub use http::ReqwestHttpClient;
-pub use validation::validate_schema_compatibility;
-// Note: datafile_convert::build_data_file conflicts with old build_data_file, so not re-exported
+pub mod writer;
 
 use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
-use otlp2parquet_storage::ParquetWriteResult;
+use anyhow::{Context, Result as AnyhowResult};
+use crate::ParquetWriteResult;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, instrument, warn};
 
@@ -199,7 +197,7 @@ impl IcebergRestConfig {
     ///   - `OTLP2PARQUET_ICEBERG_TABLE_METRICS_HISTOGRAM` (default: "otel_metrics_histogram")
     ///   - `OTLP2PARQUET_ICEBERG_TABLE_METRICS_EXPONENTIAL_HISTOGRAM` (default: "otel_metrics_exponential_histogram")
     ///   - `OTLP2PARQUET_ICEBERG_TABLE_METRICS_SUMMARY` (default: "otel_metrics_summary")
-    pub fn from_env() -> Result<Self> {
+    pub fn from_env() -> AnyhowResult<Self> {
         let rest_uri = env::var("OTLP2PARQUET_ICEBERG_REST_URI").context(
             "OTLP2PARQUET_ICEBERG_REST_URI must be set (e.g., https://s3tables.us-east-1.amazonaws.com/iceberg)",
         )?;
@@ -292,12 +290,12 @@ impl IcebergRestConfig {
 /// 3. Implements warn-and-succeed pattern
 #[cfg(not(target_arch = "wasm32"))]
 pub struct IcebergCommitter {
-    catalog: Arc<IcebergCatalog<ReqwestHttpClient>>,
+    catalog: Arc<IcebergCatalog<http::ReqwestHttpClient>>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl IcebergCommitter {
-    pub fn new(catalog: Arc<IcebergCatalog<ReqwestHttpClient>>) -> Self {
+    pub fn new(catalog: Arc<IcebergCatalog<http::ReqwestHttpClient>>) -> Self {
         Self { catalog }
     }
 
@@ -322,7 +320,7 @@ impl IcebergCommitter {
         signal_type: &str,
         metric_type: Option<&str>,
         parquet_results: &[ParquetWriteResult],
-    ) -> Result<()> {
+    ) -> AnyhowResult<()> {
         if parquet_results.is_empty() {
             debug!("No files to commit");
             return Ok(());
@@ -500,7 +498,7 @@ mod tests {
     #[test]
     fn test_namespace_empty_error() {
         // Verify that empty namespace is rejected
-        use crate::catalog::NamespaceIdent;
+        use super::catalog::NamespaceIdent;
 
         let empty_namespace: Vec<String> = vec![];
         assert!(NamespaceIdent::from_vec(empty_namespace).is_err());

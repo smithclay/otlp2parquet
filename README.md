@@ -31,7 +31,8 @@ _Note: If you want to query or convert existing OTLP files, you can use the [otl
 | OTLP Profiles | ❌ | ❌ | ❌ |
 | **Storage Support** | | | |
 | Parquet | ✅ | ✅ | ✅ |
-| Iceberg (REST Catalog API) | 🚧 | 🚧 | 🚧 |
+| Iceberg (REST Catalog API) | ✅ | ❌ | ✅ |
+| AWS S3 Tables | ✅ | ❌ | ✅ |
 | **Security*** | | | |
 | Basic Auth Header | ❌ | ✅ | ❌ |
 | **Advanced Features** | | | |
@@ -42,6 +43,24 @@ _Note: If you want to query or convert existing OTLP files, you can use the [otl
 For deployment instructions, usage examples, and detailed guides:
 
 ➡️ [**View Documentation**](https://smithclay.github.io/otlp2parquet/)
+
+### Deployment Options
+
+**AWS Lambda + S3 Tables** - Serverless OTLP ingestion with integrated Apache Iceberg catalog
+- Pay-per-request pricing (~$2/month for 1M requests)
+- Automatic table creation from OTLP schemas
+- Query with DuckDB, Athena, Spark via Iceberg REST catalog
+- See [AWS Lambda + S3 Tables Guide](docs/storage/aws-lambda-s3-tables.md)
+
+**Docker (Server)** - Long-running HTTP server for continuous ingestion
+- In-memory batching for optimal Parquet file sizes
+- Supports S3, R2, GCS, Azure, and local filesystem
+- See [Docker Deployment Guide](docs/deployment/docker.md)
+
+**Cloudflare Workers** - Edge-native OTLP ingestion (WASM)
+- ~2.5MB compressed binary, <10ms cold start
+- R2 storage integration
+- See [Cloudflare Workers Guide](docs/deployment/cloudflare.md)
 
 ## Notes on file sizes
 

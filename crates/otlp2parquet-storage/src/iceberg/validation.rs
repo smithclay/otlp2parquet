@@ -3,7 +3,7 @@
 //! Optional validation to check that Parquet schemas are compatible with Iceberg table schemas.
 //! Disabled by default - use via `IcebergCatalog::with_validation(true)`.
 
-use crate::types::Schema;
+use super::types::Schema;
 use anyhow::{anyhow, Result};
 use arrow::datatypes::Schema as ArrowSchema;
 
@@ -58,7 +58,7 @@ pub fn validate_schema_compatibility(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{NestedField, Type};
+    use crate::iceberg::types::{NestedField, Type};
     use arrow::datatypes::{DataType, Field};
     use std::collections::HashMap;
 

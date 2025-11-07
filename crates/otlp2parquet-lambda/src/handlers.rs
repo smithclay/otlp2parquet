@@ -109,7 +109,7 @@ async fn process_logs(
     let mut total_records = 0usize;
 
     for subset in per_service_requests {
-        match state.passthrough.ingest(&subset) {
+        match state.writer.passthrough().ingest(&subset) {
             Ok(batch) => {
                 total_records += batch.metadata.record_count;
                 uploads.push(batch);
@@ -126,36 +126,27 @@ async fn process_logs(
 
     let mut uploaded_paths = Vec::new();
     for batch in uploads {
-        // Write RecordBatch to Parquet and upload (hash computed in storage layer)
-        match state
-            .parquet_writer
-            .write_batches_with_hash(
-                &batch.batches,
-                &batch.metadata.service_name,
-                batch.metadata.first_timestamp_nanos,
-            )
-            .await
-        {
-            Ok(write_result) => {
-                uploaded_paths.push(write_result.path.clone());
-
-                // Commit to Iceberg catalog if configured (warn-and-succeed on error)
-                if let Some(committer) = &state.iceberg_committer {
-                    if let Err(e) = committer
-                        .commit_with_signal("logs", None, &[write_result])
-                        .await
-                    {
-                        eprintln!("Warning: Failed to commit logs to Iceberg catalog: {}", e);
-                        // Continue - files are in S3 even if catalog commit failed
-                    }
+        // Write logs via Writer (handles both Iceberg and PlainS3 modes)
+        for record_batch in &batch.batches {
+            match state
+                .writer
+                .write_logs(
+                    record_batch,
+                    &batch.metadata.service_name,
+                    batch.metadata.first_timestamp_nanos,
+                )
+                .await
+            {
+                Ok(paths) => {
+                    uploaded_paths.extend(paths);
                 }
-            }
-            Err(err) => {
-                eprintln!("Failed to write Parquet to storage: {}", err);
-                return HttpResponseData::json(
-                    500,
-                    json!({ "error": "internal storage failure" }).to_string(),
-                );
+                Err(err) => {
+                    eprintln!("Failed to write logs: {}", err);
+                    return HttpResponseData::json(
+                        500,
+                        json!({ "error": "internal storage failure" }).to_string(),
+                    );
+                }
             }
         }
     }
@@ -223,33 +214,15 @@ async fn process_metrics(
             let timestamp_nanos = extract_first_timestamp(&batch);
 
             match state
-                .parquet_writer
-                .write_batches_with_signal(
-                    &[batch],
-                    &service_name,
-                    timestamp_nanos,
-                    "metrics",
-                    Some(&metric_type),
-                )
+                .writer
+                .write_metrics(&batch, &service_name, timestamp_nanos, &metric_type)
                 .await
             {
-                Ok(write_result) => {
-                    uploaded_paths.push(write_result.path.clone());
-
-                    if let Some(committer) = &state.iceberg_committer {
-                        if let Err(e) = committer
-                            .commit_with_signal("metrics", Some(&metric_type), &[write_result])
-                            .await
-                        {
-                            eprintln!(
-                                "Warning: Failed to commit {} metrics to Iceberg catalog: {}",
-                                metric_type, e
-                            );
-                        }
-                    }
+                Ok(paths) => {
+                    uploaded_paths.extend(paths);
                 }
                 Err(err) => {
-                    eprintln!("Failed to write {} metrics Parquet: {}", metric_type, err);
+                    eprintln!("Failed to write {} metrics: {}", metric_type, err);
                     return HttpResponseData::json(
                         500,
                         json!({ "error": "internal storage failure" }).to_string(),
