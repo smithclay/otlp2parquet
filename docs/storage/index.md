@@ -18,3 +18,9 @@ You can use either layer independently or combine them:
 *   **Object Storage + Iceberg**: `otlp2parquet` writes Parquet files and then commits them to an Iceberg table in the same transaction. Your query engine (like DuckDB, Spark, or Trino) uses the Iceberg catalog to find the right files, which is faster and more efficient.
 
 Most production setups will benefit from using the **Apache Iceberg** layer for its management and performance features.
+
+## Deployment Examples
+
+Looking for deployment guidance? Check out these platform-specific guides:
+
+- [**AWS Lambda + S3 Tables**](aws-lambda-s3-tables.md) - Serverless deployment with event-driven ingestion using AWS Lambda and S3 Tables (Apache Iceberg).

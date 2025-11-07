@@ -1,0 +1,10 @@
+# Deployment artifacts
+*.zip
+deployment-bucket.txt
+
+# CloudFormation outputs
+stack-outputs.json
+
+# Test results
+test-results/
+*.log

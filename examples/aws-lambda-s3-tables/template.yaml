@@ -1,0 +1,164 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'otlp2parquet Lambda with S3 Tables (Apache Iceberg)'
+
+Parameters:
+  LambdaCodeBucket:
+    Type: String
+    Description: S3 bucket containing the Lambda deployment package
+
+  LambdaCodeKey:
+    Type: String
+    Description: S3 key for the Lambda zip file
+    Default: lambda/otlp2parquet-lambda.zip
+
+  LambdaArchitecture:
+    Type: String
+    Description: Lambda architecture (arm64 recommended for better price/performance)
+    Default: arm64
+    AllowedValues:
+      - arm64
+      - x86_64
+
+Resources:
+  # S3 Bucket - Stores Parquet data files
+  # Standard S3 bucket for object storage (written via S3 API)
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'otlp2parquet-data-${AWS::StackName}-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # S3 Table Bucket - Iceberg catalog metadata ONLY
+  # Provides REST catalog API (queried via Iceberg REST Catalog API)
+  # Does NOT store data files - those go in DataBucket above
+  OtelTableBucket:
+    Type: AWS::S3Tables::TableBucket
+    Properties:
+      TableBucketName: !Sub 'otlp2parquet-${AWS::StackName}'
+
+  # Lambda execution role with permissions for S3 Tables and CloudWatch Logs
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # Basic execution role for CloudWatch Logs
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3TablesAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # S3 Tables catalog API permissions
+              - Effect: Allow
+                Action:
+                  - s3tables:GetTableMetadataLocation
+                  - s3tables:CreateTable
+                  - s3tables:UpdateTableMetadataLocation
+                  - s3tables:PutTableData
+                  - s3tables:GetTableData
+                  - s3tables:GetTableBucket
+                Resource:
+                  - !GetAtt OtelTableBucket.TableBucketARN
+                  - !Sub '${OtelTableBucket.TableBucketARN}/*'
+              # S3 object permissions for Parquet files in data bucket
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt DataBucket.Arn
+                  - !Sub '${DataBucket.Arn}/*'
+
+  # CloudWatch log group with 7-day retention for cost optimization
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-ingest'
+      RetentionInDays: 7
+
+  # Lambda function running otlp2parquet Rust binary
+  OtlpIngestFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: LambdaLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-ingest'
+      Runtime: provided.al2023
+      Handler: bootstrap
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref LambdaCodeKey
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Architectures:
+        - !Ref LambdaArchitecture
+      MemorySize: 512
+      Timeout: 60
+      Environment:
+        Variables:
+          # S3 storage backend configuration (for Parquet data files)
+          OTLP2PARQUET_STORAGE_BACKEND: 's3'
+          OTLP2PARQUET_S3_BUCKET: !Ref DataBucket
+          OTLP2PARQUET_S3_REGION: !Ref AWS::Region
+          # Iceberg REST catalog endpoint for S3 Tables
+          OTLP2PARQUET_ICEBERG_REST_URI: !Sub 'https://s3tables.${AWS::Region}.amazonaws.com/iceberg'
+          # Warehouse location (ARN of the table bucket)
+          OTLP2PARQUET_ICEBERG_WAREHOUSE: !GetAtt OtelTableBucket.TableBucketARN
+          # Namespace for OTLP tables (creates otel.logs, otel.traces, etc.)
+          OTLP2PARQUET_ICEBERG_NAMESPACE: 'otel'
+          # Rust log level for debugging
+          RUST_LOG: 'info'
+
+Outputs:
+  LambdaFunctionArn:
+    Description: Lambda function ARN (use for testing with aws lambda invoke)
+    Value: !GetAtt OtlpIngestFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaArn'
+
+  LambdaFunctionName:
+    Description: Lambda function name
+    Value: !Ref OtlpIngestFunction
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaName'
+
+  DataBucketName:
+    Description: S3 bucket storing Parquet data files
+    Value: !Ref DataBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-DataBucket'
+
+  TableBucketName:
+    Description: S3 Table Bucket ARN (Iceberg catalog)
+    Value: !GetAtt OtelTableBucket.TableBucketARN
+    Export:
+      Name: !Sub '${AWS::StackName}-TableBucket'
+
+  TableBucketArn:
+    Description: S3 Table Bucket ARN (use as warehouse location)
+    Value: !GetAtt OtelTableBucket.TableBucketARN
+    Export:
+      Name: !Sub '${AWS::StackName}-TableBucketArn'
+
+  IcebergRestEndpoint:
+    Description: Iceberg REST catalog endpoint (use with DuckDB, Spark, etc.)
+    Value: !Sub 'https://s3tables.${AWS::Region}.amazonaws.com/iceberg'
+    Export:
+      Name: !Sub '${AWS::StackName}-IcebergEndpoint'
+
+  Region:
+    Description: AWS Region where resources are deployed
+    Value: !Ref AWS::Region
+    Export:
+      Name: !Sub '${AWS::StackName}-Region'

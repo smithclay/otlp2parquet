@@ -66,6 +66,24 @@ jobs:
           cp "$SERVER_DIR/otlp2parquet" "dist/linux-${{ matrix.arch }}/otlp2parquet"
           tar czf "$SERVER_DIR/${{ matrix.server_asset_name }}.tar.gz" -C dist "linux-${{ matrix.arch }}"
 
+      - name: Package Lambda as zip
+        run: |
+          set -euo pipefail
+          LAMBDA_BINARY="target/${{ matrix.target }}/release/bootstrap"
+          TMP_DIR="$(mktemp -d)"
+          cp "$LAMBDA_BINARY" "$TMP_DIR/bootstrap"
+          cd "$TMP_DIR"
+          zip -j "$GITHUB_WORKSPACE/target/${{ matrix.target }}/release/${{ matrix.asset_name }}.zip" bootstrap
+          cd "$GITHUB_WORKSPACE"
+          rm -rf "$TMP_DIR"
+          echo "Created ${{ matrix.asset_name }}.zip"
+
+      - name: Upload Lambda zip artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.asset_name }}-zip
+          path: target/${{ matrix.target }}/release/${{ matrix.asset_name }}.zip
+
       - name: Upload artifact
         uses: actions/upload-artifact@v5
         with:
