@@ -199,6 +199,14 @@ async fn test_build_data_file() {
         properties: None,
         default_sort_order_id: None,
         sort_orders: None,
+        last_column_id: None,
+        last_partition_id: None,
+        last_sequence_number: None,
+        metadata_log: None,
+        partition_statistics: None,
+        refs: None,
+        snapshot_log: None,
+        statistics: None,
     };
 
     let config = IcebergConfig {
@@ -249,7 +257,9 @@ async fn test_build_data_file() {
         .unwrap();
 
     // Act - build the DataFile from the write result
-    let data_file = writer.build_data_file(&write_result, &table).unwrap();
+    let iceberg_schema = table.schemas.first().unwrap();
+    let data_file =
+        crate::iceberg::datafile_convert::build_data_file(&write_result, iceberg_schema).unwrap();
 
     // Assert
     assert_eq!(data_file.file_path, write_result.path);

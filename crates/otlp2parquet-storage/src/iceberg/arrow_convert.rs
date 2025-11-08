@@ -67,11 +67,11 @@ fn convert_field(field: &Field) -> Result<NestedField> {
 /// - `UInt64` → `Long` with warning (values >= 2^63 may appear negative)
 fn convert_data_type(data_type: &DataType, field_name: &str) -> Result<Type> {
     let iceberg_type = match data_type {
-        DataType::Boolean => Type::Boolean,
-        DataType::Int32 => Type::Int,
-        DataType::Int64 => Type::Long,
+        DataType::Boolean => Type::Primitive("boolean".to_string()),
+        DataType::Int32 => Type::Primitive("int".to_string()),
+        DataType::Int64 => Type::Primitive("long".to_string()),
         // Safe: UInt32 max (4,294,967,295) fits in Long
-        DataType::UInt32 => Type::Long,
+        DataType::UInt32 => Type::Primitive("long".to_string()),
         // Lossy: UInt64 values >= 2^63 will appear as negative numbers in Iceberg
         DataType::UInt64 => {
             tracing::warn!(
@@ -80,25 +80,29 @@ fn convert_data_type(data_type: &DataType, field_name: &str) -> Result<Type> {
                  If your data contains large counter values, consider schema changes.",
                 field_name
             );
-            Type::Long
+            Type::Primitive("long".to_string())
         }
-        DataType::Float32 => Type::Float,
-        DataType::Float64 => Type::Double,
-        DataType::Utf8 | DataType::LargeUtf8 => Type::String,
-        DataType::Binary | DataType::LargeBinary => Type::Binary,
-        DataType::FixedSizeBinary(len) => Type::Fixed {
+        DataType::Float32 => Type::Primitive("float".to_string()),
+        DataType::Float64 => Type::Primitive("double".to_string()),
+        DataType::Utf8 | DataType::LargeUtf8 => Type::Primitive("string".to_string()),
+        DataType::Binary | DataType::LargeBinary => Type::Primitive("binary".to_string()),
+        DataType::FixedSizeBinary(len) => Type::FixedObj {
+            type_name: "fixed".to_string(),
             length: *len as u32,
         },
-        DataType::Timestamp(TimeUnit::Microsecond, _) => Type::Timestamp,
-        DataType::Timestamp(TimeUnit::Nanosecond, _) => Type::Timestamp, // Map to Timestamp for now
-        DataType::Date32 => Type::Date,
-        DataType::Time64(TimeUnit::Microsecond) => Type::Time,
+        DataType::Timestamp(TimeUnit::Microsecond, _) => Type::Primitive("timestamp".to_string()),
+        DataType::Timestamp(TimeUnit::Nanosecond, _) => Type::Primitive("timestamp".to_string()), // Map to Timestamp for now
+        DataType::Date32 => Type::Primitive("date".to_string()),
+        DataType::Time64(TimeUnit::Microsecond) => Type::Primitive("time".to_string()),
         DataType::Decimal128(precision, scale) => Type::Decimal {
+            type_name: "decimal".to_string(),
             precision: *precision as u32,
             scale: *scale as u32,
         },
         // Complex types - map to string for MVP
-        DataType::Struct(_) | DataType::List(_) | DataType::Map(_, _) => Type::String,
+        DataType::Struct(_) | DataType::List(_) | DataType::Map(_, _) => {
+            Type::Primitive("string".to_string())
+        }
         _ => {
             return Err(anyhow!(
                 "Unsupported Arrow type for field '{}': {:?}",
@@ -135,17 +139,20 @@ mod tests {
 
         let id_field = iceberg_schema.field_by_name("id").unwrap();
         assert_eq!(id_field.id, 1);
-        assert_eq!(id_field.field_type, Type::Long);
+        assert_eq!(id_field.field_type, Type::Primitive("long".to_string()));
         assert!(id_field.required);
 
         let name_field = iceberg_schema.field_by_name("name").unwrap();
         assert_eq!(name_field.id, 2);
-        assert_eq!(name_field.field_type, Type::String);
+        assert_eq!(name_field.field_type, Type::Primitive("string".to_string()));
         assert!(name_field.required);
 
         let active_field = iceberg_schema.field_by_name("active").unwrap();
         assert_eq!(active_field.id, 3);
-        assert_eq!(active_field.field_type, Type::Boolean);
+        assert_eq!(
+            active_field.field_type,
+            Type::Primitive("boolean".to_string())
+        );
         assert!(!active_field.required); // Optional = not required
     }
 
@@ -180,7 +187,7 @@ mod tests {
                 .field_by_name("timestamp_us")
                 .unwrap()
                 .field_type,
-            Type::Timestamp
+            Type::Primitive("timestamp".to_string())
         );
     }
 
@@ -207,11 +214,17 @@ mod tests {
 
         assert_eq!(
             iceberg_schema.field_by_name("trace_id").unwrap().field_type,
-            Type::Fixed { length: 16 }
+            Type::FixedObj {
+                type_name: "fixed".to_string(),
+                length: 16
+            }
         );
         assert_eq!(
             iceberg_schema.field_by_name("span_id").unwrap().field_type,
-            Type::Fixed { length: 8 }
+            Type::FixedObj {
+                type_name: "fixed".to_string(),
+                length: 8
+            }
         );
     }
 
@@ -227,7 +240,7 @@ mod tests {
         assert_eq!(iceberg_schema.fields.len(), 1);
         assert_eq!(
             iceberg_schema.field_by_name("count").unwrap().field_type,
-            Type::Long
+            Type::Primitive("long".to_string())
         );
     }
 }

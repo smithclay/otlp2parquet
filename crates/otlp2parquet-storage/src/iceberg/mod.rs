@@ -97,6 +97,8 @@ pub mod datafile_convert;
 pub mod http;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod init;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod manifest;
 pub mod protocol;
 pub mod types;
 pub mod validation;
@@ -317,15 +319,14 @@ impl IcebergCommitter {
     /// - `parquet_results`: Parquet files to commit
     ///
     /// # Note
-    /// The catalog's commit_with_signal now expects `Vec<DataFile>`, but we pass `ParquetWriteResult`.
-    /// We need to add a conversion method that takes `ParquetWriteResult` and converts to `DataFile`.
-    /// For now, we'll build DataFiles using the Arrow schema from the results.
-    #[cfg_attr(not(target_arch = "wasm32"), instrument(skip(self, parquet_results), fields(num_files = parquet_results.len(), signal_type, metric_type)))]
+    /// Converts ParquetWriteResult to DataFile and delegates to catalog's manifest-based commit flow.
+    #[cfg_attr(not(target_arch = "wasm32"), instrument(skip(self, parquet_results, storage_operator), fields(num_files = parquet_results.len(), signal_type, metric_type)))]
     pub async fn commit_with_signal(
         &self,
         signal_type: &str,
         metric_type: Option<&str>,
         parquet_results: &[ParquetWriteResult],
+        storage_operator: &opendal::Operator,
     ) -> AnyhowResult<()> {
         if parquet_results.is_empty() {
             debug!("No files to commit");
@@ -382,10 +383,10 @@ impl IcebergCommitter {
             "committing files to Iceberg table"
         );
 
-        // Delegate to catalog's commit_with_signal
+        // Delegate to catalog's commit_with_signal (manifest-based flow)
         if let Err(e) = self
             .catalog
-            .commit_with_signal(signal_type, metric_type, data_files)
+            .commit_with_signal(signal_type, metric_type, data_files, storage_operator)
             .await
         {
             warn!(

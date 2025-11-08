@@ -50,6 +50,8 @@ aws-sigv4 = { workspace = true }
 aws-credential-types = { workspace = true }
 aws-config = { workspace = true }
 url = "2.5"
+# Avro for Iceberg manifest files (native only)
+apache-avro = { version = "0.17", default-features = false, features = ["snappy"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }

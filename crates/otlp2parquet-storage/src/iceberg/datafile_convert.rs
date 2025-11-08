@@ -173,7 +173,7 @@ mod tests {
                 id: 1,
                 name: "test_field".to_string(),
                 required: true,
-                field_type: Type::Long,
+                field_type: Type::Primitive("long".to_string()),
                 doc: None,
             }],
             identifier_field_ids: None,

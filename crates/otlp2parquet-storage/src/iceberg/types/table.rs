@@ -59,6 +59,38 @@ pub struct TableMetadata {
     /// List of sort orders
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_orders: Option<Vec<serde_json::Value>>,
+
+    /// Last assigned column ID (AWS S3 Tables field)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_column_id: Option<i32>,
+
+    /// Last assigned partition ID (AWS S3 Tables field)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_partition_id: Option<i32>,
+
+    /// Last assigned sequence number (Iceberg v2 field)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_sequence_number: Option<i64>,
+
+    /// Metadata log (history of metadata file locations)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata_log: Option<Vec<serde_json::Value>>,
+
+    /// Partition statistics
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partition_statistics: Option<Vec<serde_json::Value>>,
+
+    /// Snapshot references (branches/tags)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refs: Option<serde_json::Value>,
+
+    /// Snapshot log (history of snapshot changes)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_log: Option<Vec<serde_json::Value>>,
+
+    /// Table statistics
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub statistics: Option<Vec<serde_json::Value>>,
 }
 
 impl TableMetadata {
@@ -86,9 +118,9 @@ pub struct LoadTableResponse {
     /// Metadata location (S3/GCS/etc path to metadata.json)
     pub metadata_location: String,
 
-    /// Configuration properties
+    /// Configuration properties (AWS S3 Tables returns structured config)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub config: Option<std::collections::HashMap<String, String>>,
+    pub config: Option<serde_json::Value>,
 }
 
 /// Response from catalog config endpoint (GET /v1/config)
@@ -116,7 +148,7 @@ mod tests {
                 id: 1,
                 name: "id".to_string(),
                 required: true,
-                field_type: Type::Long,
+                field_type: Type::Primitive("long".to_string()),
                 doc: None,
             }],
             identifier_field_ids: None,
@@ -128,7 +160,7 @@ mod tests {
                 id: 1,
                 name: "id".to_string(),
                 required: true,
-                field_type: Type::Long,
+                field_type: Type::Primitive("long".to_string()),
                 doc: None,
             }],
             identifier_field_ids: None,
@@ -148,6 +180,14 @@ mod tests {
             properties: None,
             default_sort_order_id: None,
             sort_orders: None,
+            last_column_id: None,
+            last_partition_id: None,
+            last_sequence_number: None,
+            metadata_log: None,
+            partition_statistics: None,
+            refs: None,
+            snapshot_log: None,
+            statistics: None,
         };
 
         let current = metadata.current_schema().unwrap();
@@ -175,6 +215,14 @@ mod tests {
             properties: None,
             default_sort_order_id: None,
             sort_orders: None,
+            last_column_id: None,
+            last_partition_id: None,
+            last_sequence_number: None,
+            metadata_log: None,
+            partition_statistics: None,
+            refs: None,
+            snapshot_log: None,
+            statistics: None,
         };
 
         let json = serde_json::to_string(&metadata).unwrap();
@@ -204,6 +252,14 @@ mod tests {
                 properties: None,
                 default_sort_order_id: None,
                 sort_orders: None,
+                last_column_id: None,
+                last_partition_id: None,
+                last_sequence_number: None,
+                metadata_log: None,
+                partition_statistics: None,
+                refs: None,
+                snapshot_log: None,
+                statistics: None,
             },
             metadata_location: "s3://bucket/warehouse/db/table/metadata/v1.metadata.json"
                 .to_string(),

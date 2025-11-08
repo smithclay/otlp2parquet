@@ -326,7 +326,12 @@ impl Writer {
                 // Commit to Iceberg catalog if configured (warn-and-succeed on error)
                 if let Some(committer) = iceberg_committer {
                     if let Err(e) = committer
-                        .commit_with_signal("logs", None, &[write_result])
+                        .commit_with_signal(
+                            "logs",
+                            None,
+                            &[write_result],
+                            parquet_writer.operator(),
+                        )
                         .await
                     {
                         eprintln!("Warning: Failed to commit logs to Iceberg catalog: {}", e);
@@ -375,7 +380,12 @@ impl Writer {
                 // Commit to Iceberg catalog if configured
                 if let Some(committer) = iceberg_committer {
                     if let Err(e) = committer
-                        .commit_with_signal("metrics", Some(metric_type), &[write_result])
+                        .commit_with_signal(
+                            "metrics",
+                            Some(metric_type),
+                            &[write_result],
+                            parquet_writer.operator(),
+                        )
                         .await
                     {
                         eprintln!(

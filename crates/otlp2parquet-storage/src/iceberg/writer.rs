@@ -1,6 +1,5 @@
 use crate::iceberg::catalog::IcebergCatalog;
 use crate::iceberg::http::ReqwestHttpClient;
-use crate::iceberg::types::datafile::DataFile;
 use crate::iceberg::types::table::TableMetadata;
 use crate::opendal_storage::OpenDalStorage;
 use crate::parquet_writer::ParquetWriteResult;
@@ -72,11 +71,36 @@ impl IcebergWriter {
         // 3. Write Parquet file
         let write_result = self.write_parquet(&file_path, arrow_batch).await?;
 
-        // 4. Build DataFile metadata
-        let data_file = self.build_data_file(&write_result, &table)?;
+        // 4. Commit to catalog using manifest-based flow (non-WASM only)
+        // Convert ParquetWriteResult to DataFile
+        #[cfg(not(target_arch = "wasm32"))]
+        let iceberg_schema = crate::iceberg::arrow_convert::arrow_to_iceberg_schema(
+            write_result.arrow_schema.as_ref(),
+        )?;
 
-        // 5. Commit to catalog
-        self.commit_data_file(&table, data_file).await?;
+        // Build data file metadata (only needed for non-WASM catalog commits)
+        #[cfg(not(target_arch = "wasm32"))]
+        let data_file =
+            crate::iceberg::datafile_convert::build_data_file(&write_result, &iceberg_schema)?;
+
+        // Call catalog.commit_with_signal (warn and succeed on error)
+        // Note: commit_with_signal is only available for non-WASM targets
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Err(e) = self
+            .catalog
+            .commit_with_signal(
+                signal_type,
+                metric_type,
+                vec![data_file],
+                self.storage.operator(),
+            )
+            .await
+        {
+            warn!(
+                "Failed to commit to catalog: {} - Parquet file written but not cataloged at: {}",
+                e, write_result.path
+            );
+        }
 
         Ok(write_result)
     }
@@ -133,6 +157,14 @@ impl IcebergWriter {
                     properties: None,
                     default_sort_order_id: None,
                     sort_orders: None,
+                    last_column_id: None,
+                    last_partition_id: None,
+                    last_sequence_number: None,
+                    metadata_log: None,
+                    partition_statistics: None,
+                    refs: None,
+                    snapshot_log: None,
+                    statistics: None,
                 })
             }
         }
@@ -199,6 +231,14 @@ impl IcebergWriter {
             properties: None,
             default_sort_order_id: None,
             sort_orders: None,
+            last_column_id: None,
+            last_partition_id: None,
+            last_sequence_number: None,
+            metadata_log: None,
+            partition_statistics: None,
+            refs: None,
+            snapshot_log: None,
+            statistics: None,
         })
     }
 
@@ -371,72 +411,6 @@ impl IcebergWriter {
             }
             None => Ok(None),
         }
-    }
-
-    fn build_data_file(
-        &self,
-        write_result: &ParquetWriteResult,
-        table: &TableMetadata,
-    ) -> Result<DataFile> {
-        // Get the current schema from the table metadata
-        let schema = table
-            .schemas
-            .iter()
-            .find(|s| s.schema_id == table.current_schema_id)
-            .ok_or_else(|| anyhow!("Current schema not found in table metadata"))?;
-
-        // Use existing datafile_convert logic to build the DataFile
-        crate::iceberg::datafile_convert::build_data_file(write_result, schema)
-    }
-
-    async fn commit_data_file(&self, table: &TableMetadata, data_file: DataFile) -> Result<()> {
-        // Extract table name from location
-        // Location format: {warehouse}/{namespace}/{table_name}
-        let table_name = self.extract_table_name_from_location(&table.location)?;
-
-        // Use existing catalog commit_transaction method
-        // Warn-and-succeed pattern: log error but don't fail
-        match self
-            .catalog
-            .commit_transaction(&table_name, vec![data_file])
-            .await
-        {
-            Ok(_) => {
-                debug!(
-                    "Successfully committed data file to catalog for table '{}'",
-                    table_name
-                );
-                Ok(())
-            }
-            Err(e) => {
-                // Warn-and-succeed pattern: log but don't fail
-                tracing::warn!(
-                    "Failed to commit to Iceberg catalog for table '{}': {}. File written but not cataloged.",
-                    table_name,
-                    e
-                );
-                Ok(())
-            }
-        }
-    }
-
-    /// Extract table name from table location
-    /// Location format: {warehouse}/{namespace}/{table_name}
-    fn extract_table_name_from_location(&self, location: &str) -> Result<String> {
-        // Remove warehouse prefix
-        let without_warehouse = location
-            .strip_prefix(&self.config.warehouse)
-            .ok_or_else(|| anyhow!("Location does not start with warehouse: {}", location))?
-            .trim_start_matches('/');
-
-        // Remove namespace prefix
-        let without_namespace = without_warehouse
-            .strip_prefix(&self.config.namespace)
-            .ok_or_else(|| anyhow!("Location does not contain namespace: {}", location))?
-            .trim_start_matches('/');
-
-        // What's left should be the table name
-        Ok(without_namespace.to_string())
     }
 }
 

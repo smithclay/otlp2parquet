@@ -174,6 +174,13 @@ impl ParquetWriter {
         Self { operator }
     }
 
+    /// Get reference to the underlying OpenDAL operator
+    ///
+    /// Useful for Iceberg manifest operations that need direct storage access
+    pub fn operator(&self) -> &Operator {
+        &self.operator
+    }
+
     /// Write a RecordBatch to storage, computing hash and generating partition path
     ///
     /// This method:
