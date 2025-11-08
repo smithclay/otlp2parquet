@@ -400,6 +400,57 @@ impl Writer {
         }
     }
 
+    /// Write traces batch
+    pub async fn write_traces(
+        &self,
+        batch: &RecordBatch,
+        service_name: &str,
+        timestamp_nanos: i64,
+    ) -> Result<Vec<String>, Error> {
+        match self {
+            Writer::Iceberg { writer, .. } => {
+                let result = writer
+                    .write_and_commit("traces", None, batch)
+                    .await
+                    .map_err(|e| Error::from(format!("Iceberg write failed: {}", e)))?;
+                Ok(vec![result.path])
+            }
+            Writer::PlainS3 {
+                parquet_writer,
+                iceberg_committer,
+                ..
+            } => {
+                let write_result = parquet_writer
+                    .write_batches_with_hash(
+                        std::slice::from_ref(batch),
+                        service_name,
+                        timestamp_nanos,
+                    )
+                    .await
+                    .map_err(|e| Error::from(format!("S3 write failed: {}", e)))?;
+
+                let path = write_result.path.clone();
+
+                // Commit to Iceberg catalog if configured (warn-and-succeed on error)
+                if let Some(committer) = iceberg_committer {
+                    if let Err(e) = committer
+                        .commit_with_signal(
+                            "traces",
+                            None,
+                            &[write_result],
+                            parquet_writer.operator(),
+                        )
+                        .await
+                    {
+                        eprintln!("Warning: Failed to commit traces to Iceberg catalog: {}", e);
+                    }
+                }
+
+                Ok(vec![path])
+            }
+        }
+    }
+
     /// Get passthrough batcher
     pub fn passthrough(&self) -> &PassthroughBatcher {
         match self {

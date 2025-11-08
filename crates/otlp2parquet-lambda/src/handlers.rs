@@ -74,13 +74,7 @@ async fn handle_post(
     match signal {
         SignalKind::Logs => process_logs(body.as_ref(), format, content_type, state).await,
         SignalKind::Metrics => process_metrics(body.as_ref(), format, content_type, state).await,
-        SignalKind::Traces => HttpResponseData::json(
-            501,
-            json!({
-                "error": "OTLP trace ingestion not implemented yet",
-            })
-            .to_string(),
-        ),
+        SignalKind::Traces => process_traces(body.as_ref(), format, content_type, state).await,
     }
 }
 
@@ -259,6 +253,84 @@ async fn process_metrics(
             "histogram_count": aggregated.histogram_count,
             "exponential_histogram_count": aggregated.exponential_histogram_count,
             "summary_count": aggregated.summary_count,
+            "partitions": uploaded_paths,
+        })
+        .to_string(),
+    )
+}
+
+async fn process_traces(
+    body: &[u8],
+    format: otlp2parquet_core::InputFormat,
+    content_type: Option<&str>,
+    state: &LambdaState,
+) -> HttpResponseData {
+    let request = match otlp::traces::parse_otlp_trace_request(body, format) {
+        Ok(req) => req,
+        Err(err) => {
+            eprintln!(
+                "Failed to parse OTLP traces (format: {:?}, content-type: {:?}): {}",
+                format, content_type, err
+            );
+            return HttpResponseData::json(
+                400,
+                json!({ "error": "invalid OTLP traces payload" }).to_string(),
+            );
+        }
+    };
+
+    let per_service_requests = otlp::traces::split_request_by_service(request);
+    let mut uploads = Vec::new();
+    let mut total_spans = 0usize;
+
+    for subset in per_service_requests {
+        match otlp::traces::TraceArrowConverter::convert(&subset) {
+            Ok((batches, metadata)) => {
+                total_spans += metadata.span_count;
+                uploads.push((batches, metadata));
+            }
+            Err(err) => {
+                eprintln!("Failed to convert OTLP traces to Arrow: {}", err);
+                return HttpResponseData::json(
+                    500,
+                    json!({ "error": "internal encoding failure" }).to_string(),
+                );
+            }
+        }
+    }
+
+    let mut uploaded_paths = Vec::new();
+    for (batches, _metadata) in uploads {
+        // Write traces via Writer (handles both Iceberg and PlainS3 modes)
+        for record_batch in &batches {
+            let service_name = extract_service_name(record_batch);
+            let timestamp_nanos = extract_first_timestamp(record_batch);
+
+            match state
+                .writer
+                .write_traces(record_batch, &service_name, timestamp_nanos)
+                .await
+            {
+                Ok(paths) => {
+                    uploaded_paths.extend(paths);
+                }
+                Err(err) => {
+                    eprintln!("Failed to write traces: {}", err);
+                    return HttpResponseData::json(
+                        500,
+                        json!({ "error": "internal storage failure" }).to_string(),
+                    );
+                }
+            }
+        }
+    }
+
+    HttpResponseData::json(
+        200,
+        json!({
+            "status": "ok",
+            "spans_processed": total_spans,
+            "flush_count": uploaded_paths.len(),
             "partitions": uploaded_paths,
         })
         .to_string(),
