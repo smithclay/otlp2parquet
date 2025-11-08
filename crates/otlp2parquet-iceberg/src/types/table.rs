@@ -138,7 +138,7 @@ pub struct CatalogConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::iceberg::types::schema::{NestedField, Schema, Type};
+    use crate::types::schema::{NestedField, Schema, Type};
 
     #[test]
     fn test_table_metadata_current_schema() {

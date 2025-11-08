@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::iceberg::types::datafile::DataFile;
+use crate::types::datafile::DataFile;
 
 /// Avro schema for Iceberg manifest entry
 /// Based on: https://iceberg.apache.org/spec/#manifests
@@ -318,7 +318,7 @@ impl ManifestListWriter {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
-    use crate::iceberg::types::datafile::{DataContentType, DataFileFormat};
+    use crate::types::datafile::{DataContentType, DataFileFormat};
 
     #[test]
     fn test_data_file_to_avro_conversion() {

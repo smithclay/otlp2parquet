@@ -38,10 +38,9 @@ fn test_generate_warehouse_path() {
 }
 
 #[tokio::test]
-#[cfg(feature = "services-fs")]
 async fn test_write_and_commit_integration() {
-    use crate::iceberg::catalog::{IcebergCatalog, NamespaceIdent};
-    use crate::iceberg::http::ReqwestHttpClient;
+    use crate::catalog::{IcebergCatalog, NamespaceIdent};
+    use crate::http::ReqwestHttpClient;
     use arrow::array::{Int64Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
@@ -69,7 +68,7 @@ async fn test_write_and_commit_integration() {
         namespace: "otel".to_string(),
     };
 
-    let http_client = ReqwestHttpClient::new(&config.rest_uri).await.unwrap();
+    let http_client = ReqwestHttpClient::new().unwrap();
     let namespace = NamespaceIdent::from_vec(vec!["otel".to_string()]).unwrap();
     let catalog = Arc::new(IcebergCatalog::new(
         http_client,
@@ -81,7 +80,11 @@ async fn test_write_and_commit_integration() {
 
     let temp_dir = std::env::temp_dir();
     let test_root = temp_dir.join("iceberg_writer_test");
-    let storage = Arc::new(OpenDalStorage::new_fs(test_root.to_str().unwrap()).unwrap());
+    std::fs::create_dir_all(&test_root).unwrap();
+    let storage =
+        opendal::Operator::new(opendal::services::Fs::default().root(test_root.to_str().unwrap()))
+            .unwrap()
+            .finish();
     let writer = IcebergWriter::new(catalog, storage, config);
 
     // Act
@@ -112,8 +115,8 @@ async fn test_get_or_create_table_creates_new() {
 
 #[tokio::test]
 async fn test_write_parquet_to_memory() {
-    use crate::iceberg::catalog::{IcebergCatalog, NamespaceIdent};
-    use crate::iceberg::http::ReqwestHttpClient;
+    use crate::catalog::{IcebergCatalog, NamespaceIdent};
+    use crate::http::ReqwestHttpClient;
     use arrow::array::Int64Array;
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
@@ -121,10 +124,9 @@ async fn test_write_parquet_to_memory() {
     use std::collections::HashMap;
 
     // Arrange
-    let op = opendal::Operator::new(services::Memory::default())
+    let storage = opendal::Operator::new(services::Memory::default())
         .unwrap()
         .finish();
-    let storage = Arc::new(OpenDalStorage::from_operator(op));
 
     let config = IcebergConfig {
         rest_uri: "https://test.com".to_string(),
@@ -132,7 +134,7 @@ async fn test_write_parquet_to_memory() {
         namespace: "test".to_string(),
     };
 
-    let http_client = ReqwestHttpClient::new(&config.rest_uri).await.unwrap();
+    let http_client = ReqwestHttpClient::new().unwrap();
     let namespace = NamespaceIdent::from_vec(vec!["test".to_string()]).unwrap();
     let catalog = Arc::new(IcebergCatalog::new(
         http_client,
@@ -174,9 +176,9 @@ async fn test_write_parquet_to_memory() {
 
 #[tokio::test]
 async fn test_build_data_file() {
-    use crate::iceberg::arrow_convert::arrow_to_iceberg_schema;
-    use crate::iceberg::catalog::{IcebergCatalog, NamespaceIdent};
-    use crate::iceberg::http::ReqwestHttpClient;
+    use crate::arrow_convert::arrow_to_iceberg_schema;
+    use crate::catalog::{IcebergCatalog, NamespaceIdent};
+    use crate::http::ReqwestHttpClient;
     use std::collections::HashMap;
 
     // Create a simple test setup
@@ -215,7 +217,7 @@ async fn test_build_data_file() {
         namespace: "otel".to_string(),
     };
 
-    let http_client = ReqwestHttpClient::new(&config.rest_uri).await.unwrap();
+    let http_client = ReqwestHttpClient::new().unwrap();
     let namespace = NamespaceIdent::from_vec(vec!["otel".to_string()]).unwrap();
     let catalog = Arc::new(IcebergCatalog::new(
         http_client,
@@ -225,10 +227,9 @@ async fn test_build_data_file() {
         HashMap::new(),
     ));
 
-    let op = opendal::Operator::new(opendal::services::Memory::default())
+    let storage = opendal::Operator::new(opendal::services::Memory::default())
         .unwrap()
         .finish();
-    let storage = Arc::new(OpenDalStorage::from_operator(op));
     let writer = IcebergWriter::new(catalog, storage.clone(), config);
 
     // Create a real record batch and write it to get a ParquetWriteResult
@@ -259,7 +260,7 @@ async fn test_build_data_file() {
     // Act - build the DataFile from the write result
     let iceberg_schema = table.schemas.first().unwrap();
     let data_file =
-        crate::iceberg::datafile_convert::build_data_file(&write_result, iceberg_schema).unwrap();
+        crate::datafile_convert::build_data_file(&write_result, iceberg_schema).unwrap();
 
     // Assert
     assert_eq!(data_file.file_path, write_result.path);

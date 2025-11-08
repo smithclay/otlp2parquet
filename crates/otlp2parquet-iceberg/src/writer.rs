@@ -1,11 +1,10 @@
-use crate::iceberg::catalog::IcebergCatalog;
-use crate::iceberg::http::ReqwestHttpClient;
-use crate::iceberg::types::table::TableMetadata;
-use crate::opendal_storage::OpenDalStorage;
-use crate::parquet_writer::ParquetWriteResult;
+use crate::catalog::IcebergCatalog;
+use crate::http::ReqwestHttpClient;
+use crate::types::table::TableMetadata;
 use anyhow::{anyhow, Result};
 use arrow::record_batch::RecordBatch;
 use chrono::Utc;
+use otlp2parquet_core::{Blake3Hash, ParquetWriteResult};
 use parquet::arrow::ArrowWriter;
 use parquet::basic::ColumnOrder;
 use parquet::file::metadata::{
@@ -28,14 +27,14 @@ pub struct IcebergConfig {
 pub struct IcebergWriter {
     catalog: Arc<IcebergCatalog<ReqwestHttpClient>>,
     #[allow(dead_code)] // Will be used in future tasks for Parquet write
-    storage: Arc<OpenDalStorage>,
+    storage: opendal::Operator,
     pub config: IcebergConfig,
 }
 
 impl IcebergWriter {
     pub fn new(
         catalog: Arc<IcebergCatalog<ReqwestHttpClient>>,
-        storage: Arc<OpenDalStorage>,
+        storage: opendal::Operator,
         config: IcebergConfig,
     ) -> Self {
         Self {
@@ -74,26 +73,19 @@ impl IcebergWriter {
         // 4. Commit to catalog using manifest-based flow (non-WASM only)
         // Convert ParquetWriteResult to DataFile
         #[cfg(not(target_arch = "wasm32"))]
-        let iceberg_schema = crate::iceberg::arrow_convert::arrow_to_iceberg_schema(
-            write_result.arrow_schema.as_ref(),
-        )?;
+        let iceberg_schema =
+            crate::arrow_convert::arrow_to_iceberg_schema(write_result.arrow_schema.as_ref())?;
 
         // Build data file metadata (only needed for non-WASM catalog commits)
         #[cfg(not(target_arch = "wasm32"))]
-        let data_file =
-            crate::iceberg::datafile_convert::build_data_file(&write_result, &iceberg_schema)?;
+        let data_file = crate::datafile_convert::build_data_file(&write_result, &iceberg_schema)?;
 
         // Call catalog.commit_with_signal (warn and succeed on error)
         // Note: commit_with_signal is only available for non-WASM targets
         #[cfg(not(target_arch = "wasm32"))]
         if let Err(e) = self
             .catalog
-            .commit_with_signal(
-                signal_type,
-                metric_type,
-                vec![data_file],
-                self.storage.operator(),
-            )
+            .commit_with_signal(signal_type, metric_type, vec![data_file], &self.storage)
             .await
         {
             warn!(
@@ -137,7 +129,7 @@ impl IcebergWriter {
                 // Get Arrow schema and convert to Iceberg schema
                 let arrow_schema = self.get_schema_for_signal(signal_type, metric_type)?;
                 let iceberg_schema =
-                    crate::iceberg::arrow_convert::arrow_to_iceberg_schema(arrow_schema.as_ref())?;
+                    crate::arrow_convert::arrow_to_iceberg_schema(arrow_schema.as_ref())?;
 
                 let location = format!(
                     "{}/{}/{}",
@@ -195,8 +187,7 @@ impl IcebergWriter {
         );
 
         // Convert Arrow schema to Iceberg schema
-        let iceberg_schema =
-            crate::iceberg::arrow_convert::arrow_to_iceberg_schema(arrow_schema.as_ref())?;
+        let iceberg_schema = crate::arrow_convert::arrow_to_iceberg_schema(arrow_schema.as_ref())?;
         debug!(
             "Converted to Iceberg schema with {} fields",
             iceberg_schema.fields.len()
@@ -275,8 +266,6 @@ impl IcebergWriter {
         file_path: &str,
         arrow_batch: &RecordBatch,
     ) -> Result<ParquetWriteResult> {
-        use crate::parquet_writer::{writer_properties, Blake3Hash};
-
         // Serialize to in-memory buffer with hashing
         struct HashingBuffer {
             buffer: Vec<u8>,
@@ -311,7 +300,7 @@ impl IcebergWriter {
 
         // Write to buffer
         let mut sink = HashingBuffer::new();
-        let props = writer_properties().clone();
+        let props = parquet::file::properties::WriterProperties::builder().build();
         let schema = arrow_batch.schema();
         let file_metadata = {
             let mut writer = ArrowWriter::try_new(&mut sink, schema.clone(), Some(props))
@@ -337,7 +326,6 @@ impl IcebergWriter {
 
         // Write to storage at exact path
         self.storage
-            .operator()
             .write(file_path, buffer)
             .await
             .map_err(|e| anyhow!("Failed to write to storage: {}", e))?;

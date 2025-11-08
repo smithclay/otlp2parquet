@@ -14,16 +14,17 @@
 // Core transformation is in: otlp2parquet-core (OTLP → Arrow)
 // Batching utilities are in: otlp2parquet-batch
 
-pub mod iceberg;
 pub mod opendal_storage;
 pub mod parquet_writer;
 pub mod partition;
 
+// Re-export iceberg module from separate crate (optional, behind feature flag)
+#[cfg(feature = "iceberg")]
+pub use otlp2parquet_iceberg as iceberg;
+
 // Re-export commonly used types
-pub use iceberg::IcebergCatalog;
-#[cfg(not(target_arch = "wasm32"))]
-pub use iceberg::IcebergCommitter;
 pub use opendal_storage::OpenDalStorage;
-pub use parquet_writer::{
-    set_parquet_row_group_size, writer_properties, Blake3Hash, ParquetWriteResult, ParquetWriter,
-};
+pub use otlp2parquet_core::{Blake3Hash, ParquetWriteResult};
+#[cfg(feature = "iceberg")]
+pub use otlp2parquet_iceberg::{IcebergCatalog, IcebergCommitter};
+pub use parquet_writer::{set_parquet_row_group_size, writer_properties, ParquetWriter};

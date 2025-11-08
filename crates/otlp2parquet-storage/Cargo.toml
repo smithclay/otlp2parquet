@@ -6,8 +6,9 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
-# Internal dependencies (for iceberg module)
+# Internal dependencies
 otlp2parquet-core = { path = "../otlp2parquet-core" }
+otlp2parquet-iceberg = { path = "../otlp2parquet-iceberg", optional = true }
 
 # Storage abstraction
 opendal = { version = "0.54.1", default-features = false }
@@ -32,10 +33,6 @@ uuid = { version = "1.0", features = ["v4"] }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # WASM-specific: Snappy compression only
 parquet = { workspace = true, features = ["arrow", "async", "snap"] }
-# WASM HTTP client for iceberg module
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Native: ZSTD compression + Snappy
@@ -44,14 +41,6 @@ parquet = { workspace = true, features = ["arrow", "async", "snap", "zstd"] }
 futures-util = "0.3"
 # Tokio needed for filesystem backend
 tokio = { workspace = true, optional = true, features = ["rt", "macros"] }
-# HTTP client for iceberg module (native)
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-aws-sigv4 = { workspace = true }
-aws-credential-types = { workspace = true }
-aws-config = { workspace = true }
-url = "2.5"
-# Avro for Iceberg manifest files (native only)
-apache-avro = { version = "0.17", default-features = false, features = ["snappy"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
@@ -65,3 +54,5 @@ default = []
 # Feature flags for different storage backends
 services-s3 = ["opendal/services-s3"]
 services-fs = ["opendal/services-fs", "tokio"]
+# Iceberg catalog integration (optional)
+iceberg = ["dep:otlp2parquet-iceberg"]

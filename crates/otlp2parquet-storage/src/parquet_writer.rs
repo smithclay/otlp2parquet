@@ -6,8 +6,9 @@
 use anyhow::{anyhow, bail, Context, Result};
 use arrow::array::RecordBatch;
 use arrow::datatypes::SchemaRef;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use opendal::Operator;
+use otlp2parquet_core::{Blake3Hash, ParquetWriteResult};
 use parquet::basic::ColumnOrder;
 use parquet::file::metadata::{
     FileMetaData as PhysicalFileMetaData, ParquetMetaData, RowGroupMetaData,
@@ -129,38 +130,6 @@ pub fn writer_properties() -> &'static WriterProperties {
             .set_key_value_metadata(Some(metadata))
             .build()
     })
-}
-
-/// Blake3 hash representation
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Blake3Hash {
-    bytes: [u8; 32],
-}
-
-impl Blake3Hash {
-    pub fn new(bytes: [u8; 32]) -> Self {
-        Self { bytes }
-    }
-
-    pub fn to_hex(&self) -> String {
-        hex::encode(self.bytes)
-    }
-
-    pub fn as_bytes(&self) -> &[u8; 32] {
-        &self.bytes
-    }
-}
-
-/// Rich metadata describing a Parquet file persisted by this writer.
-#[derive(Debug, Clone)]
-pub struct ParquetWriteResult {
-    pub path: String,
-    pub hash: Blake3Hash,
-    pub file_size: u64,
-    pub row_count: i64,
-    pub arrow_schema: SchemaRef,
-    pub parquet_metadata: Arc<ParquetMetaData>,
-    pub completed_at: DateTime<Utc>,
 }
 
 /// Parquet writer that streams directly to OpenDAL storage

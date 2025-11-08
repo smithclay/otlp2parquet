@@ -168,8 +168,7 @@ impl Writer {
 
                 // Initialize Iceberg catalog using init module
                 use otlp2parquet_storage::iceberg::http::ReqwestHttpClient;
-                let http_client = ReqwestHttpClient::new(&rest_uri)
-                    .await
+                let http_client = ReqwestHttpClient::new()
                     .map_err(|e| Error::from(format!("Failed to create HTTP client: {}", e)))?;
 
                 // Parse namespace
@@ -216,7 +215,11 @@ impl Writer {
                 ));
 
                 // Create IcebergWriter
-                let writer = Arc::new(IcebergWriter::new(catalog, storage, iceberg_config));
+                let writer = Arc::new(IcebergWriter::new(
+                    catalog,
+                    storage.operator().clone(),
+                    iceberg_config,
+                ));
 
                 println!("Initialized IcebergWriter for S3 Tables mode");
 
@@ -329,7 +332,7 @@ impl Writer {
                         .commit_with_signal(
                             "logs",
                             None,
-                            &[write_result],
+                            std::slice::from_ref(&write_result),
                             parquet_writer.operator(),
                         )
                         .await
@@ -383,7 +386,7 @@ impl Writer {
                         .commit_with_signal(
                             "metrics",
                             Some(metric_type),
-                            &[write_result],
+                            std::slice::from_ref(&write_result),
                             parquet_writer.operator(),
                         )
                         .await
@@ -437,7 +440,7 @@ impl Writer {
                         .commit_with_signal(
                             "traces",
                             None,
-                            &[write_result],
+                            std::slice::from_ref(&write_result),
                             parquet_writer.operator(),
                         )
                         .await

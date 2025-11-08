@@ -15,10 +15,12 @@ use arrow::array::RecordBatch;
 
 pub mod otlp;
 pub mod schema;
+pub mod types;
 
 // Re-export commonly used types
 pub use otlp::{InputFormat, LogMetadata};
 pub use schema::otel_logs_schema;
+pub use types::{Blake3Hash, ParquetWriteResult};
 
 /// Parse OTLP log data and convert to Arrow RecordBatch
 ///

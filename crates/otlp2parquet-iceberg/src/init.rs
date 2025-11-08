@@ -50,7 +50,7 @@ pub enum InitResult {
 /// # Example
 ///
 /// ```no_run
-/// use otlp2parquet_storage::iceberg::init::{initialize_committer, InitResult};
+/// use otlp2parquet_iceberg::init::{initialize_committer, InitResult};
 ///
 /// # async fn example() {
 /// match initialize_committer().await {
@@ -88,7 +88,7 @@ pub async fn initialize_committer() -> InitResult {
     };
 
     // Create HTTP client
-    let http_client = match ReqwestHttpClient::new(&config.rest_uri).await {
+    let http_client = match ReqwestHttpClient::new() {
         Ok(client) => client,
         Err(e) => return InitResult::CatalogError(format!("Failed to create HTTP client: {}", e)),
     };

@@ -3,11 +3,15 @@
 //! Minimal implementation of Iceberg REST API for committing data files.
 
 use super::http::{HttpClient, HttpResponse};
-use super::protocol::{CommitTransactionRequest, ErrorResponse, TableUpdate};
+use super::protocol::{CommitTableRequest, ErrorResponse, TableRequirement, TableUpdate};
+#[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 use super::types::{DataFile, LoadTableResponse, TableMetadata};
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, info, warn};
+
+#[cfg(not(target_arch = "wasm32"))]
+use tracing::instrument;
 
 /// Iceberg namespace identifier
 ///
@@ -182,7 +186,7 @@ impl<T: HttpClient> IcebergCatalog<T> {
     /// Create a table in the catalog
     ///
     /// Calls: POST /v1/{prefix}/namespaces/{namespace}/tables
-    #[cfg_attr(not(target_arch = "wasm32"), instrument(skip(self, schema), fields(table = %table_name))]
+    #[cfg_attr(not(target_arch = "wasm32"), instrument(skip(self, schema), fields(table = %table_name)))]
     pub async fn create_table(
         &self,
         table_name: &str,
@@ -217,7 +221,10 @@ impl<T: HttpClient> IcebergCatalog<T> {
             "stage-create": false
         });
 
-        info!("CreateTable request body: {}", serde_json::to_string_pretty(&request).unwrap_or_else(|_| "invalid json".to_string()));
+        info!(
+            "CreateTable request body: {}",
+            serde_json::to_string_pretty(&request).unwrap_or_else(|_| "invalid json".to_string())
+        );
 
         let body =
             serde_json::to_vec(&request).context("Failed to serialize create table request")?;
@@ -238,11 +245,12 @@ impl<T: HttpClient> IcebergCatalog<T> {
         // Log response details for debugging
         info!("CreateTable response status: {}", response.status);
         if !response.is_success() && response.status != 409 {
-            let response_body = response.body_string().unwrap_or_else(|_| "<binary>".to_string());
+            let response_body = response
+                .body_string()
+                .unwrap_or_else(|_| "<binary>".to_string());
             warn!(
                 "CreateTable failed with status {}: {}",
-                response.status,
-                response_body
+                response.status, response_body
             );
         }
 
@@ -258,7 +266,8 @@ impl<T: HttpClient> IcebergCatalog<T> {
     /// Load table metadata from the catalog
     ///
     /// Calls: GET /v1/{prefix}/namespaces/{namespace}/tables/{table}
-    #[cfg_attr(not(target_arch = "wasm32"), instrument(skip(self), fields(table = %table_name))]
+    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg_attr(not(target_arch = "wasm32"), instrument(skip(self), fields(table = %table_name)))]
     async fn load_table(&self, table_name: &str) -> Result<TableMetadata> {
         let url = if self.prefix.is_empty() {
             format!(
@@ -292,28 +301,75 @@ impl<T: HttpClient> IcebergCatalog<T> {
             return Err(self.handle_error_response(&response)?);
         }
 
-        let load_response: LoadTableResponse = response
-            .json()
-            .context("Failed to parse LoadTableResponse")?;
+        // Log response body for debugging
+        let body_str = response
+            .body_string()
+            .context("Failed to read response body")?;
+        warn!(
+            "LoadTable response body (first 500 chars): {}",
+            &body_str[..body_str.len().min(500)]
+        );
+
+        let load_response: LoadTableResponse = serde_json::from_str(&body_str).map_err(|e| {
+            anyhow!(
+                "Failed to parse LoadTableResponse: {}. Response: {}",
+                e,
+                &body_str[..body_str.len().min(1000)]
+            )
+        })?;
+
+        // Debug: log table metadata details
+        let metadata = &load_response.table_metadata;
+        warn!(
+            "TableMetadata - current_schema_id: {}, schemas count: {}, schema IDs: {:?}",
+            metadata.current_schema_id,
+            metadata.schemas.len(),
+            metadata
+                .schemas
+                .iter()
+                .map(|s| s.schema_id)
+                .collect::<Vec<_>>()
+        );
+
+        // Check if current schema exists
+        if metadata.current_schema().is_none() {
+            return Err(anyhow!("Current schema not found in table metadata"));
+        }
 
         Ok(load_response.table_metadata)
     }
 
-    /// Commit a transaction to the catalog
+    /// Update a table with requirements and updates (manifest-based commit)
     ///
-    /// Calls: POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/transactions/commit
-    #[cfg_attr(not(target_arch = "wasm32"), instrument(skip(self, data_files), fields(table = %table_name, num_files = data_files.len()))]
-    pub async fn commit_transaction(&self, table_name: &str, data_files: Vec<DataFile>) -> Result<()> {
+    /// Calls: POST /v1/{prefix}/namespaces/{namespace}/tables/{table}
+    ///
+    /// This is the proper Iceberg REST API method for committing changes with
+    /// optimistic concurrency control via requirements.
+    ///
+    /// # Parameters
+    /// - `table_name`: Name of the table to update
+    /// - `requirements`: Preconditions that must be met for the update to succeed
+    /// - `updates`: Changes to apply to the table (add snapshot, set ref, etc.)
+    ///
+    /// # Returns
+    /// Updated table metadata after successful commit
+    #[cfg_attr(not(target_arch = "wasm32"), instrument(skip(self, requirements, updates), fields(table = %table_name)))]
+    pub async fn update_table(
+        &self,
+        table_name: &str,
+        requirements: Vec<TableRequirement>,
+        updates: Vec<TableUpdate>,
+    ) -> Result<TableMetadata> {
         let url = if self.prefix.is_empty() {
             format!(
-                "{}/v1/namespaces/{}/tables/{}/transactions/commit",
+                "{}/v1/namespaces/{}/tables/{}",
                 self.base_url,
                 self.namespace.as_str(),
                 table_name
             )
         } else {
             format!(
-                "{}/v1/{}/namespaces/{}/tables/{}/transactions/commit",
+                "{}/v1/{}/namespaces/{}/tables/{}",
                 self.base_url,
                 self.prefix,
                 self.namespace.as_str(),
@@ -321,14 +377,26 @@ impl<T: HttpClient> IcebergCatalog<T> {
             )
         };
 
-        debug!("Committing {} files to: {}", data_files.len(), url);
+        debug!(
+            "Updating table '{}' with {} requirements and {} updates",
+            table_name,
+            requirements.len(),
+            updates.len()
+        );
 
         // Build commit request
-        let request = CommitTransactionRequest {
-            table_changes: vec![TableUpdate::AppendFiles { data_files }],
+        let request = CommitTableRequest {
+            requirements,
+            updates,
         };
 
-        let body = serde_json::to_vec(&request).context("Failed to serialize commit request")?;
+        let body =
+            serde_json::to_vec(&request).context("Failed to serialize update table request")?;
+
+        // Debug: log request body
+        if let Ok(body_str) = serde_json::to_string_pretty(&request) {
+            warn!("UpdateTable request body:\n{}", body_str);
+        }
 
         let response = self
             .http
@@ -341,31 +409,46 @@ impl<T: HttpClient> IcebergCatalog<T> {
                 body,
             )
             .await
-            .context("Failed to commit transaction")?;
+            .context("Failed to update table")?;
 
         if !response.is_success() {
             return Err(self.handle_error_response(&response)?);
         }
 
-        Ok(())
+        // Parse response - should be a LoadTableResponse
+        let load_response: LoadTableResponse = response
+            .json()
+            .context("Failed to parse update table response")?;
+
+        Ok(load_response.table_metadata)
     }
 
-    /// Commit Parquet files with signal type information
+    /// Commit Parquet files with signal type information using manifest-based flow
     ///
     /// This is the main entry point for committing files to Iceberg tables.
-    /// It maps signal types to table names, loads the table schema, and commits the files.
+    /// Uses proper Iceberg manifest file generation and updateTable endpoint.
     ///
     /// # Parameters
     /// - `signal_type`: "logs", "traces", or "metrics"
     /// - `metric_type`: For metrics only - "gauge", "sum", "histogram", etc.
     /// - `data_files`: Data files to commit
-    #[cfg_attr(not(target_arch = "wasm32"), instrument(skip(self, data_files), fields(num_files = data_files.len()))]
+    /// - `storage_operator`: OpenDAL operator for writing manifest files
+    ///
+    /// # Error Handling
+    /// Uses warn-and-succeed pattern: catalog failures are logged but don't fail the function
+    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg_attr(not(target_arch = "wasm32"), instrument(skip(self, data_files, storage_operator), fields(num_files = data_files.len())))]
     pub async fn commit_with_signal(
         &self,
         signal_type: &str,
         metric_type: Option<&str>,
         data_files: Vec<DataFile>,
+        storage_operator: &opendal::Operator,
     ) -> Result<()> {
+        use super::manifest::{ManifestListWriter, ManifestWriter};
+        use super::protocol::Snapshot;
+        use chrono::Utc;
+
         if data_files.is_empty() {
             debug!("No files to commit");
             return Ok(());
@@ -387,41 +470,154 @@ impl<T: HttpClient> IcebergCatalog<T> {
             )
         })?;
 
-        // Load table to verify it exists (optional - could skip for performance)
-        match self.load_table(table_name).await {
-            Ok(metadata) => {
-                debug!(
-                    "Loaded table '{}' (format version: {})",
-                    table_name, metadata.format_version
-                );
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to load table '{}': {} - will attempt commit anyway",
-                    table_name, e
-                );
-                // Continue - the commit might still succeed
-            }
-        }
-
         // Compute statistics for logging
         let total_rows: u64 = data_files.iter().map(|f| f.record_count).sum();
         let total_bytes: u64 = data_files.iter().map(|f| f.file_size_in_bytes).sum();
 
         info!(
-            "Committing {} files ({} rows, {} bytes) to table '{}'",
+            "Committing {} files ({} rows, {} bytes) to table '{}' using manifest-based flow",
             data_files.len(),
             total_rows,
             total_bytes,
             table_name
         );
 
-        // Commit transaction
-        self.commit_transaction(table_name, data_files).await?;
+        // 1. Load current table metadata
+        let metadata = match self.load_table(table_name).await {
+            Ok(m) => m,
+            Err(e) => {
+                warn!(
+                    "Failed to load table '{}': {} - cannot commit without metadata",
+                    table_name, e
+                );
+                return Ok(()); // Warn and succeed
+            }
+        };
 
-        info!("Successfully committed to table '{}'", table_name);
+        debug!(
+            "Loaded table '{}' (format version: {}, location: {})",
+            table_name, metadata.format_version, metadata.location
+        );
 
-        Ok(())
+        // 2. Generate snapshot ID (timestamp-based)
+        let snapshot_id = Utc::now().timestamp_millis();
+
+        // 3. Write manifest file
+        let manifest_path = match ManifestWriter::write(
+            snapshot_id,
+            &data_files,
+            storage_operator,
+            &metadata.location,
+        )
+        .await
+        {
+            Ok(path) => path,
+            Err(e) => {
+                warn!("Failed to write manifest file: {} - aborting commit", e);
+                return Ok(()); // Warn and succeed
+            }
+        };
+
+        debug!("Wrote manifest file: {}", manifest_path);
+
+        // Get manifest file size for manifest-list
+        let manifest_length = match storage_operator.stat(&manifest_path).await {
+            Ok(entry) => entry.content_length() as i64,
+            Err(e) => {
+                warn!(
+                    "Failed to stat manifest file {}: {} - using default size",
+                    manifest_path, e
+                );
+                0 // Default to 0 if we can't get size
+            }
+        };
+
+        // 4. Write manifest-list file
+        let manifest_list_path = match ManifestListWriter::write(
+            snapshot_id,
+            &manifest_path,
+            manifest_length,
+            &data_files,
+            storage_operator,
+            &metadata.location,
+        )
+        .await
+        {
+            Ok(path) => path,
+            Err(e) => {
+                warn!(
+                    "Failed to write manifest-list file: {} - aborting commit",
+                    e
+                );
+                return Ok(()); // Warn and succeed
+            }
+        };
+
+        debug!("Wrote manifest-list file: {}", manifest_list_path);
+
+        // 5. Build requirements and updates for optimistic concurrency
+        // For initial commits (no snapshots yet), use empty requirements
+        // Otherwise, assert current snapshot for optimistic concurrency
+        let requirements =
+            if metadata.current_snapshot_id.is_none() || metadata.current_snapshot_id == Some(-1) {
+                // First commit - no requirements needed
+                vec![]
+            } else {
+                // Subsequent commits - assert current snapshot
+                vec![TableRequirement::AssertRefSnapshotId {
+                    ref_name: "main".to_string(),
+                    snapshot_id: metadata.current_snapshot_id,
+                }]
+            };
+
+        let mut summary = HashMap::new();
+        summary.insert("operation".to_string(), "append".to_string());
+
+        // For first snapshot, parent_snapshot_id should be None (not -1)
+        let parent_snapshot_id = match metadata.current_snapshot_id {
+            Some(-1) | None => None,
+            id => id,
+        };
+
+        let snapshot = Snapshot {
+            snapshot_id,
+            parent_snapshot_id,
+            timestamp_ms: snapshot_id,
+            manifest_list: manifest_list_path.clone(),
+            summary,
+            sequence_number: None,
+            schema_id: None, // schema-id is optional, omit it
+        };
+
+        let updates = vec![
+            TableUpdate::AddSnapshot { snapshot },
+            TableUpdate::SetSnapshotRef {
+                ref_name: "main".to_string(),
+                snapshot_id,
+                ref_type: "branch".to_string(),
+            },
+        ];
+
+        // 6. Commit via updateTable
+        match self.update_table(table_name, requirements, updates).await {
+            Ok(updated_metadata) => {
+                info!(
+                    "Successfully committed {} files to catalog table '{}' (snapshot: {})",
+                    data_files.len(),
+                    table_name,
+                    snapshot_id
+                );
+                debug!("Updated metadata location: {}", updated_metadata.location);
+                Ok(())
+            }
+            Err(e) => {
+                warn!(
+                    "Catalog commit failed for table '{}': {}. Parquet files written but not cataloged.",
+                    table_name, e
+                );
+                Ok(()) // Warn and succeed
+            }
+        }
     }
 
     /// Handle error responses from the catalog
@@ -459,7 +655,9 @@ impl<T: HttpClient> IcebergCatalog<T> {
 ///   ]
 /// }
 /// ```
-pub(crate) fn arrow_to_iceberg_schema(schema: &arrow::datatypes::Schema) -> Result<serde_json::Value> {
+pub(crate) fn arrow_to_iceberg_schema(
+    schema: &arrow::datatypes::Schema,
+) -> Result<serde_json::Value> {
     // Global ID allocator to ensure field ID uniqueness across entire schema
     // Iceberg requires all field IDs to be unique within a schema
     let next_id = std::cell::Cell::new(1000);
@@ -620,8 +818,8 @@ fn arrow_type_to_iceberg(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::iceberg::http::{HttpClient, HttpResponse};
-    use crate::iceberg::types::{DataContentType, DataFileFormat};
+    use crate::http::{HttpClient, HttpResponse};
+    use crate::types::{DataContentType, DataFileFormat};
     use async_trait::async_trait;
     use std::sync::Mutex;
 
@@ -686,8 +884,12 @@ mod tests {
         assert_eq!(catalog.namespace.as_str(), "otel");
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_commit_with_no_files() {
+        use opendal::services::Memory;
+        use opendal::Operator;
+
         let mock = MockHttpClient::new(vec![]);
         let mut tables = HashMap::new();
         tables.insert("logs".to_string(), "otel_logs".to_string());
@@ -700,13 +902,22 @@ mod tests {
             tables,
         );
 
+        // Create in-memory storage
+        let storage = Operator::new(Memory::default()).unwrap().finish();
+
         // Should succeed with empty list
-        let result = catalog.commit_with_signal("logs", None, vec![]).await;
+        let result = catalog
+            .commit_with_signal("logs", None, vec![], &storage)
+            .await;
         assert!(result.is_ok());
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_commit_with_missing_table_config() {
+        use opendal::services::Memory;
+        use opendal::Operator;
+
         let mock = MockHttpClient::new(vec![]);
         let tables = HashMap::new(); // Empty - no tables configured
 
@@ -727,9 +938,12 @@ mod tests {
             .build()
             .unwrap();
 
+        // Create in-memory storage
+        let storage = Operator::new(Memory::default()).unwrap().finish();
+
         // Should fail with "no table configured" error
         let result = catalog
-            .commit_with_signal("logs", None, vec![data_file])
+            .commit_with_signal("logs", None, vec![data_file], &storage)
             .await;
         assert!(result.is_err());
         assert!(result
@@ -740,7 +954,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_table_success() {
-        use crate::iceberg::types::{
+        use crate::types::{
             LoadTableResponse, NestedField, Schema as IcebergSchema, TableMetadata, Type,
         };
 
@@ -755,7 +969,7 @@ mod tests {
                     id: 1,
                     name: "id".to_string(),
                     required: true,
-                    field_type: Type::Long,
+                    field_type: Type::Primitive("long".to_string()),
                     doc: None,
                 }],
                 identifier_field_ids: None,
@@ -768,6 +982,14 @@ mod tests {
             properties: None,
             default_sort_order_id: None,
             sort_orders: None,
+            last_column_id: None,
+            last_partition_id: None,
+            last_sequence_number: None,
+            metadata_log: None,
+            partition_statistics: None,
+            refs: None,
+            snapshot_log: None,
+            statistics: None,
         };
 
         let load_response = LoadTableResponse {
@@ -800,47 +1022,16 @@ mod tests {
         assert_eq!(metadata.schemas.len(), 1);
     }
 
-    #[tokio::test]
-    async fn test_commit_transaction_success() {
-        let mock = MockHttpClient::new(vec![HttpResponse {
-            status: 200,
-            headers: vec![],
-            body: br#"{"metadata-location":"s3://bucket/metadata/v2.json"}"#.to_vec(),
-        }]);
-
-        let mut tables = HashMap::new();
-        tables.insert("logs".to_string(), "otel_logs".to_string());
-
-        let catalog = IcebergCatalog::new(
-            mock,
-            "https://catalog.example.com".to_string(),
-            String::new(),
-            NamespaceIdent::from_vec(vec!["otel".to_string()]).unwrap(),
-            tables,
-        );
-
-        let data_file = DataFile::builder()
-            .content(DataContentType::Data)
-            .file_path("s3://bucket/file.parquet")
-            .file_format(DataFileFormat::Parquet)
-            .record_count(100)
-            .file_size_in_bytes(5000)
-            .build()
-            .unwrap();
-
-        let result = catalog
-            .commit_transaction("otel_logs", vec![data_file])
-            .await;
-        assert!(result.is_ok());
-    }
-
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_commit_with_signal_full_workflow() {
-        use crate::iceberg::types::{
+        use crate::types::{
             LoadTableResponse, NestedField, Schema as IcebergSchema, TableMetadata, Type,
         };
+        use opendal::services::Memory;
+        use opendal::Operator;
 
-        // Mock responses: 1) load_table, 2) commit_transaction
+        // Mock responses: 1) load_table, 2) update_table
         let table_metadata = TableMetadata {
             format_version: 2,
             table_uuid: "550e8400-e29b-41d4-a716-446655440000".to_string(),
@@ -852,7 +1043,7 @@ mod tests {
                     id: 1,
                     name: "id".to_string(),
                     required: true,
-                    field_type: Type::Long,
+                    field_type: Type::Primitive("long".to_string()),
                     doc: None,
                 }],
                 identifier_field_ids: None,
@@ -865,11 +1056,26 @@ mod tests {
             properties: None,
             default_sort_order_id: None,
             sort_orders: None,
+            last_column_id: None,
+            last_partition_id: None,
+            last_sequence_number: None,
+            metadata_log: None,
+            partition_statistics: None,
+            refs: None,
+            snapshot_log: None,
+            statistics: None,
         };
 
         let load_response = LoadTableResponse {
-            table_metadata,
+            table_metadata: table_metadata.clone(),
             metadata_location: "s3://bucket/warehouse/db/table/metadata/v1.metadata.json"
+                .to_string(),
+            config: None,
+        };
+
+        let update_response = LoadTableResponse {
+            table_metadata,
+            metadata_location: "s3://bucket/warehouse/db/table/metadata/v2.metadata.json"
                 .to_string(),
             config: None,
         };
@@ -881,11 +1087,11 @@ mod tests {
                 headers: vec![],
                 body: serde_json::to_vec(&load_response).unwrap(),
             },
-            // commit_transaction response
+            // update_table response
             HttpResponse {
                 status: 200,
                 headers: vec![],
-                body: br#"{"metadata-location":"s3://bucket/metadata/v2.json"}"#.to_vec(),
+                body: serde_json::to_vec(&update_response).unwrap(),
             },
         ]);
 
@@ -909,8 +1115,11 @@ mod tests {
             .build()
             .unwrap();
 
+        // Create in-memory storage
+        let storage = Operator::new(Memory::default()).unwrap().finish();
+
         let result = catalog
-            .commit_with_signal("logs", None, vec![data_file])
+            .commit_with_signal("logs", None, vec![data_file], &storage)
             .await;
         assert!(result.is_ok());
     }
@@ -941,9 +1150,12 @@ mod tests {
         assert!(err.to_string().contains("404") || err.to_string().contains("Table not found"));
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_commit_with_metrics() {
-        use crate::iceberg::types::{LoadTableResponse, Schema as IcebergSchema, TableMetadata};
+        use crate::types::{LoadTableResponse, Schema as IcebergSchema, TableMetadata};
+        use opendal::services::Memory;
+        use opendal::Operator;
 
         let table_metadata = TableMetadata {
             format_version: 2,
@@ -963,11 +1175,25 @@ mod tests {
             properties: None,
             default_sort_order_id: None,
             sort_orders: None,
+            last_column_id: None,
+            last_partition_id: None,
+            last_sequence_number: None,
+            metadata_log: None,
+            partition_statistics: None,
+            refs: None,
+            snapshot_log: None,
+            statistics: None,
         };
 
         let load_response = LoadTableResponse {
-            table_metadata,
+            table_metadata: table_metadata.clone(),
             metadata_location: "s3://bucket/metadata/v1.json".to_string(),
+            config: None,
+        };
+
+        let update_response = LoadTableResponse {
+            table_metadata,
+            metadata_location: "s3://bucket/metadata/v2.json".to_string(),
             config: None,
         };
 
@@ -980,7 +1206,7 @@ mod tests {
             HttpResponse {
                 status: 200,
                 headers: vec![],
-                body: br#"{"metadata-location":"s3://bucket/metadata/v2.json"}"#.to_vec(),
+                body: serde_json::to_vec(&update_response).unwrap(),
             },
         ]);
 
@@ -1007,9 +1233,12 @@ mod tests {
             .build()
             .unwrap();
 
+        // Create in-memory storage
+        let storage = Operator::new(Memory::default()).unwrap().finish();
+
         // Test metrics with metric_type
         let result = catalog
-            .commit_with_signal("metrics", Some("gauge"), vec![data_file])
+            .commit_with_signal("metrics", Some("gauge"), vec![data_file], &storage)
             .await;
         assert!(result.is_ok());
     }

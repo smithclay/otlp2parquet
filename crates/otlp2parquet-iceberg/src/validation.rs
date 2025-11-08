@@ -58,7 +58,7 @@ pub fn validate_schema_compatibility(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::iceberg::types::{NestedField, Type};
+    use crate::types::{NestedField, Type};
     use arrow::datatypes::{DataType, Field};
     use std::collections::HashMap;
 
