@@ -14,6 +14,7 @@ use anyhow::Result;
 use arrow::array::RecordBatch;
 
 pub mod otlp;
+pub mod parquet;
 pub mod schema;
 pub mod types;
 

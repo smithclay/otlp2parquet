@@ -81,6 +81,11 @@ pub async fn initialize_committer() -> InitResult {
         }
     };
 
+    initialize_committer_with_config(config).await
+}
+
+/// Initialize Iceberg committer from an explicit configuration object.
+pub async fn initialize_committer_with_config(config: IcebergRestConfig) -> InitResult {
     // Parse namespace (convert Vec<String> to NamespaceIdent)
     let namespace = match NamespaceIdent::from_vec(config.namespace.clone()) {
         Ok(ns) => ns,

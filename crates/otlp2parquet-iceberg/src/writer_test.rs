@@ -150,7 +150,9 @@ async fn test_write_parquet_to_memory() {
         RecordBatch::try_new(schema, vec![Arc::new(Int64Array::from(vec![1, 2, 3]))]).unwrap();
 
     // Act
-    let result = writer.write_parquet("test/file.parquet", &batch).await;
+    let result = writer
+        .write_parquet("test/file.parquet", "test/file.parquet", &batch)
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -253,7 +255,7 @@ async fn test_build_data_file() {
 
     // Write the batch to get a ParquetWriteResult
     let write_result = writer
-        .write_parquet("test/file.parquet", &batch)
+        .write_parquet("test/file.parquet", "test/file.parquet", &batch)
         .await
         .unwrap();
 

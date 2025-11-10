@@ -24,7 +24,8 @@ pub use otlp2parquet_iceberg as iceberg;
 
 // Re-export commonly used types
 pub use opendal_storage::OpenDalStorage;
+pub use otlp2parquet_core::parquet::{set_parquet_row_group_size, writer_properties};
 pub use otlp2parquet_core::{Blake3Hash, ParquetWriteResult};
 #[cfg(feature = "iceberg")]
 pub use otlp2parquet_iceberg::{IcebergCatalog, IcebergCommitter};
-pub use parquet_writer::{set_parquet_row_group_size, writer_properties, ParquetWriter};
+pub use parquet_writer::ParquetWriter;

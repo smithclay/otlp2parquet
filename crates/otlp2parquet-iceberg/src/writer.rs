@@ -1,18 +1,12 @@
 use crate::catalog::IcebergCatalog;
 use crate::http::ReqwestHttpClient;
+use crate::path::{catalog_path, storage_key_from_path};
 use crate::types::table::TableMetadata;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use arrow::record_batch::RecordBatch;
 use chrono::Utc;
-use otlp2parquet_core::{Blake3Hash, ParquetWriteResult};
-use parquet::arrow::ArrowWriter;
-use parquet::basic::ColumnOrder;
-use parquet::file::metadata::{
-    FileMetaData as PhysicalFileMetaData, ParquetMetaData, RowGroupMetaData,
-};
-use parquet::format::ColumnOrder as TColumnOrder;
-use parquet::schema::types::{self, SchemaDescriptor};
-use std::io::Write;
+use otlp2parquet_core::parquet::{encode_record_batches, writer_properties};
+use otlp2parquet_core::ParquetWriteResult;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -50,8 +44,8 @@ impl IcebergWriter {
         let uuid = Uuid::new_v4();
         let filename = format!("{}-{}.parquet", timestamp, uuid);
 
-        // Path format: {base}/data/{filename}
-        format!("{}/data/{}", base_location.trim_end_matches('/'), filename)
+        let data_suffix = format!("data/{}", filename);
+        catalog_path(base_location, &data_suffix)
     }
 
     /// Write Arrow batch to S3 Tables warehouse and commit to catalog
@@ -66,9 +60,12 @@ impl IcebergWriter {
 
         // 2. Generate warehouse path
         let file_path = Self::generate_warehouse_path(&table.location, signal_type);
+        let storage_path = storage_key_from_path(&file_path);
 
         // 3. Write Parquet file
-        let write_result = self.write_parquet(&file_path, arrow_batch).await?;
+        let write_result = self
+            .write_parquet(&file_path, &storage_path, arrow_batch)
+            .await?;
 
         // 4. Commit to catalog using manifest-based flow (non-WASM only)
         // Convert ParquetWriteResult to DataFile
@@ -108,58 +105,27 @@ impl IcebergWriter {
 
         info!("Getting or creating table: {}", table_name);
 
-        // Try to load existing table using reflection API
-        // Since load_table is private in catalog, we'll attempt create_table which
-        // handles "already exists" gracefully (returns 200 or 409)
-        match self
+        if let Ok(metadata) = self.catalog.load_table(&table_name).await {
+            info!("Table '{}' is ready (loaded existing metadata)", table_name);
+            return Ok(metadata);
+        }
+
+        info!("Table '{}' not found, attempting to create", table_name);
+
+        if let Err(e) = self
             .create_table_from_signal(signal_type, metric_type, &table_name)
             .await
         {
-            Ok(metadata) => {
-                info!("Table '{}' is ready (created or exists)", table_name);
-                Ok(metadata)
-            }
-            Err(e) => {
-                // If table creation fails (likely already exists), construct metadata manually
-                warn!(
-                    "Table creation returned error (may already exist), using fallback: {}",
-                    e
-                );
-
-                // Get Arrow schema and convert to Iceberg schema
-                let arrow_schema = self.get_schema_for_signal(signal_type, metric_type)?;
-                let iceberg_schema =
-                    crate::arrow_convert::arrow_to_iceberg_schema(arrow_schema.as_ref())?;
-
-                let location = format!(
-                    "{}/{}/{}",
-                    self.config.warehouse, self.config.namespace, table_name
-                );
-                Ok(TableMetadata {
-                    format_version: 2,
-                    table_uuid: String::new(),
-                    location,
-                    current_schema_id: 0,
-                    schemas: vec![iceberg_schema],
-                    default_spec_id: None,
-                    partition_specs: None,
-                    current_snapshot_id: None,
-                    snapshots: None,
-                    last_updated_ms: None,
-                    properties: None,
-                    default_sort_order_id: None,
-                    sort_orders: None,
-                    last_column_id: None,
-                    last_partition_id: None,
-                    last_sequence_number: None,
-                    metadata_log: None,
-                    partition_statistics: None,
-                    refs: None,
-                    snapshot_log: None,
-                    statistics: None,
-                })
-            }
+            warn!(
+                "Table creation returned error (may already exist): {}. Attempting to load metadata",
+                e
+            );
         }
+
+        self.catalog
+            .load_table(&table_name)
+            .await
+            .with_context(|| format!("failed to load table metadata for '{}'", table_name))
     }
 
     /// Build table name from signal and metric type
@@ -176,7 +142,7 @@ impl IcebergWriter {
         signal_type: &str,
         metric_type: Option<&str>,
         table_name: &str,
-    ) -> Result<TableMetadata> {
+    ) -> Result<()> {
         info!("Creating table '{}' from signal type", table_name);
 
         // Get Arrow schema for signal type
@@ -203,34 +169,7 @@ impl IcebergWriter {
             table_name
         );
 
-        // Return metadata with schema information
-        let location = format!(
-            "{}/{}/{}",
-            self.config.warehouse, self.config.namespace, table_name
-        );
-        Ok(TableMetadata {
-            format_version: 2,
-            table_uuid: String::new(),
-            location,
-            current_schema_id: 0,
-            schemas: vec![iceberg_schema],
-            default_spec_id: None,
-            partition_specs: None,
-            current_snapshot_id: None,
-            snapshots: None,
-            last_updated_ms: None,
-            properties: None,
-            default_sort_order_id: None,
-            sort_orders: None,
-            last_column_id: None,
-            last_partition_id: None,
-            last_sequence_number: None,
-            metadata_log: None,
-            partition_statistics: None,
-            refs: None,
-            snapshot_log: None,
-            statistics: None,
-        })
+        Ok(())
     }
 
     /// Get Arrow schema for signal type
@@ -263,142 +202,29 @@ impl IcebergWriter {
 
     async fn write_parquet(
         &self,
-        file_path: &str,
+        catalog_path: &str,
+        storage_path: &str,
         arrow_batch: &RecordBatch,
     ) -> Result<ParquetWriteResult> {
-        // Serialize to in-memory buffer with hashing
-        struct HashingBuffer {
-            buffer: Vec<u8>,
-            hasher: blake3::Hasher,
-        }
-
-        impl HashingBuffer {
-            fn new() -> Self {
-                Self {
-                    buffer: Vec::new(),
-                    hasher: blake3::Hasher::new(),
-                }
-            }
-
-            fn finish(self) -> (Vec<u8>, Blake3Hash) {
-                let hash = self.hasher.finalize();
-                (self.buffer, Blake3Hash::new(*hash.as_bytes()))
-            }
-        }
-
-        impl Write for HashingBuffer {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                self.hasher.update(buf);
-                self.buffer.extend_from_slice(buf);
-                Ok(buf.len())
-            }
-
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-
-        // Write to buffer
-        let mut sink = HashingBuffer::new();
-        let props = parquet::file::properties::WriterProperties::builder().build();
-        let schema = arrow_batch.schema();
-        let file_metadata = {
-            let mut writer = ArrowWriter::try_new(&mut sink, schema.clone(), Some(props))
-                .map_err(|e| anyhow!("Failed to create Arrow writer: {}", e))?;
-            writer
-                .write(arrow_batch)
-                .map_err(|e| anyhow!("Failed to write batch: {}", e))?;
-            writer
-                .close()
-                .map_err(|e| anyhow!("Failed to close writer: {}", e))?
-        };
-
-        let (buffer, hash) = sink.finish();
-        let file_size = buffer.len() as u64;
-
-        // Build metadata
-        let parquet_metadata = Arc::new(
-            self.build_parquet_metadata(file_metadata)
-                .map_err(|e| anyhow!("Failed to reconstruct parquet metadata: {}", e))?,
-        );
-        let row_count = parquet_metadata.file_metadata().num_rows();
+        let encoded = encode_record_batches(std::slice::from_ref(arrow_batch), writer_properties())
+            .context("failed to encode record batch to parquet")?;
+        let file_size = encoded.bytes.len() as u64;
         let completed_at = Utc::now();
 
-        // Write to storage at exact path
         self.storage
-            .write(file_path, buffer)
+            .write(storage_path, encoded.bytes)
             .await
             .map_err(|e| anyhow!("Failed to write to storage: {}", e))?;
 
         Ok(ParquetWriteResult {
-            path: file_path.to_string(),
-            hash,
+            path: catalog_path.to_string(),
+            hash: encoded.hash,
             file_size,
-            row_count,
-            arrow_schema: schema,
-            parquet_metadata,
+            row_count: encoded.row_count,
+            arrow_schema: encoded.schema,
+            parquet_metadata: encoded.parquet_metadata,
             completed_at,
         })
-    }
-
-    fn build_parquet_metadata(
-        &self,
-        file_metadata: parquet::format::FileMetaData,
-    ) -> Result<ParquetMetaData> {
-        let schema = types::from_thrift(&file_metadata.schema)
-            .map_err(|e| anyhow!("Failed to decode parquet schema: {}", e))?;
-        let schema_descr = Arc::new(SchemaDescriptor::new(schema));
-
-        let column_orders =
-            self.parse_column_orders(file_metadata.column_orders.as_ref(), &schema_descr)?;
-
-        let mut row_groups = Vec::with_capacity(file_metadata.row_groups.len());
-        for row_group in file_metadata.row_groups {
-            let metadata = RowGroupMetaData::from_thrift(schema_descr.clone(), row_group)
-                .map_err(|e| anyhow!("Failed to decode row group metadata: {}", e))?;
-            row_groups.push(metadata);
-        }
-
-        let physical_metadata = PhysicalFileMetaData::new(
-            file_metadata.version,
-            file_metadata.num_rows,
-            file_metadata.created_by,
-            file_metadata.key_value_metadata,
-            schema_descr,
-            column_orders,
-        );
-
-        Ok(ParquetMetaData::new(physical_metadata, row_groups))
-    }
-
-    fn parse_column_orders(
-        &self,
-        orders: Option<&Vec<TColumnOrder>>,
-        schema_descr: &SchemaDescriptor,
-    ) -> Result<Option<Vec<ColumnOrder>>> {
-        match orders {
-            Some(order_defs) => {
-                if order_defs.len() != schema_descr.num_columns() {
-                    return Err(anyhow!("Column order length mismatch"));
-                }
-
-                let mut parsed = Vec::with_capacity(order_defs.len());
-                for (idx, column) in schema_descr.columns().iter().enumerate() {
-                    match &order_defs[idx] {
-                        TColumnOrder::TYPEORDER(_) => {
-                            let sort_order = ColumnOrder::get_sort_order(
-                                column.logical_type(),
-                                column.converted_type(),
-                                column.physical_type(),
-                            );
-                            parsed.push(ColumnOrder::TYPE_DEFINED_ORDER(sort_order));
-                        }
-                    }
-                }
-                Ok(Some(parsed))
-            }
-            None => Ok(None),
-        }
     }
 }
 
