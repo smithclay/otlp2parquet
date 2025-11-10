@@ -11,7 +11,7 @@ use lambda_runtime::{service_fn, Error, LambdaEvent};
 use otlp2parquet_batch::PassthroughBatcher;
 use otlp2parquet_config::{RuntimeConfig, StorageBackend};
 use otlp2parquet_storage::iceberg::{
-    IcebergCatalog, IcebergCommitter, IcebergConfig, IcebergWriter,
+    IcebergCatalog, IcebergCommitter, IcebergConfig, IcebergRestConfig, IcebergWriter,
 };
 use otlp2parquet_storage::{set_parquet_row_group_size, ParquetWriter};
 use std::sync::Arc;
@@ -251,35 +251,82 @@ impl Writer {
 
                 // Initialize optional Iceberg committer for post-write commits
                 let iceberg_committer = {
-                    use otlp2parquet_storage::iceberg::init::{initialize_committer, InitResult};
-                    match initialize_committer().await {
-                        InitResult::Success {
-                            committer,
-                            table_count,
-                        } => {
-                            println!(
-                                "Iceberg catalog integration enabled with {} tables (post-write mode)",
-                                table_count
-                            );
-                            Some(committer)
+                    use otlp2parquet_storage::iceberg::init::{
+                        initialize_committer, initialize_committer_with_config, InitResult,
+                    };
+
+                    if let Some(iceberg_cfg) = &config.iceberg {
+                        let rest_config = IcebergRestConfig {
+                            rest_uri: iceberg_cfg.rest_uri.clone(),
+                            warehouse: iceberg_cfg.warehouse.clone(),
+                            namespace: iceberg_cfg.namespace_vec(),
+                            tables: iceberg_cfg.to_tables_map(),
+                            catalog_name: iceberg_cfg.catalog_name.clone(),
+                            format_version: iceberg_cfg.format_version,
+                            target_file_size_bytes: iceberg_cfg.target_file_size_bytes,
+                            staging_prefix: iceberg_cfg.staging_prefix.clone(),
+                        };
+
+                        match initialize_committer_with_config(rest_config).await {
+                            InitResult::Success {
+                                committer,
+                                table_count,
+                            } => {
+                                println!(
+                                    "Iceberg catalog integration enabled with {} tables (post-write mode)",
+                                    table_count
+                                );
+                                Some(committer)
+                            }
+                            InitResult::CatalogError(msg) => {
+                                println!(
+                                    "Failed to create Iceberg catalog: {} - continuing without Iceberg",
+                                    msg
+                                );
+                                None
+                            }
+                            InitResult::NamespaceError(msg) => {
+                                println!(
+                                    "Failed to parse Iceberg namespace: {} - continuing without Iceberg",
+                                    msg
+                                );
+                                None
+                            }
+                            InitResult::NotConfigured(msg) => {
+                                println!("Iceberg catalog not configured: {}", msg);
+                                None
+                            }
                         }
-                        InitResult::NotConfigured(msg) => {
-                            println!("Iceberg catalog not configured: {}", msg);
-                            None
-                        }
-                        InitResult::CatalogError(msg) => {
-                            println!(
-                                "Failed to create Iceberg catalog: {} - continuing without Iceberg",
-                                msg
-                            );
-                            None
-                        }
-                        InitResult::NamespaceError(msg) => {
-                            println!(
-                                "Failed to parse Iceberg namespace: {} - continuing without Iceberg",
-                                msg
-                            );
-                            None
+                    } else {
+                        match initialize_committer().await {
+                            InitResult::Success {
+                                committer,
+                                table_count,
+                            } => {
+                                println!(
+                                    "Iceberg catalog integration enabled with {} tables (post-write mode)",
+                                    table_count
+                                );
+                                Some(committer)
+                            }
+                            InitResult::NotConfigured(msg) => {
+                                println!("Iceberg catalog not configured: {}", msg);
+                                None
+                            }
+                            InitResult::CatalogError(msg) => {
+                                println!(
+                                    "Failed to create Iceberg catalog: {} - continuing without Iceberg",
+                                    msg
+                                );
+                                None
+                            }
+                            InitResult::NamespaceError(msg) => {
+                                println!(
+                                    "Failed to parse Iceberg namespace: {} - continuing without Iceberg",
+                                    msg
+                                );
+                                None
+                            }
                         }
                     }
                 };
