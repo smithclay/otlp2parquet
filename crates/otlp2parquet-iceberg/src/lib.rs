@@ -17,6 +17,7 @@ pub mod http;
 pub mod init;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod manifest;
+mod path;
 pub mod protocol;
 pub mod types;
 pub mod validation;

@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 #[cfg(not(target_arch = "wasm32"))]
+use crate::path::{catalog_path, storage_key_from_path};
 use crate::types::datafile::DataFile;
 
 /// Avro schema for Iceberg manifest entry
@@ -87,7 +88,9 @@ impl ManifestWriter {
         // Generate manifest filename: {table_location}/metadata/{uuid}-m0.avro
         let manifest_uuid = Uuid::new_v4();
         let manifest_filename = format!("{}-m0.avro", manifest_uuid);
-        let manifest_path = format!("{}/metadata/{}", table_location, manifest_filename);
+        let manifest_path =
+            catalog_path(table_location, &format!("metadata/{}", manifest_filename));
+        let storage_path = storage_key_from_path(&manifest_path);
 
         // Parse Avro schema
         let schema = AvroSchema::parse_str(MANIFEST_ENTRY_SCHEMA)
@@ -109,7 +112,7 @@ impl ManifestWriter {
 
         // Write to storage
         storage
-            .write(&manifest_path, manifest_bytes)
+            .write(&storage_path, manifest_bytes)
             .await
             .context("failed to write manifest to storage")?;
 
@@ -258,7 +261,11 @@ impl ManifestListWriter {
         // Generate manifest-list filename: {table_location}/metadata/snap-{snapshot_id}-1-{uuid}.avro
         let list_uuid = Uuid::new_v4();
         let manifest_list_filename = format!("snap-{}-1-{}.avro", snapshot_id, list_uuid);
-        let manifest_list_path = format!("{}/metadata/{}", table_location, manifest_list_filename);
+        let manifest_list_path = catalog_path(
+            table_location,
+            &format!("metadata/{}", manifest_list_filename),
+        );
+        let storage_path = storage_key_from_path(&manifest_list_path);
 
         // Parse Avro schema
         let schema = AvroSchema::parse_str(MANIFEST_LIST_SCHEMA)
@@ -307,7 +314,7 @@ impl ManifestListWriter {
 
         // Write to storage
         storage
-            .write(&manifest_list_path, manifest_list_bytes)
+            .write(&storage_path, manifest_list_bytes)
             .await
             .context("failed to write manifest-list to storage")?;
 
@@ -350,6 +357,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_manifest_writer() {
+        use crate::path::storage_key_from_path;
         use opendal::services::Memory;
         use opendal::Operator;
 
@@ -380,12 +388,14 @@ mod tests {
         assert!(manifest_path.ends_with("-m0.avro"));
 
         // Verify file exists in storage
-        let exists = storage.exists(&manifest_path).await.unwrap();
+        let manifest_storage_path = storage_key_from_path(&manifest_path);
+        let exists = storage.exists(&manifest_storage_path).await.unwrap();
         assert!(exists);
     }
 
     #[tokio::test]
     async fn test_manifest_list_writer() {
+        use crate::path::storage_key_from_path;
         use opendal::services::Memory;
         use opendal::Operator;
 
@@ -422,7 +432,8 @@ mod tests {
         assert!(manifest_list_path.ends_with(".avro"));
 
         // Verify file exists in storage
-        let exists = storage.exists(&manifest_list_path).await.unwrap();
+        let manifest_list_storage = storage_key_from_path(&manifest_list_path);
+        let exists = storage.exists(&manifest_list_storage).await.unwrap();
         assert!(exists);
     }
 }

@@ -6,6 +6,7 @@ use super::http::{HttpClient, HttpResponse};
 use super::protocol::{CommitTableRequest, ErrorResponse, TableRequirement, TableUpdate};
 #[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 use super::types::{DataFile, LoadTableResponse, TableMetadata};
+use crate::path::storage_key_from_path;
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
@@ -221,7 +222,7 @@ impl<T: HttpClient> IcebergCatalog<T> {
             "stage-create": false
         });
 
-        info!(
+        debug!(
             "CreateTable request body: {}",
             serde_json::to_string_pretty(&request).unwrap_or_else(|_| "invalid json".to_string())
         );
@@ -243,14 +244,15 @@ impl<T: HttpClient> IcebergCatalog<T> {
             .context("Failed to create table")?;
 
         // Log response details for debugging
-        info!("CreateTable response status: {}", response.status);
+        debug!("CreateTable response status: {}", response.status);
         if !response.is_success() && response.status != 409 {
             let response_body = response
                 .body_string()
                 .unwrap_or_else(|_| "<binary>".to_string());
-            warn!(
-                "CreateTable failed with status {}: {}",
-                response.status, response_body
+            warn!("CreateTable failed with status {}", response.status);
+            debug!(
+                "CreateTable error body: {}",
+                &response_body[..response_body.len().min(500)]
             );
         }
 
@@ -268,7 +270,7 @@ impl<T: HttpClient> IcebergCatalog<T> {
     /// Calls: GET /v1/{prefix}/namespaces/{namespace}/tables/{table}
     #[cfg(not(target_arch = "wasm32"))]
     #[cfg_attr(not(target_arch = "wasm32"), instrument(skip(self), fields(table = %table_name)))]
-    async fn load_table(&self, table_name: &str) -> Result<TableMetadata> {
+    pub async fn load_table(&self, table_name: &str) -> Result<TableMetadata> {
         let url = if self.prefix.is_empty() {
             format!(
                 "{}/v1/namespaces/{}/tables/{}",
@@ -305,7 +307,7 @@ impl<T: HttpClient> IcebergCatalog<T> {
         let body_str = response
             .body_string()
             .context("Failed to read response body")?;
-        warn!(
+        debug!(
             "LoadTable response body (first 500 chars): {}",
             &body_str[..body_str.len().min(500)]
         );
@@ -320,7 +322,7 @@ impl<T: HttpClient> IcebergCatalog<T> {
 
         // Debug: log table metadata details
         let metadata = &load_response.table_metadata;
-        warn!(
+        debug!(
             "TableMetadata - current_schema_id: {}, schemas count: {}, schema IDs: {:?}",
             metadata.current_schema_id,
             metadata.schemas.len(),
@@ -395,7 +397,7 @@ impl<T: HttpClient> IcebergCatalog<T> {
 
         // Debug: log request body
         if let Ok(body_str) = serde_json::to_string_pretty(&request) {
-            warn!("UpdateTable request body:\n{}", body_str);
+            debug!("UpdateTable request body:\n{}", body_str);
         }
 
         let response = self
@@ -520,8 +522,10 @@ impl<T: HttpClient> IcebergCatalog<T> {
 
         debug!("Wrote manifest file: {}", manifest_path);
 
+        let manifest_storage_path = storage_key_from_path(&manifest_path);
+
         // Get manifest file size for manifest-list
-        let manifest_length = match storage_operator.stat(&manifest_path).await {
+        let manifest_length = match storage_operator.stat(&manifest_storage_path).await {
             Ok(entry) => entry.content_length() as i64,
             Err(e) => {
                 warn!(
