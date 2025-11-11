@@ -133,7 +133,7 @@ impl Writer {
     /// Create Writer from environment variables and configuration
     pub async fn from_env(config: &RuntimeConfig) -> Result<Self, Error> {
         let mode = detect_writer_mode();
-        println!("Detected writer mode: {:?}", mode);
+        tracing::info!("Detected writer mode: {:?}", mode);
 
         match mode {
             WriterMode::Iceberg => {
@@ -217,7 +217,7 @@ impl Writer {
                 // AWS Glue Iceberg REST catalog prefix
                 // Warehouse IS the catalog ID (account ID)
                 let catalog_prefix = format!("catalogs/{}", warehouse);
-                println!("Using Glue Iceberg REST catalog: {}", catalog_prefix);
+                tracing::info!("Using Glue Iceberg REST catalog: {}", catalog_prefix);
 
                 let catalog = Arc::new(IcebergCatalog::new(
                     http_client,
@@ -235,7 +235,7 @@ impl Writer {
                     iceberg_config,
                 ));
 
-                println!("Initialized IcebergWriter for S3 Tables mode");
+                tracing::info!("Initialized IcebergWriter for S3 Tables mode");
 
                 Ok(Writer::Iceberg {
                     writer,
@@ -287,28 +287,28 @@ impl Writer {
                                 committer,
                                 table_count,
                             } => {
-                                println!(
+                                tracing::info!(
                                     "Iceberg catalog integration enabled with {} tables (post-write mode)",
                                     table_count
                                 );
                                 Some(committer)
                             }
                             InitResult::CatalogError(msg) => {
-                                println!(
+                                tracing::warn!(
                                     "Failed to create Iceberg catalog: {} - continuing without Iceberg",
                                     msg
                                 );
                                 None
                             }
                             InitResult::NamespaceError(msg) => {
-                                println!(
+                                tracing::warn!(
                                     "Failed to parse Iceberg namespace: {} - continuing without Iceberg",
                                     msg
                                 );
                                 None
                             }
                             InitResult::NotConfigured(msg) => {
-                                println!("Iceberg catalog not configured: {}", msg);
+                                tracing::debug!("Iceberg catalog not configured: {}", msg);
                                 None
                             }
                         }
@@ -318,25 +318,25 @@ impl Writer {
                                 committer,
                                 table_count,
                             } => {
-                                println!(
+                                tracing::info!(
                                     "Iceberg catalog integration enabled with {} tables (post-write mode)",
                                     table_count
                                 );
                                 Some(committer)
                             }
                             InitResult::NotConfigured(msg) => {
-                                println!("Iceberg catalog not configured: {}", msg);
+                                tracing::debug!("Iceberg catalog not configured: {}", msg);
                                 None
                             }
                             InitResult::CatalogError(msg) => {
-                                println!(
+                                tracing::warn!(
                                     "Failed to create Iceberg catalog: {} - continuing without Iceberg",
                                     msg
                                 );
                                 None
                             }
                             InitResult::NamespaceError(msg) => {
-                                println!(
+                                tracing::warn!(
                                     "Failed to parse Iceberg namespace: {} - continuing without Iceberg",
                                     msg
                                 );
@@ -346,7 +346,7 @@ impl Writer {
                     }
                 };
 
-                println!("Initialized PlainS3 writer mode");
+                tracing::info!("Initialized PlainS3 writer mode");
 
                 Ok(Writer::PlainS3 {
                     parquet_writer,
@@ -399,7 +399,7 @@ impl Writer {
                         )
                         .await
                     {
-                        eprintln!("Warning: Failed to commit logs to Iceberg catalog: {}", e);
+                        tracing::warn!("Failed to commit logs to Iceberg catalog: {}", e);
                     }
                 }
 
@@ -453,9 +453,10 @@ impl Writer {
                         )
                         .await
                     {
-                        eprintln!(
-                            "Warning: Failed to commit {} metrics to Iceberg catalog: {}",
-                            metric_type, e
+                        tracing::warn!(
+                            "Failed to commit {} metrics to Iceberg catalog: {}",
+                            metric_type,
+                            e
                         );
                     }
                 }
@@ -507,7 +508,7 @@ impl Writer {
                         )
                         .await
                     {
-                        eprintln!("Warning: Failed to commit traces to Iceberg catalog: {}", e);
+                        tracing::warn!("Failed to commit traces to Iceberg catalog: {}", e);
                     }
                 }
 
@@ -539,7 +540,7 @@ pub async fn run() -> Result<(), Error> {
         .without_time() // Lambda adds timestamps
         .init();
 
-    println!("Lambda runtime - using lambda_runtime's tokio + OpenDAL S3");
+    tracing::info!("Lambda runtime - using lambda_runtime's tokio + OpenDAL S3");
 
     // Load configuration
     let config = RuntimeConfig::load()
@@ -557,10 +558,10 @@ pub async fn run() -> Result<(), Error> {
 
     // Lambda: Always use passthrough (no batching)
     // Event-driven/stateless architecture makes batching ineffective
-    println!("Lambda using passthrough mode (no batching)");
+    tracing::info!("Lambda using passthrough mode (no batching)");
 
     let max_payload_bytes = config.request.max_payload_bytes;
-    println!("Lambda payload cap set to {} bytes", max_payload_bytes);
+    tracing::info!("Lambda payload cap set to {} bytes", max_payload_bytes);
 
     // Initialize writer based on environment
     let writer = Arc::new(Writer::from_env(&config).await?);

@@ -73,7 +73,7 @@ impl HttpClient for AwsSigV4HttpClient {
             signable_headers.into_iter(),
             signable_body,
         )
-        .expect("Failed to create signable request");
+        .context("Failed to create signable request")?;
 
         // Build identity from credentials
         let identity = aws_credential_types::Credentials::new(

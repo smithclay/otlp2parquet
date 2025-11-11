@@ -151,6 +151,23 @@ AWS Glue provides a fully-managed Iceberg REST catalog that integrates with S3 T
 - **HTTP client**: `reqwest` used for both WASM and native (unified)
 - **Iceberg REST**: Thin custom client to minimize dependencies and binary size
 
+### Logging & Error Handling
+- **Use tracing macros exclusively** - `tracing::info!()`, `tracing::warn!()`, `tracing::error!()`, `tracing::debug!()`
+- **NEVER use println!/eprintln!** in production code (lambda, server, iceberg crates)
+  - Exception: Test code, build scripts, and examples are OK
+  - Rationale: Production needs structured logging for CloudWatch/observability
+- **Avoid .expect()/.unwrap()** in production code paths
+  - Use `?` operator with `.context()` for error propagation
+  - Exception: Test setup code and infallible operations are OK
+  - Rationale: Panics crash Lambda functions and break production services
+- **Structured logging** - All production logging must use tracing for proper observability
+  - `info!()` - Normal operational events (startup, shutdown, config)
+  - `warn!()` - Degraded operations that succeed (catalog failures with fallback)
+  - `error!()` - Request failures, validation errors, storage errors
+  - `debug!()` - Verbose diagnostic information (not shown in production by default)
+- **Panic-free production** - All errors should be propagated with Result types, not panicked
+- **Error context** - Use `.context()` or `.map_err()` to add meaningful error messages
+
 ### Build & Deployment
 - **Document tradeoffs** made for size
 - **Test all feature combinations** - `make check` and `make test` cover all platforms

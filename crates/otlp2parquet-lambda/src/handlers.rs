@@ -87,9 +87,11 @@ async fn process_logs(
     let request = match otlp::parse_otlp_request(body, format) {
         Ok(req) => req,
         Err(err) => {
-            eprintln!(
+            tracing::error!(
                 "Failed to parse OTLP logs (format: {:?}, content-type: {:?}): {}",
-                format, content_type, err
+                format,
+                content_type,
+                err
             );
             return HttpResponseData::json(
                 400,
@@ -109,7 +111,7 @@ async fn process_logs(
                 uploads.push(batch);
             }
             Err(err) => {
-                eprintln!("Failed to convert OTLP to Arrow: {}", err);
+                tracing::error!("Failed to convert OTLP to Arrow: {}", err);
                 return HttpResponseData::json(
                     500,
                     json!({ "error": "internal encoding failure" }).to_string(),
@@ -135,7 +137,7 @@ async fn process_logs(
                     uploaded_paths.extend(paths);
                 }
                 Err(err) => {
-                    eprintln!("Failed to write logs: {}", err);
+                    tracing::error!("Failed to write logs: {}", err);
                     return HttpResponseData::json(
                         500,
                         json!({ "error": "internal storage failure" }).to_string(),
@@ -167,9 +169,11 @@ async fn process_metrics(
     let request = match otlp::metrics::parse_otlp_request(body, format) {
         Ok(req) => req,
         Err(err) => {
-            eprintln!(
+            tracing::error!(
                 "Failed to parse OTLP metrics (format: {:?}, content-type: {:?}): {}",
-                format, content_type, err
+                format,
+                content_type,
+                err
             );
             return HttpResponseData::json(
                 400,
@@ -187,7 +191,7 @@ async fn process_metrics(
         let (batches_by_type, subset_metadata) = match converter.convert(subset) {
             Ok(result) => result,
             Err(err) => {
-                eprintln!("Failed to convert OTLP metrics to Arrow: {}", err);
+                tracing::error!("Failed to convert OTLP metrics to Arrow: {}", err);
                 return HttpResponseData::json(
                     500,
                     json!({ "error": "internal encoding failure" }).to_string(),
@@ -216,7 +220,7 @@ async fn process_metrics(
                     uploaded_paths.extend(paths);
                 }
                 Err(err) => {
-                    eprintln!("Failed to write {} metrics: {}", metric_type, err);
+                    tracing::error!("Failed to write {} metrics: {}", metric_type, err);
                     return HttpResponseData::json(
                         500,
                         json!({ "error": "internal storage failure" }).to_string(),
@@ -268,9 +272,11 @@ async fn process_traces(
     let request = match otlp::traces::parse_otlp_trace_request(body, format) {
         Ok(req) => req,
         Err(err) => {
-            eprintln!(
+            tracing::error!(
                 "Failed to parse OTLP traces (format: {:?}, content-type: {:?}): {}",
-                format, content_type, err
+                format,
+                content_type,
+                err
             );
             return HttpResponseData::json(
                 400,
@@ -290,7 +296,7 @@ async fn process_traces(
                 uploads.push((batches, metadata));
             }
             Err(err) => {
-                eprintln!("Failed to convert OTLP traces to Arrow: {}", err);
+                tracing::error!("Failed to convert OTLP traces to Arrow: {}", err);
                 return HttpResponseData::json(
                     500,
                     json!({ "error": "internal encoding failure" }).to_string(),
@@ -315,7 +321,7 @@ async fn process_traces(
                     uploaded_paths.extend(paths);
                 }
                 Err(err) => {
-                    eprintln!("Failed to write traces: {}", err);
+                    tracing::error!("Failed to write traces: {}", err);
                     return HttpResponseData::json(
                         500,
                         json!({ "error": "internal storage failure" }).to_string(),
