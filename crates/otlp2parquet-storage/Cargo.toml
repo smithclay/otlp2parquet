@@ -56,3 +56,5 @@ services-s3 = ["opendal/services-s3"]
 services-fs = ["opendal/services-fs", "tokio"]
 # Iceberg catalog integration (optional)
 iceberg = ["dep:otlp2parquet-iceberg"]
+# AWS SigV4 authentication for Iceberg (S3 Tables)
+iceberg-aws-sigv4 = ["iceberg", "otlp2parquet-iceberg/aws-sigv4"]

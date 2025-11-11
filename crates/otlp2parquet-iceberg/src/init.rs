@@ -105,6 +105,7 @@ pub async fn initialize_committer_with_config(config: IcebergRestConfig) -> Init
         config.rest_uri.clone(),
         namespace,
         config.tables.clone(),
+        config.data_location.clone(),
     )
     .await
     {

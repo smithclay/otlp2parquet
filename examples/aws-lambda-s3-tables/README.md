@@ -4,16 +4,19 @@ Production-ready deployment of `otlp2parquet` as an AWS Lambda function with S3 
 
 ## Quick Start
 
-Deploy in 3 commands:
+Deploy in 4 commands:
 
 ```bash
-# Deploy the stack
-./deploy.sh --region us-east-1
+# 1. Setup Glue integration (one-time)
+./setup-glue-integration.sh --region us-west-2
 
-# Test with sample data
-./test.sh
+# 2. Deploy the Lambda stack
+./deploy.sh --region us-west-2
 
-# View logs
+# 3. Test with sample data
+./test.sh --region us-west-2
+
+# 4. View logs
 aws logs tail /aws/lambda/otlp2parquet-ingest --follow
 ```
 
@@ -42,23 +45,59 @@ aws logs tail /aws/lambda/otlp2parquet-ingest --follow
 - Permissions to create: Lambda, S3 Tables, IAM roles, CloudFormation stacks
 - `jq` installed for JSON parsing
 
+## Setup: Integrate S3 Tables with Glue Data Catalog
+
+Before deploying, integrate your S3 Tables bucket with AWS Glue:
+
+```bash
+# Run one-time setup
+./setup-glue-integration.sh --region us-west-2
+```
+
+This configures:
+- S3 Tables integration with Glue Data Catalog
+- Namespace (database) creation in Glue
+- Lake Formation permissions for Lambda role
+
+**Why Glue?** AWS S3 Tables REST endpoint doesn't support snapshot management
+(add-snapshot operations). AWS Glue provides full Iceberg REST catalog support,
+which is the same pattern AWS Firehose uses.
+
+## Architecture
+
+```
+Lambda → Glue Iceberg REST → Glue Data Catalog → S3 Tables
+         (metadata API)      (snapshots/schema)   (Parquet storage)
+```
+
 ## Usage
 
 ### Deploy
 
-```bash
-# Deploy with defaults (arm64, us-west-2)
-./deploy.sh
+1. **Setup Glue integration** (one-time):
+   ```bash
+   ./setup-glue-integration.sh --region us-west-2
+   ```
 
-# Deploy with specific options
-./deploy.sh --arch amd64 --region us-west-2 --stack-name my-otlp-stack
+2. **Deploy Lambda**:
+   ```bash
+   # Deploy with defaults (arm64, us-west-2)
+   ./deploy.sh --region us-west-2
 
-# Deploy specific version
-./deploy.sh --version v0.0.2
+   # Deploy with specific options
+   ./deploy.sh --arch amd64 --region us-west-2 --stack-name my-otlp-stack
 
-# Deploy locally built binary (for development)
-./deploy.sh --local-binary ../../target/lambda/bootstrap/bootstrap.zip
-```
+   # Deploy specific version
+   ./deploy.sh --version v0.0.2
+
+   # Deploy locally built binary (for development)
+   ./deploy.sh --local-binary ../../target/lambda/bootstrap/bootstrap.zip
+   ```
+
+3. **Test ingestion**:
+   ```bash
+   ./test.sh --region us-west-2
+   ```
 
 ### Test
 
@@ -80,14 +119,7 @@ aws logs tail /aws/lambda/otlp2parquet-ingest --follow
 ./deploy.sh --delete
 ```
 
-## Architecture
-
-```
-OTLP Client → Lambda (otlp2parquet) → S3 Tables (Iceberg)
-                                          ↓
-                                    Query Engines
-                                    (DuckDB, Athena)
-```
+## How It Works
 
 The Lambda function:
 1. Receives OTLP data (protobuf/JSON)
@@ -108,17 +140,16 @@ Tables created automatically:
 
 The Lambda function supports two operating modes:
 
-### Mode 1: S3 Tables with Iceberg (Recommended)
+### Mode 1: S3 Tables + Glue Data Catalog (Recommended)
 
-Writes Parquet files directly to S3 Tables warehouse with integrated Iceberg catalog.
+Writes Parquet files to S3 Tables with Iceberg metadata managed via AWS Glue Data Catalog.
 
 **Environment Variables:**
 ```bash
-OTLP2PARQUET_ICEBERG_REST_URI=https://s3tables.us-west-2.amazonaws.com/iceberg
-OTLP2PARQUET_ICEBERG_WAREHOUSE=arn:aws:s3tables:us-west-2:123456789012:bucket/otlp2parquet
+OTLP2PARQUET_ICEBERG_REST_URI=https://glue.us-west-2.amazonaws.com/iceberg
+OTLP2PARQUET_ICEBERG_WAREHOUSE=123456789012  # Your AWS account ID (Glue catalog ID)
 OTLP2PARQUET_ICEBERG_NAMESPACE=otel
 OTLP2PARQUET_STORAGE_BACKEND=s3
-OTLP2PARQUET_S3_BUCKET=my-data-bucket
 OTLP2PARQUET_S3_REGION=us-west-2
 ```
 
@@ -167,34 +198,32 @@ To switch modes, update the `Environment.Variables` section in `template.yaml`:
 
 The Lambda function automatically detects which mode to use based on the presence of `OTLP2PARQUET_ICEBERG_REST_URI`.
 
-## Query Examples
+## Querying Data
 
 ### DuckDB
 
-```sql
-INSTALL iceberg;
-LOAD iceberg;
+```bash
+duckdb -c "
+  INSTALL iceberg;
+  LOAD iceberg;
 
--- Configure S3 Tables catalog
-CREATE SECRET s3tables (
-    TYPE ICEBERG_REST,
-    ENDPOINT 'https://s3tables.us-east-1.amazonaws.com/iceberg',
-    WAREHOUSE 'arn:aws:s3tables:us-east-1:123456789012:bucket/otlp2parquet-demo',
-    AWS_REGION 'us-east-1'
-);
+  CREATE SECRET (
+    TYPE S3,
+    REGION 'us-west-2'
+  );
 
--- Query logs
-SELECT * FROM iceberg_scan('s3tables', 'otel', 'logs')
-WHERE Timestamp > now() - INTERVAL 1 HOUR
-LIMIT 100;
+  -- Query via Glue catalog
+  SELECT COUNT(*) FROM iceberg_scan('glue://otel.logs', aws_region='us-west-2');
+"
 ```
 
-### Amazon Athena
+### AWS Athena
 
 ```sql
-SELECT * FROM "s3tables_catalog"."otel"."logs"
-WHERE Timestamp > current_timestamp - INTERVAL '1' HOUR
-LIMIT 100;
+-- Tables automatically available in Athena
+SELECT COUNT(*) FROM otel.logs;
+SELECT COUNT(*) FROM otel.traces;
+SELECT COUNT(*) FROM otel.metrics_gauge;
 ```
 
 ## Production Extensions

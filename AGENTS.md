@@ -80,6 +80,38 @@ Build a Rust workspace that ingests OpenTelemetry logs, metrics, and traces via 
 - **Resilience**: Catalog failures log warnings but don't block ingestion
 - **Tables**: One per schema (logs, traces, 5 metric types)
 
+### AWS Glue Iceberg REST Catalog
+
+AWS Glue provides a fully-managed Iceberg REST catalog that integrates with S3 Tables for metadata management:
+
+**Why Glue over S3 Tables REST API?**
+- S3 Tables REST API doesn't support snapshot management (add-snapshot operations)
+- AWS Glue provides full Iceberg REST catalog support, same pattern used by AWS Firehose
+- Enables ACID transactions, schema evolution, and time travel
+
+**Configuration Requirements:**
+- `OTLP2PARQUET_ICEBERG_REST_URI`: `https://glue.<region>.amazonaws.com/iceberg`
+- `OTLP2PARQUET_ICEBERG_WAREHOUSE`: AWS account ID (Glue catalog ID), e.g., `123456789012`
+- `OTLP2PARQUET_ICEBERG_NAMESPACE`: Glue database name, e.g., `otel`
+- `OTLP2PARQUET_ICEBERG_DATA_LOCATION`: S3 bucket for table data, e.g., `s3://my-data-bucket`
+
+**Implementation Details:**
+- SigV4 signing: Uses `glue` service name (not `s3tables`)
+- REST URL format: `https://glue.<region>.amazonaws.com/iceberg/v1/catalogs/<catalog-id>/namespaces/<namespace>/tables/<table>`
+- Catalog prefix: `catalogs/<account-id>` automatically prepended to REST paths
+- Table location: Required in CreateTable request, format: `s3://<bucket>/<namespace>/<table-name>`
+
+**IAM Permissions Required:**
+- `glue:GetDatabase`, `glue:GetTable`, `glue:CreateTable`, `glue:UpdateTable`
+- `lakeformation:GetDataAccess` for Lake Formation integration
+- Standard S3 permissions for data bucket
+
+**Setup:**
+1. Create Glue database: `aws glue create-database --database-input '{"Name":"otel"}'`
+2. Grant Lake Formation permissions to Lambda/server role
+3. Configure environment variables pointing to Glue endpoint
+4. Tables are auto-created on first write with Arrow schema conversion
+
 ## Notes for AI Agent
 
 ### Development Workflow

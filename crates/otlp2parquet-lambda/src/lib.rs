@@ -112,9 +112,13 @@ fn detect_writer_mode() -> WriterMode {
 
 /// Unified writer that routes to either IcebergWriter or PlainS3 writer
 pub(crate) enum Writer {
-    /// Integrated write + commit to S3 Tables with Iceberg catalog
+    /// Integrated write + commit to S3 Tables with Iceberg catalog (AWS SigV4 auth)
     Iceberg {
-        writer: Arc<IcebergWriter>,
+        writer: Arc<
+            otlp2parquet_storage::iceberg::IcebergWriter<
+                otlp2parquet_storage::iceberg::aws::AwsSigV4HttpClient,
+            >,
+        >,
         passthrough: PassthroughBatcher,
     },
     /// Plain S3 write with optional post-write catalog commit
@@ -134,12 +138,23 @@ impl Writer {
         match mode {
             WriterMode::Iceberg => {
                 // Build Iceberg configuration
-                let rest_uri = std::env::var("OTLP2PARQUET_ICEBERG_REST_URI")
-                    .map_err(|_| Error::from("OTLP2PARQUET_ICEBERG_REST_URI not set"))?;
+                let rest_uri =
+                    std::env::var("OTLP2PARQUET_ICEBERG_REST_URI").unwrap_or_else(|_| {
+                        let region =
+                            std::env::var("AWS_REGION").unwrap_or_else(|_| "us-west-2".to_string());
+                        format!("https://glue.{}.amazonaws.com/iceberg", region)
+                    });
+
+                // Warehouse format depends on endpoint:
+                // - Glue: AWS account ID (catalog ID), e.g. "123456789012"
+                // - S3 Tables: S3 Tables bucket ARN
                 let warehouse = std::env::var("OTLP2PARQUET_ICEBERG_WAREHOUSE")
-                    .map_err(|_| Error::from("OTLP2PARQUET_ICEBERG_WAREHOUSE not set"))?;
+                    .map_err(|_| Error::from("OTLP2PARQUET_ICEBERG_WAREHOUSE required"))?;
                 let namespace_str = std::env::var("OTLP2PARQUET_ICEBERG_NAMESPACE")
                     .map_err(|_| Error::from("OTLP2PARQUET_ICEBERG_NAMESPACE not set"))?;
+
+                // Data location for table storage (required for Glue, optional for S3 Tables)
+                let data_location = std::env::var("OTLP2PARQUET_ICEBERG_DATA_LOCATION").ok();
 
                 let iceberg_config = IcebergConfig {
                     rest_uri: rest_uri.clone(),
@@ -166,10 +181,11 @@ impl Writer {
                     .map_err(|e| Error::from(format!("Failed to initialize storage: {}", e)))?,
                 );
 
-                // Initialize Iceberg catalog using init module
-                use otlp2parquet_storage::iceberg::http::ReqwestHttpClient;
-                let http_client = ReqwestHttpClient::new()
-                    .map_err(|e| Error::from(format!("Failed to create HTTP client: {}", e)))?;
+                // Initialize Iceberg catalog with AWS SigV4 authentication for S3 Tables
+                use otlp2parquet_storage::iceberg::aws::AwsSigV4HttpClient;
+                let http_client = AwsSigV4HttpClient::new(&s3.region).await.map_err(|e| {
+                    Error::from(format!("Failed to create AWS SigV4 HTTP client: {}", e))
+                })?;
 
                 // Parse namespace
                 use otlp2parquet_storage::iceberg::catalog::NamespaceIdent;
@@ -198,20 +214,18 @@ impl Writer {
                 );
                 tables.insert("metrics:summary".to_string(), "metrics_summary".to_string());
 
-                // For S3 Tables, the prefix must be the URL-encoded table bucket ARN
-                // See: https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-tables-integrating-open-source.html
-                let prefix = urlencoding::encode(&warehouse).to_string();
-                println!(
-                    "Using S3 Tables prefix (URL-encoded warehouse ARN): {}",
-                    prefix
-                );
+                // AWS Glue Iceberg REST catalog prefix
+                // Warehouse IS the catalog ID (account ID)
+                let catalog_prefix = format!("catalogs/{}", warehouse);
+                println!("Using Glue Iceberg REST catalog: {}", catalog_prefix);
 
                 let catalog = Arc::new(IcebergCatalog::new(
                     http_client,
                     rest_uri,
-                    prefix,
+                    catalog_prefix,
                     namespace,
                     tables,
+                    data_location,
                 ));
 
                 // Create IcebergWriter
@@ -265,6 +279,7 @@ impl Writer {
                             format_version: iceberg_cfg.format_version,
                             target_file_size_bytes: iceberg_cfg.target_file_size_bytes,
                             staging_prefix: iceberg_cfg.staging_prefix.clone(),
+                            data_location: None, // Not used in post-write mode
                         };
 
                         match initialize_committer_with_config(rest_config).await {
@@ -520,7 +535,7 @@ pub(crate) struct LambdaState {
 pub async fn run() -> Result<(), Error> {
     // Initialize tracing subscriber for CloudWatch logs
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
+        .with_max_level(tracing::Level::DEBUG)
         .without_time() // Lambda adds timestamps
         .init();
 

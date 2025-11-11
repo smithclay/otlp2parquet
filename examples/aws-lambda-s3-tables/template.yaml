@@ -20,8 +20,7 @@ Parameters:
       - x86_64
 
 Resources:
-  # S3 Bucket - Stores Parquet data files
-  # Standard S3 bucket for object storage (written via S3 API)
+  # S3 Bucket - Stores Parquet data files for Iceberg tables
   DataBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -32,22 +31,7 @@ Resources:
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
 
-  # S3 Table Bucket - Iceberg catalog metadata ONLY
-  # Provides REST catalog API (queried via Iceberg REST Catalog API)
-  # Does NOT store data files - those go in DataBucket above
-  OtelTableBucket:
-    Type: AWS::S3Tables::TableBucket
-    Properties:
-      TableBucketName: !Sub 'otlp2parquet-${AWS::StackName}'
-
-  # Iceberg namespace for OTLP tables (logs, traces, metrics_*)
-  OtelNamespace:
-    Type: AWS::S3Tables::Namespace
-    Properties:
-      TableBucketARN: !GetAtt OtelTableBucket.TableBucketARN
-      Namespace: otel
-
-  # Lambda execution role with permissions for S3 Tables and CloudWatch Logs
+  # Lambda execution role with Glue and S3 permissions
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -62,24 +46,10 @@ Resources:
         # Basic execution role for CloudWatch Logs
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - PolicyName: S3TablesAccess
+        - PolicyName: S3DataAccess
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # S3 Tables catalog API permissions
-              - Effect: Allow
-                Action:
-                  - s3tables:GetTableMetadataLocation
-                  - s3tables:CreateTable
-                  - s3tables:UpdateTableMetadataLocation
-                  - s3tables:PutTableData
-                  - s3tables:GetTableData
-                  - s3tables:GetTableBucket
-                  - s3tables:GetNamespace
-                  - s3tables:CreateNamespace
-                Resource:
-                  - !GetAtt OtelTableBucket.TableBucketARN
-                  - !Sub '${OtelTableBucket.TableBucketARN}/*'
               # S3 object permissions for Parquet files in data bucket
               - Effect: Allow
                 Action:
@@ -90,6 +60,24 @@ Resources:
                 Resource:
                   - !GetAtt DataBucket.Arn
                   - !Sub '${DataBucket.Arn}/*'
+        - PolicyName: GlueAndLakeFormationAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - glue:GetDatabase
+                  - glue:GetTable
+                  - glue:CreateTable
+                  - glue:UpdateTable
+                  - lakeformation:GetDataAccess
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub 'arn:aws:s3:::${DataBucket}/*'
 
   # CloudWatch log group with 7-day retention for cost optimization
   LambdaLogGroup:
@@ -116,23 +104,17 @@ Resources:
       Timeout: 60
       Environment:
         Variables:
-          # Operating Mode: S3 Tables (Iceberg) or Plain S3
-          # Uncomment ONE of the two modes below:
-
-          # MODE 1: S3 Tables with Iceberg catalog (RECOMMENDED)
-          # Single bucket architecture, ACID transactions, automatic table creation
-          OTLP2PARQUET_ICEBERG_REST_URI: !Sub 'https://s3tables.${AWS::Region}.amazonaws.com/iceberg'
-          OTLP2PARQUET_ICEBERG_WAREHOUSE: !GetAtt OtelTableBucket.TableBucketARN
-          OTLP2PARQUET_ICEBERG_NAMESPACE: 'otel'
+          # Storage configuration
           OTLP2PARQUET_STORAGE_BACKEND: 's3'
           OTLP2PARQUET_S3_BUCKET: !Ref DataBucket
           OTLP2PARQUET_S3_REGION: !Ref AWS::Region
 
-          # MODE 2: Plain S3 without Iceberg (LEGACY)
-          # Uncomment these and comment out MODE 1 above for plain S3 writes
-          # OTLP2PARQUET_STORAGE_BACKEND: 's3'
-          # OTLP2PARQUET_S3_BUCKET: !Ref DataBucket
-          # OTLP2PARQUET_S3_REGION: !Ref AWS::Region
+          # Iceberg via AWS Glue Data Catalog
+          OTLP2PARQUET_ICEBERG_ENABLED: 'true'
+          OTLP2PARQUET_ICEBERG_REST_URI: !Sub 'https://glue.${AWS::Region}.amazonaws.com/iceberg'
+          OTLP2PARQUET_ICEBERG_WAREHOUSE: !Ref AWS::AccountId
+          OTLP2PARQUET_ICEBERG_NAMESPACE: 'otel'
+          OTLP2PARQUET_ICEBERG_DATA_LOCATION: !Sub 's3://${DataBucket}'
 
           # Logging
           RUST_LOG: 'info'
@@ -150,21 +132,33 @@ Outputs:
     Export:
       Name: !Sub '${AWS::StackName}-LambdaName'
 
+  LambdaRoleArn:
+    Description: Lambda execution role ARN (for Lake Formation permissions)
+    Value: !GetAtt LambdaExecutionRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaRoleArn'
+
   DataBucketName:
-    Description: S3 bucket storing Parquet data files
+    Description: S3 bucket storing Parquet data files (Iceberg table data)
     Value: !Ref DataBucket
     Export:
       Name: !Sub '${AWS::StackName}-DataBucket'
 
-  TableBucketArn:
-    Description: S3 Table Bucket ARN (Iceberg warehouse location)
-    Value: !GetAtt OtelTableBucket.TableBucketARN
+  GlueCatalogId:
+    Description: AWS Glue catalog ID (account ID) for Iceberg tables
+    Value: !Ref AWS::AccountId
     Export:
-      Name: !Sub '${AWS::StackName}-TableBucketArn'
+      Name: !Sub '${AWS::StackName}-GlueCatalogId'
+
+  GlueDatabase:
+    Description: Glue database name for Iceberg tables
+    Value: 'otel'
+    Export:
+      Name: !Sub '${AWS::StackName}-GlueDatabase'
 
   IcebergRestEndpoint:
-    Description: Iceberg REST catalog endpoint (use with DuckDB, Spark, etc.)
-    Value: !Sub 'https://s3tables.${AWS::Region}.amazonaws.com/iceberg'
+    Description: AWS Glue Iceberg REST catalog endpoint
+    Value: !Sub 'https://glue.${AWS::Region}.amazonaws.com/iceberg'
     Export:
       Name: !Sub '${AWS::StackName}-IcebergEndpoint'
 

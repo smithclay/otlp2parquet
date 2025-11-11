@@ -57,6 +57,9 @@ pub struct IcebergRestConfig {
     pub target_file_size_bytes: u64,
     #[serde(default = "default_staging_prefix")]
     pub staging_prefix: String,
+    /// S3 location for table data storage (e.g., "s3://bucket-name")
+    /// Required for AWS Glue, optional for S3 Tables
+    pub data_location: Option<String>,
 }
 
 const DEFAULT_CATALOG_NAME: &str = "rest";
@@ -90,6 +93,7 @@ impl Default for IcebergRestConfig {
             format_version: default_format_version(),
             target_file_size_bytes: default_target_file_size_bytes(),
             staging_prefix: default_staging_prefix(),
+            data_location: None,
         }
     }
 }
@@ -100,6 +104,8 @@ impl IcebergRestConfig {
             .context("OTLP2PARQUET_ICEBERG_REST_URI must be set")?;
 
         let warehouse = env::var("OTLP2PARQUET_ICEBERG_WAREHOUSE").ok();
+
+        let data_location = env::var("OTLP2PARQUET_ICEBERG_DATA_LOCATION").ok();
 
         let namespace = env::var("OTLP2PARQUET_ICEBERG_NAMESPACE")
             .unwrap_or_default()
@@ -164,6 +170,7 @@ impl IcebergRestConfig {
             format_version: default_format_version(),
             target_file_size_bytes,
             staging_prefix,
+            data_location,
         })
     }
 }

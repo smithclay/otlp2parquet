@@ -1,4 +1,4 @@
-//! AWS SigV4-authenticated HTTP client for S3 Tables
+//! AWS SigV4-authenticated HTTP client for AWS Glue Iceberg REST
 
 use crate::http::{HttpClient, HttpResponse};
 use anyhow::{Context, Result};
@@ -89,7 +89,7 @@ impl HttpClient for AwsSigV4HttpClient {
         let signing_params = v4::SigningParams::builder()
             .identity(&identity)
             .region(&self.region)
-            .name("s3tables")
+            .name("glue")
             .time(std::time::SystemTime::now())
             .settings(SigningSettings::default())
             .build()

@@ -1,4 +1,5 @@
 use super::*;
+use crate::ReqwestHttpClient;
 
 #[test]
 fn test_iceberg_config_creation() {
@@ -22,7 +23,8 @@ fn test_generate_warehouse_path() {
     let signal_type = "logs";
 
     // Act
-    let path = IcebergWriter::generate_warehouse_path(base_location, signal_type);
+    let path =
+        IcebergWriter::<ReqwestHttpClient>::generate_warehouse_path(base_location, signal_type);
 
     // Assert
     assert!(path.starts_with("s3://bucket/warehouse/otel/logs/data/"));
@@ -76,6 +78,7 @@ async fn test_write_and_commit_integration() {
         String::new(),
         namespace,
         HashMap::new(),
+        None,
     ));
 
     let temp_dir = std::env::temp_dir();
@@ -142,6 +145,7 @@ async fn test_write_parquet_to_memory() {
         String::new(),
         namespace,
         HashMap::new(),
+        None,
     ));
     let writer = IcebergWriter::new(catalog, storage.clone(), config);
 
@@ -227,6 +231,7 @@ async fn test_build_data_file() {
         String::new(),
         namespace,
         HashMap::new(),
+        None,
     ));
 
     let storage = opendal::Operator::new(opendal::services::Memory::default())

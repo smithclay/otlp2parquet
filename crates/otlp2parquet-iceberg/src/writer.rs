@@ -1,5 +1,5 @@
 use crate::catalog::IcebergCatalog;
-use crate::http::ReqwestHttpClient;
+use crate::http::HttpClient;
 use crate::path::{catalog_path, storage_key_from_path};
 use crate::types::table::TableMetadata;
 use anyhow::{anyhow, Context, Result};
@@ -18,16 +18,16 @@ pub struct IcebergConfig {
     pub namespace: String,
 }
 
-pub struct IcebergWriter {
-    catalog: Arc<IcebergCatalog<ReqwestHttpClient>>,
+pub struct IcebergWriter<C: HttpClient> {
+    catalog: Arc<IcebergCatalog<C>>,
     #[allow(dead_code)] // Will be used in future tasks for Parquet write
     storage: opendal::Operator,
     pub config: IcebergConfig,
 }
 
-impl IcebergWriter {
+impl<C: HttpClient> IcebergWriter<C> {
     pub fn new(
-        catalog: Arc<IcebergCatalog<ReqwestHttpClient>>,
+        catalog: Arc<IcebergCatalog<C>>,
         storage: opendal::Operator,
         config: IcebergConfig,
     ) -> Self {

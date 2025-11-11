@@ -57,6 +57,9 @@ pub struct IcebergCatalog<T: HttpClient> {
     /// Map of signal/metric type to table name
     /// Keys: "logs", "traces", "metrics:gauge", etc.
     tables: HashMap<String, String>,
+    /// S3 warehouse location for table data (e.g., "s3://bucket-name")
+    /// Optional - only needed for catalogs like AWS Glue that require explicit locations
+    warehouse_location: Option<String>,
 }
 
 impl<T: HttpClient> IcebergCatalog<T> {
@@ -67,6 +70,7 @@ impl<T: HttpClient> IcebergCatalog<T> {
         prefix: String,
         namespace: NamespaceIdent,
         tables: HashMap<String, String>,
+        warehouse_location: Option<String>,
     ) -> Self {
         Self {
             http,
@@ -74,6 +78,7 @@ impl<T: HttpClient> IcebergCatalog<T> {
             prefix,
             namespace,
             tables,
+            warehouse_location,
         }
     }
 
@@ -111,6 +116,7 @@ impl<T: HttpClient> IcebergCatalog<T> {
         base_url: String,
         namespace: NamespaceIdent,
         tables: HashMap<String, String>,
+        warehouse_location: Option<String>,
     ) -> Result<Self> {
         // Create a temporary instance to fetch config
         let temp = Self {
@@ -119,6 +125,7 @@ impl<T: HttpClient> IcebergCatalog<T> {
             prefix: String::new(),
             namespace: namespace.clone(),
             tables: tables.clone(),
+            warehouse_location: warehouse_location.clone(),
         };
 
         // Fetch config to get prefix
@@ -138,6 +145,7 @@ impl<T: HttpClient> IcebergCatalog<T> {
             prefix,
             namespace: temp.namespace,
             tables: temp.tables,
+            warehouse_location,
         })
     }
 
@@ -215,12 +223,26 @@ impl<T: HttpClient> IcebergCatalog<T> {
 
         // Build CreateTable request following Iceberg REST spec
         // Reference: https://github.com/apache/iceberg/blob/main/open-api/rest-catalog-open-api.yaml
-        // For S3 Tables: only include required fields
-        let request = serde_json::json!({
+        let mut request = serde_json::json!({
             "name": table_name,
             "schema": iceberg_schema,
             "stage-create": false
         });
+
+        // AWS Glue requires explicit "location" field for table data storage
+        // S3 Tables manages location automatically, so only add if provided
+        if let Some(ref warehouse_loc) = self.warehouse_location {
+            let table_location = format!(
+                "{}/{}/{}",
+                warehouse_loc,
+                self.namespace.as_str(),
+                table_name
+            );
+            request.as_object_mut().unwrap().insert(
+                "location".to_string(),
+                serde_json::Value::String(table_location),
+            );
+        }
 
         debug!(
             "CreateTable request body: {}",
@@ -590,7 +612,7 @@ impl<T: HttpClient> IcebergCatalog<T> {
             manifest_list: manifest_list_path.clone(),
             summary,
             sequence_number: None,
-            schema_id: None, // schema-id is optional, omit it
+            schema_id: None, // AWS S3 Tables manages this internally
         };
 
         let updates = vec![
@@ -882,6 +904,7 @@ mod tests {
             String::new(),
             NamespaceIdent::from_vec(vec!["otel".to_string()]).unwrap(),
             tables,
+            None,
         );
 
         assert_eq!(catalog.base_url, "https://catalog.example.com");
@@ -904,6 +927,7 @@ mod tests {
             String::new(),
             NamespaceIdent::from_vec(vec!["otel".to_string()]).unwrap(),
             tables,
+            None,
         );
 
         // Create in-memory storage
@@ -931,6 +955,7 @@ mod tests {
             String::new(),
             NamespaceIdent::from_vec(vec!["otel".to_string()]).unwrap(),
             tables,
+            None,
         );
 
         let data_file = DataFile::builder()
@@ -1019,6 +1044,7 @@ mod tests {
             String::new(),
             NamespaceIdent::from_vec(vec!["otel".to_string()]).unwrap(),
             tables,
+            None,
         );
 
         let metadata = catalog.load_table("otel_logs").await.unwrap();
@@ -1108,6 +1134,7 @@ mod tests {
             String::new(),
             NamespaceIdent::from_vec(vec!["otel".to_string()]).unwrap(),
             tables,
+            None,
         );
 
         let data_file = DataFile::builder()
@@ -1146,6 +1173,7 @@ mod tests {
             String::new(),
             NamespaceIdent::from_vec(vec!["otel".to_string()]).unwrap(),
             tables,
+            None,
         );
 
         let result = catalog.load_table("otel_logs").await;
@@ -1226,6 +1254,7 @@ mod tests {
             String::new(),
             NamespaceIdent::from_vec(vec!["otel".to_string()]).unwrap(),
             tables,
+            None,
         );
 
         let data_file = DataFile::builder()
