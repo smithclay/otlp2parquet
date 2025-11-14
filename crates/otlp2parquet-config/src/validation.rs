@@ -4,6 +4,7 @@
 
 use crate::*;
 use anyhow::{bail, Result};
+use tracing::warn;
 
 pub fn validate_config(config: &RuntimeConfig) -> Result<()> {
     // Validate batch config
@@ -38,17 +39,17 @@ fn validate_batch_config(config: &BatchConfig) -> Result<()> {
 
     // Warn about very large batch sizes
     if config.max_rows > 10_000_000 {
-        eprintln!(
-            "WARNING: batch.max_rows is very large ({}), may cause memory issues",
-            config.max_rows
+        warn!(
+            max_rows = config.max_rows,
+            "batch.max_rows is very large; may cause memory issues"
         );
     }
 
     if config.max_bytes > 1024 * 1024 * 1024 {
         // 1 GB
-        eprintln!(
-            "WARNING: batch.max_bytes is very large ({} bytes), may cause memory issues",
-            config.max_bytes
+        warn!(
+            max_bytes = config.max_bytes,
+            "batch.max_bytes is very large; may cause memory issues"
         );
     }
 
@@ -63,9 +64,9 @@ fn validate_request_config(config: &RequestConfig) -> Result<()> {
     // Warn about very large payloads
     if config.max_payload_bytes > 100 * 1024 * 1024 {
         // 100 MB
-        eprintln!(
-            "WARNING: request.max_payload_bytes is very large ({} bytes), may cause issues",
-            config.max_payload_bytes
+        warn!(
+            max_payload_bytes = config.max_payload_bytes,
+            "request.max_payload_bytes is very large; may cause issues"
         );
     }
 

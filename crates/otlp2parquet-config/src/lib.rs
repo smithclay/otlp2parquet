@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 mod platform;
+#[cfg(not(target_arch = "wasm32"))]
 mod sources;
 mod validation;
 
@@ -365,19 +366,104 @@ impl IcebergConfig {
 
 impl RuntimeConfig {
     /// Load configuration from all sources with priority
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load() -> Result<Self> {
         let platform = Platform::detect();
         sources::load_config(platform)
     }
 
+    /// `wasm32` (Cloudflare Workers) builds cannot touch host env or filesystem.
+    /// Return platform defaults so the runtime can layer worker-specific overrides.
+    #[cfg(target_arch = "wasm32")]
+    pub fn load() -> Result<Self> {
+        Ok(RuntimeConfig::from_platform_defaults(Platform::detect()))
+    }
+
     /// Load configuration for a specific platform (useful for testing)
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load_for_platform(platform: Platform) -> Result<Self> {
         sources::load_config(platform)
+    }
+
+    /// Construct a config that contains only platform defaults (no env or files).
+    pub fn from_platform_defaults(platform: Platform) -> Self {
+        platform_defaults(platform)
     }
 
     /// Validate the configuration
     pub fn validate(&self) -> Result<()> {
         validation::validate_config(self)
+    }
+}
+
+fn platform_defaults(platform: Platform) -> RuntimeConfig {
+    let defaults = platform.defaults();
+
+    let storage_backend = defaults
+        .storage_backend
+        .parse::<StorageBackend>()
+        .expect("invalid default storage backend");
+
+    let storage = match storage_backend {
+        StorageBackend::Fs => StorageConfig {
+            backend: StorageBackend::Fs,
+            parquet_row_group_size: default_parquet_row_group_size(),
+            fs: Some(FsConfig::default()),
+            s3: None,
+            r2: None,
+        },
+        StorageBackend::S3 => StorageConfig {
+            backend: StorageBackend::S3,
+            parquet_row_group_size: default_parquet_row_group_size(),
+            fs: None,
+            s3: Some(S3Config {
+                bucket: "otlp-logs".to_string(),
+                region: "us-east-1".to_string(),
+                endpoint: None,
+            }),
+            r2: None,
+        },
+        StorageBackend::R2 => StorageConfig {
+            backend: StorageBackend::R2,
+            parquet_row_group_size: default_parquet_row_group_size(),
+            fs: None,
+            s3: None,
+            r2: Some(R2Config {
+                bucket: String::new(),
+                account_id: String::new(),
+                access_key_id: String::new(),
+                secret_access_key: String::new(),
+            }),
+        },
+    };
+
+    RuntimeConfig {
+        batch: BatchConfig {
+            max_rows: defaults.batch_max_rows,
+            max_bytes: defaults.batch_max_bytes,
+            max_age_secs: defaults.batch_max_age_secs,
+            enabled: true,
+        },
+        request: RequestConfig {
+            max_payload_bytes: defaults.max_payload_bytes,
+        },
+        storage,
+        server: if platform == Platform::Server {
+            Some(ServerConfig::default())
+        } else {
+            None
+        },
+        lambda: if platform == Platform::Lambda {
+            Some(LambdaConfig::default())
+        } else {
+            None
+        },
+        cloudflare: if platform == Platform::CloudflareWorkers {
+            Some(CloudflareConfig::default())
+        } else {
+            None
+        },
+        iceberg: None,
     }
 }
 

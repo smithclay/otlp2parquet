@@ -109,6 +109,14 @@ impl OpenDalStorage {
         }
     }
 
+    /// Lightweight connectivity probe that avoids listing entire buckets.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn probe(&self) -> anyhow::Result<()> {
+        let mut lister = self.operator.lister("").await?;
+        let _ = lister.try_next().await?;
+        Ok(())
+    }
+
     /// List files in a directory (used for readiness checks)
     #[cfg(not(target_arch = "wasm32"))]
     pub async fn list(&self, path: &str) -> anyhow::Result<Vec<String>> {

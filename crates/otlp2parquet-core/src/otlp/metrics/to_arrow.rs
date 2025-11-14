@@ -18,7 +18,6 @@ use otlp2parquet_proto::opentelemetry::proto::{
         ScopeMetrics,
     },
 };
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::otlp::common::{
@@ -247,7 +246,7 @@ impl ArrowConverter {
 // Context structures for resource and scope information
 struct ResourceContext {
     service_name: String,
-    attributes: HashMap<String, String>,
+    attributes: Vec<(String, String)>,
 }
 
 struct ScopeContext {
@@ -257,7 +256,7 @@ struct ScopeContext {
 
 fn extract_resource_context(resource_metrics: &ResourceMetrics) -> ResourceContext {
     let mut service_name = String::new();
-    let mut attributes = HashMap::new();
+    let mut attributes = Vec::new();
 
     if let Some(resource) = &resource_metrics.resource {
         for attr in &resource.attributes {
@@ -269,7 +268,7 @@ fn extract_resource_context(resource_metrics: &ResourceMetrics) -> ResourceConte
             }
 
             // Store all attributes
-            attributes.insert(attr.key.clone(), value_str);
+            attributes.push((attr.key.clone(), value_str));
         }
     }
 

@@ -2,6 +2,7 @@
 //
 // Implements OTLP ingestion and health check endpoints
 
+use anyhow::Context;
 use arrow::array::{Array, RecordBatch, StringArray, TimestampNanosecondArray};
 use axum::{
     extract::State,
@@ -11,7 +12,7 @@ use axum::{
 };
 use metrics::{counter, histogram};
 use otlp2parquet_batch::CompletedBatch;
-use otlp2parquet_core::{otlp, InputFormat};
+use otlp2parquet_core::{otlp, InputFormat, ParquetWriteResult};
 use prost::Message;
 use serde_json::json;
 use std::time::Instant;
@@ -71,7 +72,7 @@ pub(crate) async fn health_check() -> impl IntoResponse {
 /// GET /ready - Readiness check (includes storage connectivity)
 pub(crate) async fn ready_check(State(state): State<AppState>) -> impl IntoResponse {
     // Test storage connectivity by listing (basic check)
-    match state.storage.list("").await {
+    match state.storage.probe().await {
         Ok(_) => (
             StatusCode::OK,
             Json(json!({"status": "ready", "storage": "connected"})),
@@ -131,7 +132,7 @@ async fn process_logs(
     histogram!("otlp.ingest.bytes", body.len() as f64);
 
     let request = otlp::parse_otlp_request(&body, format)
-        .map_err(|e| e.context("Failed to parse OTLP request payload"))?;
+        .map_err(|e| AppError::bad_request(e.context("Failed to parse OTLP request payload")))?;
 
     let per_service_requests = otlp::logs::split_request_by_service(request);
     let mut uploads: Vec<CompletedBatch<otlp::LogMetadata>> = Vec::new();
@@ -140,14 +141,14 @@ async fn process_logs(
     if let Some(batcher) = &state.batcher {
         let mut expired = batcher
             .drain_expired()
-            .map_err(|e| e.context("Failed to flush expired batches"))?;
+            .map_err(|e| AppError::internal(e.context("Failed to flush expired batches")))?;
         uploads.append(&mut expired);
 
         for subset in &per_service_requests {
             let approx_bytes = subset.encoded_len();
             let (mut ready, meta) = batcher
                 .ingest(subset, approx_bytes)
-                .map_err(|e| e.context("Failed to enqueue batch"))?;
+                .map_err(|e| AppError::internal(e.context("Failed to enqueue batch")))?;
             total_records += meta.record_count;
             uploads.append(&mut ready);
         }
@@ -156,7 +157,7 @@ async fn process_logs(
             let batch = state
                 .passthrough
                 .ingest(&subset)
-                .map_err(|e| e.context("Failed to convert OTLP to Arrow"))?;
+                .map_err(|e| AppError::bad_request(e.context("Failed to convert OTLP to Arrow")))?;
             total_records += batch.metadata.record_count;
             uploads.push(batch);
         }
@@ -166,27 +167,10 @@ async fn process_logs(
 
     let mut uploaded_paths = Vec::new();
     for completed in uploads {
-        let write_result = state
-            .parquet_writer
-            .write_batches_with_hash(
-                &completed.batches,
-                &completed.metadata.service_name,
-                completed.metadata.first_timestamp_nanos,
-            )
+        let write_result = persist_log_batch(state, &completed)
             .await
-            .map_err(|e| e.context("Failed to write Parquet to storage"))?;
+            .map_err(AppError::internal)?;
         let partition_path = write_result.path.clone();
-
-        // Commit to Iceberg catalog if configured (warn-and-succeed on error)
-        if let Some(committer) = &state.iceberg_committer {
-            if let Err(e) = committer
-                .commit_with_signal("logs", None, &[write_result], state.storage.operator())
-                .await
-            {
-                warn!("Failed to commit logs to Iceberg catalog: {}", e);
-                // Continue - files are in storage even if catalog commit failed
-            }
-        }
 
         counter!("otlp.batch.flushes", 1);
         histogram!("otlp.batch.rows", completed.metadata.record_count as f64);
@@ -222,16 +206,19 @@ async fn process_traces(
     histogram!("otlp.ingest.bytes", body.len() as f64, "signal" => "traces");
 
     // Parse OTLP traces request
-    let request = otlp::traces::parse_otlp_trace_request(&body, format)
-        .map_err(|e| e.context("Failed to parse OTLP traces request payload"))?;
+    let request = otlp::traces::parse_otlp_trace_request(&body, format).map_err(|e| {
+        AppError::bad_request(e.context("Failed to parse OTLP traces request payload"))
+    })?;
 
     let per_service_requests = otlp::traces::split_request_by_service(request);
     let mut uploaded_paths = Vec::new();
     let mut spans_processed: usize = 0;
 
     for subset in per_service_requests {
-        let (batches, metadata) = otlp::traces::TraceArrowConverter::convert(&subset)
-            .map_err(|e| e.context("Failed to convert OTLP traces to Arrow"))?;
+        let (batches, metadata) =
+            otlp::traces::TraceArrowConverter::convert(&subset).map_err(|e| {
+                AppError::bad_request(e.context("Failed to convert OTLP traces to Arrow"))
+            })?;
 
         if batches.is_empty() || metadata.span_count == 0 {
             continue;
@@ -255,7 +242,9 @@ async fn process_traces(
                 None, // No subdirectory for traces (unlike metrics)
             )
             .await
-            .map_err(|e| e.context("Failed to write traces Parquet to storage"))?;
+            .map_err(|e| {
+                AppError::internal(e.context("Failed to write traces Parquet to storage"))
+            })?;
         let partition_path = write_result.path.clone();
 
         if let Some(committer) = &state.iceberg_committer {
@@ -316,8 +305,9 @@ async fn process_metrics(
     histogram!("otlp.ingest.bytes", body.len() as f64, "signal" => "metrics");
 
     // Parse OTLP metrics request
-    let request = otlp::metrics::parse_otlp_request(&body, format)
-        .map_err(|e| e.context("Failed to parse OTLP metrics request payload"))?;
+    let request = otlp::metrics::parse_otlp_request(&body, format).map_err(|e| {
+        AppError::bad_request(e.context("Failed to parse OTLP metrics request payload"))
+    })?;
 
     let per_service_requests = otlp::metrics::split_request_by_service(request);
     let converter = otlp::metrics::ArrowConverter::new();
@@ -325,9 +315,9 @@ async fn process_metrics(
     let mut uploaded_paths = Vec::new();
 
     for subset in per_service_requests {
-        let (batches_by_type, subset_metadata) = converter
-            .convert(subset)
-            .map_err(|e| e.context("Failed to convert OTLP metrics to Arrow"))?;
+        let (batches_by_type, subset_metadata) = converter.convert(subset).map_err(|e| {
+            AppError::bad_request(e.context("Failed to convert OTLP metrics to Arrow"))
+        })?;
 
         aggregated.resource_metrics_count += subset_metadata.resource_metrics_count;
         aggregated.scope_metrics_count += subset_metadata.scope_metrics_count;
@@ -352,7 +342,9 @@ async fn process_metrics(
                 )
                 .await
                 .map_err(|e| {
-                    e.context(format!("Failed to write {} metrics Parquet", metric_type))
+                    AppError::internal(
+                        e.context(format!("Failed to write {} metrics Parquet", metric_type)),
+                    )
                 })?;
             let partition_path = write_result.path.clone();
 
@@ -423,6 +415,37 @@ async fn process_metrics(
     }));
 
     Ok((StatusCode::OK, response).into_response())
+}
+
+pub(crate) async fn persist_log_batch(
+    state: &AppState,
+    completed: &CompletedBatch<otlp::LogMetadata>,
+) -> anyhow::Result<ParquetWriteResult> {
+    let write_result = state
+        .parquet_writer
+        .write_batches_with_hash(
+            &completed.batches,
+            &completed.metadata.service_name,
+            completed.metadata.first_timestamp_nanos,
+        )
+        .await
+        .context("Failed to write Parquet to storage")?;
+
+    if let Some(committer) = &state.iceberg_committer {
+        if let Err(e) = committer
+            .commit_with_signal(
+                "logs",
+                None,
+                std::slice::from_ref(&write_result),
+                state.storage.operator(),
+            )
+            .await
+        {
+            warn!("Failed to commit logs to Iceberg catalog: {}", e);
+        }
+    }
+
+    Ok(write_result)
 }
 
 fn extract_service_name(batch: &RecordBatch) -> String {

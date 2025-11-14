@@ -5,6 +5,7 @@
 // - AWS Lambda: AWS_LAMBDA_FUNCTION_NAME env var present
 // - Server: Neither present (default)
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::env;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,12 +18,22 @@ pub enum Platform {
 impl Platform {
     /// Auto-detect the current platform based on environment variables
     pub fn detect() -> Self {
-        if env::var("CF_WORKER").is_ok() {
+        #[cfg(target_arch = "wasm32")]
+        {
+            // wasm32 binaries (Cloudflare Workers) cannot read host env vars reliably,
+            // so default to the Workers runtime.
             Platform::CloudflareWorkers
-        } else if env::var("AWS_LAMBDA_FUNCTION_NAME").is_ok() {
-            Platform::Lambda
-        } else {
-            Platform::Server
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if env::var("CF_WORKER").is_ok() {
+                Platform::CloudflareWorkers
+            } else if env::var("AWS_LAMBDA_FUNCTION_NAME").is_ok() {
+                Platform::Lambda
+            } else {
+                Platform::Server
+            }
         }
     }
 

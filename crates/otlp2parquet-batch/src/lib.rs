@@ -243,6 +243,17 @@ impl<P: SignalProcessor> BatchManager<P> {
 
         Ok(completed)
     }
+
+    pub fn drain_all(&self) -> Result<Vec<CompletedBatch<P::Metadata>>> {
+        let mut guard = self.inner.lock();
+        let drained: Vec<_> = guard.drain().collect();
+        drop(guard);
+
+        drained
+            .into_iter()
+            .map(|(_, batch)| batch.finalize())
+            .collect()
+    }
 }
 
 /// Lightweight helper when batching is disabled entirely.

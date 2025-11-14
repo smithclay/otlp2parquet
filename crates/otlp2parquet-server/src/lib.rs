@@ -29,7 +29,7 @@ use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 mod handlers;
 mod init;
@@ -67,21 +67,29 @@ impl IntoResponse for AppError {
     }
 }
 
-impl<E> From<E> for AppError
-where
-    E: Into<anyhow::Error>,
-{
-    fn from(err: E) -> Self {
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            error: err.into(),
-        }
-    }
-}
-
 impl AppError {
     pub fn with_status(status: StatusCode, error: anyhow::Error) -> Self {
         Self { status, error }
+    }
+
+    pub fn bad_request<E>(error: E) -> Self
+    where
+        E: Into<anyhow::Error>,
+    {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            error: error.into(),
+        }
+    }
+
+    pub fn internal<E>(error: E) -> Self
+    where
+        E: Into<anyhow::Error>,
+    {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            error: error.into(),
+        }
     }
 }
 
@@ -255,6 +263,8 @@ pub async fn run() -> Result<()> {
         iceberg_committer,
     };
 
+    let router_state = state.clone();
+
     // Build router
     let app = Router::new()
         .route("/v1/logs", post(handle_logs))
@@ -262,7 +272,7 @@ pub async fn run() -> Result<()> {
         .route("/v1/metrics", post(handle_metrics))
         .route("/health", get(health_check))
         .route("/ready", get(ready_check))
-        .with_state(state);
+        .with_state(router_state);
 
     // Create TCP listener
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -284,7 +294,51 @@ pub async fn run() -> Result<()> {
         .await
         .context("Server error")?;
 
+    flush_pending_batches(&state).await?;
+
     info!("Server shutdown complete");
+
+    Ok(())
+}
+
+async fn flush_pending_batches(state: &AppState) -> Result<()> {
+    if let Some(batcher) = &state.batcher {
+        let pending = batcher
+            .drain_all()
+            .context("Failed to drain pending log batches during shutdown")?;
+
+        if pending.is_empty() {
+            return Ok(());
+        }
+
+        info!(
+            batch_count = pending.len(),
+            "Flushing buffered log batches before shutdown"
+        );
+
+        for completed in pending {
+            let rows = completed.metadata.record_count;
+            let service = completed.metadata.service_name.as_ref().to_string();
+            match handlers::persist_log_batch(state, &completed).await {
+                Ok(write_result) => {
+                    info!(
+                        path = %write_result.path,
+                        service_name = %service,
+                        rows,
+                        "Flushed pending batch"
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        service_name = %service,
+                        rows,
+                        "Failed to flush pending batch during shutdown"
+                    );
+                }
+            }
+        }
+    }
 
     Ok(())
 }

@@ -127,7 +127,11 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
 
     // Use configurable max payload size (default 10MB for CF Workers)
     // Can be overridden via OTLP2PARQUET_MAX_PAYLOAD_BYTES env var
-    let max_payload_bytes = config.request.max_payload_bytes;
+    let max_payload_bytes = env
+        .var("OTLP2PARQUET_MAX_PAYLOAD_BYTES")
+        .ok()
+        .and_then(|val| val.to_string().parse::<usize>().ok())
+        .unwrap_or(config.request.max_payload_bytes);
 
     console_log!(
         "Processing {} request (max payload: {} MB)",

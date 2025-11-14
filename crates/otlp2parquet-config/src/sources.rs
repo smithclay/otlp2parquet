@@ -36,74 +36,7 @@ pub fn load_config(platform: Platform) -> Result<RuntimeConfig> {
 
 /// Get platform-specific default configuration
 fn platform_defaults(platform: Platform) -> RuntimeConfig {
-    let defaults = platform.defaults();
-
-    let storage_backend = defaults
-        .storage_backend
-        .parse::<StorageBackend>()
-        .expect("invalid default storage backend");
-
-    let storage = match storage_backend {
-        StorageBackend::Fs => StorageConfig {
-            backend: StorageBackend::Fs,
-            parquet_row_group_size: default_parquet_row_group_size(),
-            fs: Some(FsConfig::default()),
-            s3: None,
-            r2: None,
-        },
-        StorageBackend::S3 => StorageConfig {
-            backend: StorageBackend::S3,
-            parquet_row_group_size: default_parquet_row_group_size(),
-            fs: None,
-            s3: Some(S3Config {
-                bucket: "otlp-logs".to_string(), // Lambda default
-                region: "us-east-1".to_string(),
-                endpoint: None,
-            }),
-            r2: None,
-        },
-        StorageBackend::R2 => StorageConfig {
-            backend: StorageBackend::R2,
-            parquet_row_group_size: default_parquet_row_group_size(),
-            fs: None,
-            s3: None,
-            r2: Some(R2Config {
-                bucket: String::new(),
-                account_id: String::new(),
-                access_key_id: String::new(),
-                secret_access_key: String::new(),
-            }),
-        },
-    };
-
-    RuntimeConfig {
-        batch: BatchConfig {
-            max_rows: defaults.batch_max_rows,
-            max_bytes: defaults.batch_max_bytes,
-            max_age_secs: defaults.batch_max_age_secs,
-            enabled: true,
-        },
-        request: RequestConfig {
-            max_payload_bytes: defaults.max_payload_bytes,
-        },
-        storage,
-        server: if platform == Platform::Server {
-            Some(ServerConfig::default())
-        } else {
-            None
-        },
-        lambda: if platform == Platform::Lambda {
-            Some(LambdaConfig::default())
-        } else {
-            None
-        },
-        cloudflare: if platform == Platform::CloudflareWorkers {
-            Some(CloudflareConfig::default())
-        } else {
-            None
-        },
-        iceberg: None, // Iceberg is optional, loaded from env vars or config file
-    }
+    RuntimeConfig::from_platform_defaults(platform)
 }
 
 /// Load configuration from file

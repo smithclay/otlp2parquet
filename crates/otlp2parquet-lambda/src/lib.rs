@@ -582,8 +582,16 @@ pub async fn run() -> Result<(), Error> {
 mod tests {
     use super::*;
 
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        use std::sync::{Mutex, OnceLock};
+
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+
     #[test]
     fn test_detect_mode_iceberg() {
+        let _guard = env_lock();
         // Set all required Iceberg environment variables
         std::env::set_var(
             "OTLP2PARQUET_ICEBERG_REST_URI",
@@ -607,6 +615,7 @@ mod tests {
 
     #[test]
     fn test_detect_mode_plain_s3_no_iceberg_vars() {
+        let _guard = env_lock();
         // Remove all Iceberg variables
         std::env::remove_var("OTLP2PARQUET_ICEBERG_REST_URI");
         std::env::remove_var("OTLP2PARQUET_ICEBERG_WAREHOUSE");
@@ -619,6 +628,7 @@ mod tests {
 
     #[test]
     fn test_detect_mode_plain_s3_partial_iceberg_vars() {
+        let _guard = env_lock();
         // Set only some Iceberg variables (incomplete config should fall back to PlainS3)
         std::env::set_var(
             "OTLP2PARQUET_ICEBERG_REST_URI",

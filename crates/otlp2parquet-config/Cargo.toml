@@ -14,5 +14,8 @@ serde = { workspace = true }
 # TOML config file support
 toml = { workspace = true }
 
+# Structured logging for warnings
+tracing = { workspace = true }
+
 [features]
 default = []
