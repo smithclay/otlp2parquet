@@ -11,12 +11,13 @@ mod handlers;
 mod parquet;
 
 use once_cell::sync::OnceCell;
+use otlp2parquet_config::{EnvSource, Platform, RuntimeConfig, ENV_PREFIX};
 use std::sync::Arc;
 use worker::*;
 
 static STORAGE: OnceCell<Arc<otlp2parquet_storage::opendal_storage::OpenDalStorage>> =
     OnceCell::new();
-static CONFIG: OnceCell<otlp2parquet_config::RuntimeConfig> = OnceCell::new();
+static CONFIG: OnceCell<RuntimeConfig> = OnceCell::new();
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum SignalKind {
@@ -53,12 +54,7 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
     }
 
     // Load config once (with platform detection and env var overrides)
-    let config = CONFIG.get_or_try_init(|| {
-        otlp2parquet_config::RuntimeConfig::load().map_err(|e| {
-            console_error!("Failed to load configuration: {:?}", e);
-            worker::Error::RustError(format!("Config error: {}", e))
-        })
-    })?;
+    let config = CONFIG.get_or_try_init(|| load_worker_config(&env))?;
 
     let storage = if let Some(existing) = STORAGE.get() {
         existing.clone()
@@ -180,5 +176,38 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
         SignalKind::Metrics => {
             handlers::handle_metrics_request(&body_bytes, format, content_type, &storage).await
         }
+    }
+}
+
+fn load_worker_config(env: &Env) -> Result<RuntimeConfig> {
+    let provider = WorkerEnvSource { env };
+    let inline = provider.get("CONFIG_CONTENT");
+    RuntimeConfig::load_for_platform_with_env(
+        Platform::CloudflareWorkers,
+        inline.as_deref(),
+        &provider,
+    )
+    .map_err(|e| {
+        console_error!("Failed to load configuration: {:?}", e);
+        worker::Error::RustError(format!("Config error: {}", e))
+    })
+}
+
+struct WorkerEnvSource<'a> {
+    env: &'a Env,
+}
+
+impl<'a> EnvSource for WorkerEnvSource<'a> {
+    fn get(&self, key: &str) -> Option<String> {
+        let binding = format!("{}{}", ENV_PREFIX, key);
+        if let Ok(val) = self.env.var(&binding) {
+            return Some(val.to_string());
+        }
+        if key.contains("SECRET") {
+            if let Ok(secret) = self.env.secret(&binding) {
+                return Some(secret.to_string());
+            }
+        }
+        None
     }
 }

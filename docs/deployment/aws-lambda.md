@@ -138,6 +138,25 @@ For local testing, create a `local-env.json` file inside `crates/otlp2parquet-la
 
 *Note: Add `local-env.json` to your `.gitignore` file.*
 
+### Shared Configuration (`config.toml`)
+
+Lambda now reads the same `config.toml` file as the server binary. You can keep your storage, batching, and Iceberg settings in one place (plus override anything with `OTLP2PARQUET_*` environment variables).
+
+Add a `[lambda]` block to toggle integrated S3 Tables / Glue commits:
+
+```toml
+[lambda]
+integrated_iceberg = true
+
+[iceberg]
+rest_uri = "https://glue.us-west-2.amazonaws.com/iceberg"
+warehouse = "123456789012"           # Glue catalog ID
+namespace = "otel.prod"
+data_location = "s3://otel-prod-data" # Required for Glue
+```
+
+When `integrated_iceberg` is `true`, the Lambda runtime requires a populated `[iceberg]` section (and corresponding AWS permissions) so it can perform write+commit in a single invocation. Set the same option via env var with `OTLP2PARQUET_LAMBDA_INTEGRATED_ICEBERG=true` if you prefer to manage configuration entirely through environment variables.
+
 ## Monitoring & Troubleshooting
 
 ### View CloudWatch Logs

@@ -7,16 +7,18 @@
 // 4. Default config file locations (./config.toml, ./.otlp2parquet.toml)
 // 5. Platform-specific defaults (lowest priority)
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
 
+mod env_overrides;
 mod platform;
 #[cfg(not(target_arch = "wasm32"))]
 mod sources;
 mod validation;
 
+pub use env_overrides::{EnvSource, ENV_PREFIX};
 pub use platform::Platform;
 
 /// Main runtime configuration
@@ -197,7 +199,8 @@ pub enum LogFormat {
 /// Lambda-specific configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LambdaConfig {
-    // Future lambda-specific config can go here
+    #[serde(default)]
+    pub integrated_iceberg: bool,
 }
 
 /// Cloudflare Workers-specific configuration
@@ -239,6 +242,26 @@ pub struct IcebergConfig {
     /// Custom table names per signal type
     #[serde(default)]
     pub tables: IcebergTableNames,
+
+    /// Optional fully-qualified data location (e.g., s3://bucket/path)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_location: Option<String>,
+}
+
+impl Default for IcebergConfig {
+    fn default() -> Self {
+        Self {
+            rest_uri: String::new(),
+            warehouse: None,
+            namespace: None,
+            catalog_name: default_iceberg_catalog_name(),
+            staging_prefix: default_iceberg_staging_prefix(),
+            target_file_size_bytes: default_iceberg_target_file_size(),
+            format_version: default_iceberg_format_version(),
+            tables: IcebergTableNames::default(),
+            data_location: None,
+        }
+    }
 }
 
 /// Iceberg table names configuration
@@ -388,6 +411,61 @@ impl RuntimeConfig {
     /// Construct a config that contains only platform defaults (no env or files).
     pub fn from_platform_defaults(platform: Platform) -> Self {
         platform_defaults(platform)
+    }
+
+    /// Merge another config into this one (used for TOML layering).
+    pub fn merge(&mut self, other: RuntimeConfig) {
+        self.batch = other.batch;
+        self.request = other.request;
+        self.storage = other.storage;
+
+        if other.server.is_some() {
+            self.server = other.server;
+        }
+        if other.lambda.is_some() {
+            self.lambda = other.lambda;
+        }
+        if other.cloudflare.is_some() {
+            self.cloudflare = other.cloudflare;
+        }
+        if other.iceberg.is_some() {
+            self.iceberg = other.iceberg;
+        }
+    }
+
+    /// Apply environment overrides from a custom source (e.g., Workers Env).
+    pub fn apply_env_overrides_from<E: EnvSource>(&mut self, env: &E) -> Result<()> {
+        env_overrides::apply_env_overrides(self, env)
+    }
+
+    /// Build a configuration for the given platform using inline config content
+    /// plus overrides supplied by an `EnvSource`. Intended for runtimes that
+    /// cannot read files or host environment variables (Cloudflare Workers).
+    pub fn load_for_platform_with_env<E: EnvSource>(
+        platform: Platform,
+        inline_config: Option<&str>,
+        env: &E,
+    ) -> Result<Self> {
+        let mut config = RuntimeConfig::from_platform_defaults(platform);
+
+        if let Some(inline) = inline_config {
+            let file_config: RuntimeConfig =
+                toml::from_str(inline).context("Failed to parse inline config content")?;
+            config.merge(file_config);
+        }
+
+        config.apply_env_overrides_from(env)?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Convenience helper for WASM targets to load configuration with a custom env source.
+    #[cfg(target_arch = "wasm32")]
+    pub fn load_with_env_source<E: EnvSource>(
+        env: &E,
+        inline_config: Option<&str>,
+    ) -> Result<Self> {
+        Self::load_for_platform_with_env(Platform::detect(), inline_config, env)
     }
 
     /// Validate the configuration

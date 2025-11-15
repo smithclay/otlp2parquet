@@ -88,28 +88,6 @@ async fn handle_request(
     }
 }
 
-/// Writer mode detection based on environment variables
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WriterMode {
-    /// S3 Tables mode with integrated Iceberg catalog commits
-    Iceberg,
-    /// Plain S3 mode with optional post-write catalog commits
-    PlainS3,
-}
-
-/// Detect writer mode from environment variables
-fn detect_writer_mode() -> WriterMode {
-    // Check for all required Iceberg config variables
-    if std::env::var("OTLP2PARQUET_ICEBERG_REST_URI").is_ok()
-        && std::env::var("OTLP2PARQUET_ICEBERG_WAREHOUSE").is_ok()
-        && std::env::var("OTLP2PARQUET_ICEBERG_NAMESPACE").is_ok()
-    {
-        WriterMode::Iceberg
-    } else {
-        WriterMode::PlainS3
-    }
-}
-
 /// Unified writer that routes to either IcebergWriter or PlainS3 writer
 pub(crate) enum Writer {
     /// Integrated write + commit to S3 Tables with Iceberg catalog (AWS SigV4 auth)
@@ -130,231 +108,196 @@ pub(crate) enum Writer {
 }
 
 impl Writer {
-    /// Create Writer from environment variables and configuration
-    pub async fn from_env(config: &RuntimeConfig) -> Result<Self, Error> {
-        let mode = detect_writer_mode();
-        tracing::info!("Detected writer mode: {:?}", mode);
+    /// Create Writer from configuration (no direct env probing).
+    pub async fn from_config(config: &RuntimeConfig) -> Result<Self, Error> {
+        let integrated = config
+            .lambda
+            .as_ref()
+            .map(|lambda| lambda.integrated_iceberg)
+            .unwrap_or(false);
 
-        match mode {
-            WriterMode::Iceberg => {
-                // Build Iceberg configuration
-                let rest_uri =
-                    std::env::var("OTLP2PARQUET_ICEBERG_REST_URI").unwrap_or_else(|_| {
-                        let region =
-                            std::env::var("AWS_REGION").unwrap_or_else(|_| "us-west-2".to_string());
-                        format!("https://glue.{}.amazonaws.com/iceberg", region)
-                    });
-
-                // Warehouse format depends on endpoint:
-                // - Glue: AWS account ID (catalog ID), e.g. "123456789012"
-                // - S3 Tables: S3 Tables bucket ARN
-                let warehouse = std::env::var("OTLP2PARQUET_ICEBERG_WAREHOUSE")
-                    .map_err(|_| Error::from("OTLP2PARQUET_ICEBERG_WAREHOUSE required"))?;
-                let namespace_str = std::env::var("OTLP2PARQUET_ICEBERG_NAMESPACE")
-                    .map_err(|_| Error::from("OTLP2PARQUET_ICEBERG_NAMESPACE not set"))?;
-
-                // Data location for table storage (required for Glue, optional for S3 Tables)
-                let data_location = std::env::var("OTLP2PARQUET_ICEBERG_DATA_LOCATION").ok();
-
-                let iceberg_config = IcebergConfig {
-                    rest_uri: rest_uri.clone(),
-                    warehouse: warehouse.clone(),
-                    namespace: namespace_str.clone(),
-                };
-
-                // Get S3 config for storage
-                let s3 = config
-                    .storage
-                    .s3
-                    .as_ref()
-                    .ok_or_else(|| Error::from("S3 configuration required for Iceberg mode"))?;
-
-                // Initialize OpenDAL storage pointing to warehouse location
-                let storage = Arc::new(
-                    otlp2parquet_storage::opendal_storage::OpenDalStorage::new_s3(
-                        &s3.bucket,
-                        &s3.region,
-                        s3.endpoint.as_deref(),
-                        None,
-                        None,
-                    )
-                    .map_err(|e| Error::from(format!("Failed to initialize storage: {}", e)))?,
-                );
-
-                // Initialize Iceberg catalog with AWS SigV4 authentication for S3 Tables
-                use otlp2parquet_storage::iceberg::aws::AwsSigV4HttpClient;
-                let http_client = AwsSigV4HttpClient::new(&s3.region).await.map_err(|e| {
-                    Error::from(format!("Failed to create AWS SigV4 HTTP client: {}", e))
-                })?;
-
-                // Parse namespace
-                use otlp2parquet_storage::iceberg::catalog::NamespaceIdent;
-                let namespace_parts: Vec<String> = namespace_str
-                    .split('.')
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string())
-                    .collect();
-                let namespace = NamespaceIdent::from_vec(namespace_parts)
-                    .map_err(|e| Error::from(format!("Invalid namespace: {}", e)))?;
-
-                // Build table map (for IcebergCatalog API)
-                use std::collections::HashMap;
-                let mut tables = HashMap::new();
-                tables.insert("logs".to_string(), "logs".to_string());
-                tables.insert("traces".to_string(), "traces".to_string());
-                tables.insert("metrics:gauge".to_string(), "metrics_gauge".to_string());
-                tables.insert("metrics:sum".to_string(), "metrics_sum".to_string());
-                tables.insert(
-                    "metrics:histogram".to_string(),
-                    "metrics_histogram".to_string(),
-                );
-                tables.insert(
-                    "metrics:exponential_histogram".to_string(),
-                    "metrics_exponential_histogram".to_string(),
-                );
-                tables.insert("metrics:summary".to_string(), "metrics_summary".to_string());
-
-                // AWS Glue Iceberg REST catalog prefix
-                // Warehouse IS the catalog ID (account ID)
-                let catalog_prefix = format!("catalogs/{}", warehouse);
-                tracing::info!("Using Glue Iceberg REST catalog: {}", catalog_prefix);
-
-                let catalog = Arc::new(IcebergCatalog::new(
-                    http_client,
-                    rest_uri,
-                    catalog_prefix,
-                    namespace,
-                    tables,
-                    data_location,
-                ));
-
-                // Create IcebergWriter
-                let writer = Arc::new(IcebergWriter::new(
-                    catalog,
-                    storage.operator().clone(),
-                    iceberg_config,
-                ));
-
-                tracing::info!("Initialized IcebergWriter for S3 Tables mode");
-
-                Ok(Writer::Iceberg {
-                    writer,
-                    passthrough: PassthroughBatcher::default(),
-                })
-            }
-            WriterMode::PlainS3 => {
-                // Initialize standard S3 writer
-                let s3 = config
-                    .storage
-                    .s3
-                    .as_ref()
-                    .ok_or_else(|| Error::from("S3 configuration required for Lambda"))?;
-
-                let storage = Arc::new(
-                    otlp2parquet_storage::opendal_storage::OpenDalStorage::new_s3(
-                        &s3.bucket,
-                        &s3.region,
-                        s3.endpoint.as_deref(),
-                        None,
-                        None,
-                    )
-                    .map_err(|e| Error::from(format!("Failed to initialize storage: {}", e)))?,
-                );
-
-                let parquet_writer = Arc::new(ParquetWriter::new(storage.operator().clone()));
-
-                // Initialize optional Iceberg committer for post-write commits
-                let iceberg_committer = {
-                    use otlp2parquet_storage::iceberg::init::{
-                        initialize_committer, initialize_committer_with_config, InitResult,
-                    };
-
-                    if let Some(iceberg_cfg) = &config.iceberg {
-                        let rest_config = IcebergRestConfig {
-                            rest_uri: iceberg_cfg.rest_uri.clone(),
-                            warehouse: iceberg_cfg.warehouse.clone(),
-                            namespace: iceberg_cfg.namespace_vec(),
-                            tables: iceberg_cfg.to_tables_map(),
-                            catalog_name: iceberg_cfg.catalog_name.clone(),
-                            format_version: iceberg_cfg.format_version,
-                            target_file_size_bytes: iceberg_cfg.target_file_size_bytes,
-                            staging_prefix: iceberg_cfg.staging_prefix.clone(),
-                            data_location: None, // Not used in post-write mode
-                        };
-
-                        match initialize_committer_with_config(rest_config).await {
-                            InitResult::Success {
-                                committer,
-                                table_count,
-                            } => {
-                                tracing::info!(
-                                    "Iceberg catalog integration enabled with {} tables (post-write mode)",
-                                    table_count
-                                );
-                                Some(committer)
-                            }
-                            InitResult::CatalogError(msg) => {
-                                tracing::warn!(
-                                    "Failed to create Iceberg catalog: {} - continuing without Iceberg",
-                                    msg
-                                );
-                                None
-                            }
-                            InitResult::NamespaceError(msg) => {
-                                tracing::warn!(
-                                    "Failed to parse Iceberg namespace: {} - continuing without Iceberg",
-                                    msg
-                                );
-                                None
-                            }
-                            InitResult::NotConfigured(msg) => {
-                                tracing::debug!("Iceberg catalog not configured: {}", msg);
-                                None
-                            }
-                        }
-                    } else {
-                        match initialize_committer().await {
-                            InitResult::Success {
-                                committer,
-                                table_count,
-                            } => {
-                                tracing::info!(
-                                    "Iceberg catalog integration enabled with {} tables (post-write mode)",
-                                    table_count
-                                );
-                                Some(committer)
-                            }
-                            InitResult::NotConfigured(msg) => {
-                                tracing::debug!("Iceberg catalog not configured: {}", msg);
-                                None
-                            }
-                            InitResult::CatalogError(msg) => {
-                                tracing::warn!(
-                                    "Failed to create Iceberg catalog: {} - continuing without Iceberg",
-                                    msg
-                                );
-                                None
-                            }
-                            InitResult::NamespaceError(msg) => {
-                                tracing::warn!(
-                                    "Failed to parse Iceberg namespace: {} - continuing without Iceberg",
-                                    msg
-                                );
-                                None
-                            }
-                        }
-                    }
-                };
-
-                tracing::info!("Initialized PlainS3 writer mode");
-
-                Ok(Writer::PlainS3 {
-                    parquet_writer,
-                    passthrough: PassthroughBatcher::default(),
-                    iceberg_committer,
-                })
-            }
+        if integrated {
+            let iceberg_cfg = config.iceberg.as_ref().ok_or_else(|| {
+                Error::from("lambda.integrated_iceberg=true requires [iceberg] configuration")
+            })?;
+            tracing::info!("Lambda writer mode: integrated Iceberg");
+            return Self::build_integrated_writer(config, iceberg_cfg).await;
         }
+
+        tracing::info!("Lambda writer mode: plain S3 with optional Iceberg commits");
+        Self::build_plain_s3_writer(config).await
+    }
+
+    async fn build_integrated_writer(
+        config: &RuntimeConfig,
+        iceberg_cfg: &otlp2parquet_config::IcebergConfig,
+    ) -> Result<Self, Error> {
+        let rest_uri = if iceberg_cfg.rest_uri.is_empty() {
+            return Err(Error::from(
+                "iceberg.rest_uri must be set for integrated Iceberg mode",
+            ));
+        } else {
+            iceberg_cfg.rest_uri.clone()
+        };
+
+        let warehouse = iceberg_cfg
+            .warehouse
+            .as_ref()
+            .ok_or_else(|| {
+                Error::from("iceberg.warehouse is required for integrated Iceberg mode")
+            })?
+            .clone();
+
+        let namespace_str = iceberg_cfg
+            .namespace
+            .as_ref()
+            .ok_or_else(|| {
+                Error::from("iceberg.namespace is required for integrated Iceberg mode")
+            })?
+            .clone();
+        let namespace_parts = iceberg_cfg.namespace_vec();
+        if namespace_parts.is_empty() {
+            return Err(Error::from(
+                "iceberg.namespace must include at least one segment",
+            ));
+        }
+
+        let s3 = config
+            .storage
+            .s3
+            .as_ref()
+            .ok_or_else(|| Error::from("S3 configuration required for Lambda"))?;
+
+        let storage = Arc::new(
+            otlp2parquet_storage::opendal_storage::OpenDalStorage::new_s3(
+                &s3.bucket,
+                &s3.region,
+                s3.endpoint.as_deref(),
+                None,
+                None,
+            )
+            .map_err(|e| Error::from(format!("Failed to initialize storage: {}", e)))?,
+        );
+
+        use otlp2parquet_storage::iceberg::aws::AwsSigV4HttpClient;
+        use otlp2parquet_storage::iceberg::catalog::NamespaceIdent;
+
+        let http_client = AwsSigV4HttpClient::new(&s3.region)
+            .await
+            .map_err(|e| Error::from(format!("Failed to create AWS SigV4 HTTP client: {}", e)))?;
+        let namespace =
+            NamespaceIdent::from_vec(namespace_parts).map_err(|e| Error::from(e.to_string()))?;
+        let tables = iceberg_cfg.to_tables_map();
+        let catalog_prefix = format!("catalogs/{}", warehouse);
+
+        let catalog = Arc::new(IcebergCatalog::new(
+            http_client,
+            rest_uri.clone(),
+            catalog_prefix,
+            namespace,
+            tables,
+            iceberg_cfg.data_location.clone(),
+        ));
+
+        let iceberg_writer_config = IcebergConfig {
+            rest_uri,
+            warehouse,
+            namespace: namespace_str,
+        };
+
+        let writer = Arc::new(IcebergWriter::new(
+            catalog,
+            storage.operator().clone(),
+            iceberg_writer_config,
+        ));
+
+        Ok(Writer::Iceberg {
+            writer,
+            passthrough: PassthroughBatcher::default(),
+        })
+    }
+
+    async fn build_plain_s3_writer(config: &RuntimeConfig) -> Result<Self, Error> {
+        let s3 = config
+            .storage
+            .s3
+            .as_ref()
+            .ok_or_else(|| Error::from("S3 configuration required for Lambda"))?;
+
+        let storage = Arc::new(
+            otlp2parquet_storage::opendal_storage::OpenDalStorage::new_s3(
+                &s3.bucket,
+                &s3.region,
+                s3.endpoint.as_deref(),
+                None,
+                None,
+            )
+            .map_err(|e| Error::from(format!("Failed to initialize storage: {}", e)))?,
+        );
+
+        let parquet_writer = Arc::new(ParquetWriter::new(storage.operator().clone()));
+
+        let iceberg_committer = {
+            use otlp2parquet_storage::iceberg::init::{
+                initialize_committer_with_config, InitResult,
+            };
+
+            if let Some(iceberg_cfg) = &config.iceberg {
+                let rest_config = IcebergRestConfig {
+                    rest_uri: iceberg_cfg.rest_uri.clone(),
+                    warehouse: iceberg_cfg.warehouse.clone(),
+                    namespace: iceberg_cfg.namespace_vec(),
+                    tables: iceberg_cfg.to_tables_map(),
+                    catalog_name: iceberg_cfg.catalog_name.clone(),
+                    format_version: iceberg_cfg.format_version,
+                    target_file_size_bytes: iceberg_cfg.target_file_size_bytes,
+                    staging_prefix: iceberg_cfg.staging_prefix.clone(),
+                    data_location: iceberg_cfg.data_location.clone(),
+                };
+
+                match initialize_committer_with_config(rest_config).await {
+                    InitResult::Success {
+                        committer,
+                        table_count,
+                    } => {
+                        tracing::info!(
+                            "Iceberg catalog integration enabled with {} tables (post-write mode)",
+                            table_count
+                        );
+                        Some(committer)
+                    }
+                    InitResult::CatalogError(msg) => {
+                        tracing::warn!(
+                            "Failed to create Iceberg catalog: {} - continuing without Iceberg",
+                            msg
+                        );
+                        None
+                    }
+                    InitResult::NamespaceError(msg) => {
+                        tracing::warn!(
+                            "Failed to parse Iceberg namespace: {} - continuing without Iceberg",
+                            msg
+                        );
+                        None
+                    }
+                    InitResult::NotConfigured(msg) => {
+                        tracing::warn!(
+                            "Iceberg committer not configured correctly: {} - continuing without Iceberg",
+                            msg
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        };
+
+        Ok(Writer::PlainS3 {
+            parquet_writer,
+            passthrough: PassthroughBatcher::default(),
+            iceberg_committer,
+        })
     }
 
     /// Write logs batch
@@ -388,7 +331,6 @@ impl Writer {
 
                 let path = write_result.path.clone();
 
-                // Commit to Iceberg catalog if configured (warn-and-succeed on error)
                 if let Some(committer) = iceberg_committer {
                     if let Err(e) = committer
                         .commit_with_signal(
@@ -442,7 +384,6 @@ impl Writer {
 
                 let path = write_result.path.clone();
 
-                // Commit to Iceberg catalog if configured
                 if let Some(committer) = iceberg_committer {
                     if let Err(e) = committer
                         .commit_with_signal(
@@ -497,7 +438,6 @@ impl Writer {
 
                 let path = write_result.path.clone();
 
-                // Commit to Iceberg catalog if configured (warn-and-succeed on error)
                 if let Some(committer) = iceberg_committer {
                     if let Err(e) = committer
                         .commit_with_signal(
@@ -564,7 +504,7 @@ pub async fn run() -> Result<(), Error> {
     tracing::info!("Lambda payload cap set to {} bytes", max_payload_bytes);
 
     // Initialize writer based on environment
-    let writer = Arc::new(Writer::from_env(&config).await?);
+    let writer = Arc::new(Writer::from_config(&config).await?);
 
     let state = Arc::new(LambdaState {
         writer,
@@ -581,6 +521,7 @@ pub async fn run() -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use otlp2parquet_config::Platform;
 
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
         use std::sync::{Mutex, OnceLock};
@@ -590,58 +531,22 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_mode_iceberg() {
-        let _guard = env_lock();
-        // Set all required Iceberg environment variables
-        std::env::set_var(
-            "OTLP2PARQUET_ICEBERG_REST_URI",
-            "https://s3tables.us-west-2.amazonaws.com/iceberg",
-        );
-        std::env::set_var(
-            "OTLP2PARQUET_ICEBERG_WAREHOUSE",
-            "arn:aws:s3tables:us-west-2:123456789012:bucket/test",
-        );
-        std::env::set_var("OTLP2PARQUET_ICEBERG_NAMESPACE", "otel");
-
-        let mode = detect_writer_mode();
-
-        assert_eq!(mode, WriterMode::Iceberg);
-
-        // Cleanup
-        std::env::remove_var("OTLP2PARQUET_ICEBERG_REST_URI");
-        std::env::remove_var("OTLP2PARQUET_ICEBERG_WAREHOUSE");
-        std::env::remove_var("OTLP2PARQUET_ICEBERG_NAMESPACE");
+    fn lambda_integrated_flag_defaults_to_false() {
+        let config = RuntimeConfig::from_platform_defaults(Platform::Lambda);
+        let lambda_cfg = config.lambda.expect("lambda defaults missing");
+        assert!(!lambda_cfg.integrated_iceberg);
     }
 
     #[test]
-    fn test_detect_mode_plain_s3_no_iceberg_vars() {
+    fn lambda_integrated_flag_respects_env_override() {
         let _guard = env_lock();
-        // Remove all Iceberg variables
-        std::env::remove_var("OTLP2PARQUET_ICEBERG_REST_URI");
-        std::env::remove_var("OTLP2PARQUET_ICEBERG_WAREHOUSE");
-        std::env::remove_var("OTLP2PARQUET_ICEBERG_NAMESPACE");
+        std::env::set_var("OTLP2PARQUET_LAMBDA_INTEGRATED_ICEBERG", "true");
 
-        let mode = detect_writer_mode();
+        let config =
+            RuntimeConfig::load_for_platform(Platform::Lambda).expect("config load should succeed");
+        let lambda_cfg = config.lambda.expect("lambda config missing after override");
+        assert!(lambda_cfg.integrated_iceberg);
 
-        assert_eq!(mode, WriterMode::PlainS3);
-    }
-
-    #[test]
-    fn test_detect_mode_plain_s3_partial_iceberg_vars() {
-        let _guard = env_lock();
-        // Set only some Iceberg variables (incomplete config should fall back to PlainS3)
-        std::env::set_var(
-            "OTLP2PARQUET_ICEBERG_REST_URI",
-            "https://s3tables.us-west-2.amazonaws.com/iceberg",
-        );
-        std::env::remove_var("OTLP2PARQUET_ICEBERG_WAREHOUSE");
-        std::env::remove_var("OTLP2PARQUET_ICEBERG_NAMESPACE");
-
-        let mode = detect_writer_mode();
-
-        assert_eq!(mode, WriterMode::PlainS3);
-
-        // Cleanup
-        std::env::remove_var("OTLP2PARQUET_ICEBERG_REST_URI");
+        std::env::remove_var("OTLP2PARQUET_LAMBDA_INTEGRATED_ICEBERG");
     }
 }

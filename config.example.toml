@@ -71,8 +71,10 @@ log_format = "text"
 # ==============================================================================
 # Lambda-Specific Configuration (Lambda Platform Only)
 # ==============================================================================
-# [lambda]
-# (Currently no lambda-specific config - uses common settings above)
+[lambda]
+# Enable integrated Iceberg writer (S3 Tables / Glue). When false, Lambda writes
+# to S3 and performs optional post-write Iceberg commits.
+integrated_iceberg = false
 
 
 # ==============================================================================
@@ -100,6 +102,9 @@ log_format = "text"
 #
 # # Optional: Warehouse location (required for some catalogs like S3 Tables)
 # warehouse = "s3://my-iceberg-warehouse"
+#
+# # Optional: Explicit data location for table storage (required for AWS Glue)
+# # data_location = "s3://my-iceberg-warehouse"
 #
 # # Optional: Namespace for tables (dot-separated, e.g., "otel.production")
 # # If not specified, tables will be created in the default namespace

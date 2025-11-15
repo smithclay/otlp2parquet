@@ -128,6 +128,24 @@ The easiest way to deploy is with the deploy button, which forks the repository 
 
 Manage your Worker's configuration in `crates/otlp2parquet-cloudflare/wrangler.toml`.
 
+### Shared `config.toml`
+
+Cloudflare Workers can now ingest the same TOML configuration used by the native binaries. Set `OTLP2PARQUET_CONFIG_CONTENT` in the `[vars]` section (or pass it via secrets) with the contents of your `config.toml`:
+
+```toml
+[vars]
+OTLP2PARQUET_CONFIG_CONTENT = """
+[storage]
+backend = "r2"
+
+[storage.r2]
+bucket = "otlp-logs"
+account_id = "abcdef123456"
+"""
+```
+
+The runtime parses this first, then applies any additional `OTLP2PARQUET_*` overrides defined in `wrangler.toml` or secrets, so you can keep one canonical config across server, Lambda, and Workers.
+
 ### Environment Variables
 
 Set non-sensitive configuration, such as batching parameters, in the `[vars]` section.

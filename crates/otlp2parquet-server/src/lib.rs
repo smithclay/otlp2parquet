@@ -186,7 +186,7 @@ pub async fn run() -> Result<()> {
                 format_version: iceberg_cfg.format_version,
                 target_file_size_bytes: iceberg_cfg.target_file_size_bytes,
                 staging_prefix: iceberg_cfg.staging_prefix.clone(),
-                data_location: None, // Not used in post-write mode
+                data_location: iceberg_cfg.data_location.clone(),
             };
 
             match initialize_committer_with_config(rest_config).await {
