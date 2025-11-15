@@ -1,35 +1,26 @@
-# otlp2parquet
+# OTLP to Parquet
 
-> Put your observability data in cheap object storage, servers optional.
+> Store your observability data in cheap object storage. Servers optional.
 
-`otlp2parquet` ingests OpenTelemetry (OTLP) data and stores it as compressed Parquet files in object storage with optional Apache Iceberg support. It runs in Docker, AWS Lambda, and Cloudflare Workers, providing a fast and cost-effective way to sotre and query your observability data.
+`otlp2parquet` ingests OpenTelemetry (OTLP) data, converts it to Parquet, and writes it to object storage with optional Apache Iceberg support. It runs anywhere—from a Docker container to serverless platforms like AWS Lambda and Cloudflare Workers—providing a fast, cost-effective way to store and query your telemetry.
 
 ---
 
-## Quick Start
+## How It Works
 
-This guide gets you from zero to querying your data in three steps.
+Getting started is a three-step process.
 
-### Choose a Deployment Method
+### 1. Deploy the lightweight binary
 
-Pick your preferred platform and run the command.
+Choose a platform and follow the setup guide. Each guide provides a production-ready starting point.
 
-*   **Docker (Recommended for Local)**: Starts a local server and a MinIO S3-compatible storage container.
-    ```bash
-    docker-compose up
-    ```
-*   **Cloudflare Workers**: Deploys to the Cloudflare global network. A paid plan is recommended.
-    ```bash
-    cd crates/otlp2parquet-cloudflare && wrangler deploy
-    ```
-*   **AWS Lambda**: Deploys to your AWS account using the SAM CLI.
-    ```bash
-    cd crates/otlp2parquet-lambda && sam deploy --guided
-    ```
+*   [**Docker Guide**](./setup/docker.md)
+*   [**AWS Lambda Guide**](./setup/aws-lambda.md)
+*   [**Cloudflare Workers Guide**](./setup/cloudflare.md)
 
-### Send Telemetry Data
+### 2. Send Telemetry Data
 
-Once deployed, send an OTLP request to your endpoint. This example sends a log record to the local Docker endpoint.
+Point your OpenTelemetry SDK or Collector to your new endpoint. This example sends a test log record via `curl`.
 
 ```bash
 curl -X POST http://localhost:4318/v1/logs \
@@ -37,9 +28,9 @@ curl -X POST http://localhost:4318/v1/logs \
   -d @testdata/log.json
 ```
 
-### Query Your Data
+### 3. Query Your Data
 
-Use DuckDB to query the Parquet file directly from object storage. This example queries the local MinIO container.
+Use any Parquet-aware query engine to analyze your data directly in object storage. This example uses DuckDB to query the local MinIO container from the Docker setup.
 
 ```sql
 -- Configure DuckDB for local MinIO
@@ -57,7 +48,8 @@ FROM read_parquet('s3://otlp-logs/logs/**/*.parquet');
 
 ## Next Steps
 
-*   **[Sending Data](sending-data.md)**: Learn about sending different signals and using the OpenTelemetry Collector.
-*   **[Querying Data](querying-data.md)**: See more advanced query examples.
-*   **[Deployment Guides](deployment/docker.md)**: Get detailed setup instructions for each platform.
-*   **[Configuration](configuration.md)**: View all configuration options.
+*   **[Concepts](./concepts/architecture.md)**: Learn about the architecture, schema, and storage layers.
+*   **[Setup Guides](./setup/overview.md)**: Get detailed setup instructions for each platform.
+*   **[Sending Data](./guides/sending-data.md)**: Learn how to send logs, traces, and metrics.
+*   **[Querying Data](./guides/querying-data.md)**: See more advanced query examples.
+*   **[Configuration](./concepts/configuration.md)**: View all configuration options.

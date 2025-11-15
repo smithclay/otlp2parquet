@@ -1,21 +1,19 @@
 # Architecture
 
-This document outlines the architectural design of `otlp2parquet`, its core principles, and its different runtimes.
+This document explains the design of `otlp2parquet`.
 
-## Core Principles
+## Core Principle: Essence vs. Accident
 
-The architecture separates the **essence** (the pure OTLP-to-Parquet conversion logic) from the **accident** (platform-specific I/O and networking). This results in a pure, deterministic core that is adapted for different environments.
-
-### Execution Runtimes
+The architecture separates the **essence** (the pure OTLP-to-Parquet conversion logic) from the **accident** (platform-specific I/O and networking). This creates a pure, deterministic core that is adapted for different environments.
 
 `otlp2parquet` supports multiple execution runtimes:
 
-*   **Server Mode (Default):** A full-featured implementation that uses an Axum HTTP server with multi-backend storage capabilities.
-*   **Lambda & Cloudflare (Constrained Runtimes):** Specialized runtimes that use the same core logic but operate under platform-specific limitations (e.g., S3-only for Lambda, R2-only for Cloudflare Workers).
+*   **Server**: A full-featured Axum HTTP server with multi-backend storage.
+*   **Lambda & Cloudflare**: Specialized runtimes that use the same core logic but operate under platform constraints (e.g., S3-only for Lambda, R2-only for Cloudflare Workers).
 
-## High-Level Diagram
+## Data Flow
 
-This diagram shows the data flow and separation of concerns within `otlp2parquet`:
+The following diagram shows the data flow and separation of concerns.
 
 ```
 ┌─────────────────────────────────────────┐
@@ -34,8 +32,8 @@ This diagram shows the data flow and separation of concerns within `otlp2parquet
 └─────────────────────────────────────────┘
                   ↓
 ┌─────────────────────────────────────────┐
-│  Core Processing (PURE - no I/O)       │
-│  process_otlp_logs(bytes) -> bytes      │
+│  Core Processing (Pure Logic, No I/O)   │
+│  process_otlp(bytes) -> Parquet bytes   │
 │  ├─ Parse OTLP protobuf ✅              │
 │  ├─ Convert to Arrow RecordBatch ✅     │
 │  ├─ Write Parquet (Snappy) ✅           │
@@ -51,10 +49,9 @@ This diagram shows the data flow and separation of concerns within `otlp2parquet
 └─────────────────────────────────────────┘
 ```
 
-## Architecture Highlights
+## Key Design Points
 
-*   **Server as Default:** The server mode provides a full-featured Axum HTTP server, structured logging, and graceful shutdown.
-*   **Unified Storage:** Apache OpenDAL provides a consistent API across all platforms, which abstracts away the complexities of different object storage backends.
-*   **Pure Core:** The OTLP processing logic is deterministic and has no I/O dependencies, which improves reliability and testability.
-*   **Platform-Native:** Each runtime uses its native async model (e.g., `worker` for Cloudflare, `tokio` for Lambda/Server) for optimal performance.
-*   **Binary Size:** Aggressive optimizations ensure a minimal binary size, which is crucial for WASM deployments.
+*   **Pure Core**: The OTLP processing logic is deterministic and has no I/O dependencies, which improves reliability and testability.
+*   **Unified Storage**: Apache OpenDAL provides a consistent API that abstracts away the complexities of different object storage backends.
+*   **Platform-Native**: Each runtime uses its native async model (e.g., `worker` for Cloudflare, `tokio` for Lambda/Server) for optimal performance.
+*   **Minimal Binary Size**: Aggressive optimizations ensure a small binary, which is critical for serverless and WASM deployments.

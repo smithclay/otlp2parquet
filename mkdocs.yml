@@ -55,28 +55,28 @@ markdown_extensions:
       permalink: true
 
 nav:
-  - Getting Started:
-      - Overview: index.md
-      - Sending Data: sending-data.md
-      - Configuration: configuration.md
-  - Deployment:
-      - Overview: deployment/index.md
-      - Docker: deployment/docker.md
-      - Cloudflare Workers: deployment/cloudflare.md
-      - AWS Lambda: deployment/aws-lambda.md
-  - Storage & Querying:
-      - Overview: storage/index.md
-      - Object Storage (Parquet): storage/object-storage.md
-      - Table Format (Apache Iceberg): storage/iceberg.md
-      - Querying Data: querying-data.md
-  - Developers:
-      - Overview: developers/index.md
-      - Architecture: developers/architecture.md
-      - Schema: developers/schema.md
-      - Development Setup: developers/development-setup.md
-      - Performance Audit: developers/performance.md
-      - Style Guide: developers/style-guide.md
-  - DuckDB Query Demo ↗: https://smithclay.github.io/otlp2parquet/query-demo/
+  - 'Overview': 'index.md'
+  - 'Concepts':
+    - 'Architecture': 'concepts/architecture.md'
+    - 'Schema': 'concepts/schema.md'
+    - 'Configuration': 'concepts/configuration.md'
+    - 'Storage': 'concepts/storage.md'
+  - 'Setup':
+    - 'Overview': 'setup/overview.md'
+    - 'Docker': 'setup/docker.md'
+    - 'AWS Lambda': 'setup/aws-lambda.md'
+    - 'Cloudflare Workers': 'setup/cloudflare.md'
+  - 'Guides':
+    - 'Overview': 'guides/index.md'
+    - 'Sending Data': 'guides/sending-data.md'
+    - 'Lambda Local Development': 'guides/lambda-local-development.md'
+    - 'Plain S3 Storage': 'guides/plain-s3.md'
+    - 'Building from Source': 'guides/building-from-source.md'
+  - 'Contributing':
+    - 'Overview': 'contributing/overview.md'
+    - 'Performance': 'contributing/performance.md'
+    - 'Style Guide': 'contributing/style-guide.md'
+  - 'Query Demo ↗': 'https://smithclay.github.io/otlp2parquet/query-demo/'
 
 plugins:
   - search
