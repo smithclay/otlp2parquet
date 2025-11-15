@@ -329,16 +329,16 @@ profile-all: bloat llvm-lines flamegraph ## Run all profiling tools
 #
 
 .PHONY: test-e2e
-test-e2e: ## Run core e2e tests with Docker (MinIO, otlp2parquet)
-	@./scripts/test-e2e.sh
+test-e2e: ## Run core e2e tests with Docker (MinIO, otlp2parquet). Override TEST_ICEBERG=1 or KEEP_CONTAINERS=1 for advanced scenarios.
+	@TEST_ICEBERG=$(TEST_ICEBERG) KEEP_CONTAINERS=$(KEEP_CONTAINERS) ./scripts/test-e2e.sh
 
 .PHONY: test-e2e-iceberg
-test-e2e-iceberg: ## Run e2e tests including Iceberg catalog validation
-	@TEST_ICEBERG=1 ./scripts/test-e2e.sh
+test-e2e-iceberg: TEST_ICEBERG=1
+test-e2e-iceberg: test-e2e ## Run e2e tests including Iceberg catalog validation
 
 .PHONY: test-e2e-debug
-test-e2e-debug: ## Run e2e tests and preserve containers for debugging
-	@KEEP_CONTAINERS=1 ./scripts/test-e2e.sh
+test-e2e-debug: KEEP_CONTAINERS=1
+test-e2e-debug: test-e2e ## Run e2e tests and preserve containers for debugging
 
 .PHONY: test-all
 test-all: test test-e2e ## Run unit tests + core e2e tests

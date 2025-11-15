@@ -8,16 +8,16 @@ Deploy in 4 commands:
 
 ```bash
 # 1. Setup Glue integration (one-time)
-./setup-glue-integration.sh --region us-west-2
+./lifecycle.sh setup --region us-west-2
 
 # 2. Deploy the Lambda stack
-./deploy.sh --region us-west-2
+./lifecycle.sh deploy --region us-west-2
 
 # 3. Test with sample data
-./test.sh --region us-west-2
+./lifecycle.sh test --region us-west-2
 
 # 4. View logs
-aws logs tail /aws/lambda/otlp2parquet-ingest --follow
+./lifecycle.sh logs --region us-west-2 --follow
 ```
 
 ## What's Included
@@ -28,16 +28,26 @@ aws logs tail /aws/lambda/otlp2parquet-ingest --follow
   - IAM execution role
   - CloudWatch log group
 
-- **`deploy.sh`** - Deployment automation:
-  - Downloads Lambda binary from GitHub releases
-  - Creates deployment S3 bucket
-  - Uploads Lambda code
-  - Deploys CloudFormation stack
+- **`lifecycle.sh`** - Unified workflow script:
+  - `setup` Glue/Lake Formation integration
+  - `deploy` Lambda package + CloudFormation stack
+  - `test` OTLP fixtures (logs, traces, metrics)
+  - `logs` tailing + `status` outputs + `delete` cleanup
 
-- **`test.sh`** - Testing automation:
-  - Invokes Lambda with sample OTLP data
-  - Shows CloudWatch logs
-  - Validates responses
+## Lifecycle Script
+
+`lifecycle.sh` consolidates the previous helper scripts into a single CLI:
+
+| Command | Purpose | Common flags |
+| --- | --- | --- |
+| `setup` | Create Glue namespace and Lake Formation grants | `--region`, `--stack-name`, `--database` |
+| `deploy` | Download/upload Lambda zip and deploy CloudFormation | `--region`, `--stack-name`, `--arch`, `--version`, `--local-binary` |
+| `test` | Invoke Lambda with bundled OTLP fixtures and show summary | `--stack-name`, `--region`, `--verbose` |
+| `logs` | Tail `/aws/lambda/<function>` logs | `--stack-name`, `--region`, `--since`, `--follow` |
+| `status` | Persist/print CloudFormation outputs | `--stack-name`, `--region` |
+| `delete` | Delete the stack and optional deployment bucket | `--stack-name`, `--region`, `--force`, `--retain-bucket` |
+
+Each subcommand validates prerequisites (AWS CLI, jq, unzip) and prints the next recommended step.
 
 ## Prerequisites
 
@@ -51,7 +61,7 @@ Before deploying, integrate your S3 Tables bucket with AWS Glue:
 
 ```bash
 # Run one-time setup
-./setup-glue-integration.sh --region us-west-2
+./lifecycle.sh setup --region us-west-2
 ```
 
 This configures:
@@ -76,47 +86,47 @@ Lambda → Glue Iceberg REST → Glue Data Catalog → S3 Tables
 
 1. **Setup Glue integration** (one-time):
    ```bash
-   ./setup-glue-integration.sh --region us-west-2
+   ./lifecycle.sh setup --region us-west-2
    ```
 
 2. **Deploy Lambda**:
    ```bash
    # Deploy with defaults (arm64, us-west-2)
-   ./deploy.sh --region us-west-2
+    ./lifecycle.sh deploy --region us-west-2
 
    # Deploy with specific options
-   ./deploy.sh --arch amd64 --region us-west-2 --stack-name my-otlp-stack
+    ./lifecycle.sh deploy --arch amd64 --region us-west-2 --stack-name my-otlp-stack
 
    # Deploy specific version
-   ./deploy.sh --version v0.0.2
+    ./lifecycle.sh deploy --version v0.0.2
 
    # Deploy locally built binary (for development)
-   ./deploy.sh --local-binary ../../target/lambda/bootstrap/bootstrap.zip
+    ./lifecycle.sh deploy --local-binary ../../target/lambda/bootstrap/bootstrap.zip
    ```
 
 3. **Test ingestion**:
    ```bash
-   ./test.sh --region us-west-2
+   ./lifecycle.sh test --region us-west-2
    ```
 
 ### Test
 
 ```bash
 # Run all tests
-./test.sh
+./lifecycle.sh test
 
 # Test specific stack
-./test.sh --stack-name my-otlp-stack --region us-west-2
+./lifecycle.sh test --stack-name my-otlp-stack --region us-west-2
 
 # Verbose output
-./test.sh --verbose
+./lifecycle.sh test --verbose
 ```
 
 ### Cleanup
 
 ```bash
 # Delete stack and resources
-./deploy.sh --delete
+./lifecycle.sh delete --region us-west-2
 ```
 
 ## How It Works
