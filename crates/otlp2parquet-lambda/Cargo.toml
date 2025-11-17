@@ -9,8 +9,10 @@ license.workspace = true
 otlp2parquet-core = { path = "../otlp2parquet-core" }
 otlp2parquet-batch = { path = "../otlp2parquet-batch" }
 otlp2parquet-config = { path = "../otlp2parquet-config" }
+otlp2parquet-writer = { path = "../otlp2parquet-writer" }
 otlp2parquet-storage = { path = "../otlp2parquet-storage", features = ["services-s3", "iceberg-aws-sigv4"] }
 arrow = { workspace = true }
+icepick = { path = "../../../icepick", default-features = false }
 
 # AWS Lambda runtime (provides tokio runtime)
 lambda_runtime = "0.14"
