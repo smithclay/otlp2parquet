@@ -39,7 +39,7 @@ ARG TARGETARCH
 COPY dist/linux-${TARGETARCH}/otlp2parquet /usr/local/bin/otlp2parquet
 
 # Shared runtime configuration
-FROM gcr.io/distroless/cc-debian12:latest AS runtime-base
+FROM gcr.io/distroless/cc-debian13:latest AS runtime-base
 
 # Environment defaults (can be overridden)
 ENV STORAGE_BACKEND=filesystem \
