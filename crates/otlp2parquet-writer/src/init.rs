@@ -10,8 +10,8 @@ use crate::{IcepickWriter, Platform};
 /// * `bucket_arn` - S3 Tables bucket ARN (e.g., "arn:aws:s3tables:us-west-2:123456789012:bucket/my-bucket")
 /// * `base_path` - Optional base path prefix for files (empty string for none)
 pub async fn initialize_lambda_writer(
-    bucket_arn: &str,
-    base_path: String,
+    #[cfg_attr(target_family = "wasm", allow(unused_variables))] bucket_arn: &str,
+    #[cfg_attr(target_family = "wasm", allow(unused_variables))] base_path: String,
 ) -> Result<IcepickWriter> {
     // Create S3TablesCatalog from ARN
     #[cfg(not(target_family = "wasm"))]

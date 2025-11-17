@@ -122,4 +122,75 @@ mod tests {
         assert_eq!(sanitize_service_name("my service"), "my_service");
         assert_eq!(sanitize_service_name("my/service"), "my_service");
     }
+
+    #[test]
+    fn test_sanitize_service_name_edge_cases() {
+        // Empty string
+        assert_eq!(sanitize_service_name(""), "");
+
+        // Special characters
+        assert_eq!(sanitize_service_name("my@service!"), "my_service_");
+        assert_eq!(sanitize_service_name("service#123$"), "service_123_");
+        assert_eq!(sanitize_service_name("foo:bar|baz"), "foo_bar_baz");
+
+        // Unicode characters (alphanumeric chars are preserved)
+        assert_eq!(sanitize_service_name("my-服务"), "my-服务");
+
+        // Very long name (should not truncate)
+        let long_name = "a".repeat(1000);
+        assert_eq!(sanitize_service_name(&long_name).len(), 1000);
+    }
+
+    #[test]
+    fn test_partition_path_with_short_hash() {
+        let timestamp_nanos = 1_705_327_800_000_000_000;
+
+        // Hash shorter than 16 characters
+        let path = generate_partition_path("service", timestamp_nanos, "abc123");
+        assert!(path.contains("abc123"));
+        assert!(path.ends_with(".parquet"));
+    }
+
+    #[test]
+    fn test_partition_path_with_subdirectory() {
+        let timestamp_nanos = 1_705_327_800_000_000_000;
+
+        let path = generate_partition_path_with_signal(
+            "metrics",
+            "test-service",
+            timestamp_nanos,
+            "deadbeefdeadbeefdeadbeef",
+            Some("gauge"),
+        );
+
+        assert!(path.starts_with("metrics/gauge/"));
+        assert!(path.contains("test-service"));
+        assert!(path.contains("year=2024"));
+    }
+
+    #[test]
+    fn test_partition_path_epoch_timestamp() {
+        // Unix epoch (1970-01-01 00:00:00)
+        let timestamp_nanos = 0;
+
+        let path = generate_partition_path("service", timestamp_nanos, "hash123");
+
+        assert!(path.contains("year=1970"));
+        assert!(path.contains("month=01"));
+        assert!(path.contains("day=01"));
+        assert!(path.contains("hour=00"));
+    }
+
+    #[test]
+    fn test_partition_path_future_timestamp() {
+        // Far future: 2050-12-31 23:59:59
+        let timestamp_nanos = 2_556_143_999_000_000_000;
+
+        let path = generate_partition_path("service", timestamp_nanos, "hash456");
+
+        assert!(path.contains("year=2050"));
+        assert!(path.contains("month=12"));
+        assert!(path.contains("day=31"));
+        assert!(path.contains("hour=23"));
+    }
 }
