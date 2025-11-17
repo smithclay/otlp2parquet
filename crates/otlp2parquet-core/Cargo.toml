@@ -11,7 +11,7 @@ arrow = { workspace = true }
 parquet = { workspace = true, features = ["arrow"] }
 
 # Iceberg schemas
-icepick = { path = "../../../icepick", default-features = false }
+icepick = { version = "0.1", default-features = false }
 
 # OTLP Protocol
 otlp2parquet-proto = { path = "../otlp2parquet-proto" }

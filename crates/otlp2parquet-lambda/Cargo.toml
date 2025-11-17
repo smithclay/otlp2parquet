@@ -11,7 +11,7 @@ otlp2parquet-batch = { path = "../otlp2parquet-batch" }
 otlp2parquet-config = { path = "../otlp2parquet-config" }
 otlp2parquet-writer = { path = "../otlp2parquet-writer" }
 arrow = { workspace = true }
-icepick = { path = "../../../icepick", default-features = false }
+icepick = { version = "0.1", default-features = false }
 
 # AWS Lambda runtime (provides tokio runtime)
 lambda_runtime = "0.14"

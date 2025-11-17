@@ -13,7 +13,7 @@ otlp2parquet-writer = { path = "../otlp2parquet-writer" }
 arrow = { workspace = true }
 parquet = { workspace = true }
 prost = { workspace = true }
-icepick = { path = "../../../icepick", default-features = false }
+icepick = { version = "0.1", default-features = false }
 opendal = { version = "0.54", default-features = false, features = ["services-fs", "services-s3"] }
 chrono = { workspace = true }
 

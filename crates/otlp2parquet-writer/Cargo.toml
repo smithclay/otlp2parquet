@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icepick = { path = "../../../icepick", default-features = false }
+icepick = { version = "0.1", default-features = false }
 otlp2parquet-core = { path = "../otlp2parquet-core" }
 arrow = { version = "56.2", default-features = false }
 anyhow = "1"
