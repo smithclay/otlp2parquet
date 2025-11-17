@@ -7,7 +7,7 @@
 // - Essence: OTLP → Arrow transformation (THIS CRATE)
 // - Accident: Serialization format (Parquet), storage, networking (OTHER CRATES)
 //
-// Serialization (Arrow → Parquet) moved to: otlp2parquet-storage
+// Serialization (Arrow → Parquet) moved to: otlp2parquet-writer
 // Batching/optimization moved to: otlp2parquet-batch
 
 use anyhow::Result;

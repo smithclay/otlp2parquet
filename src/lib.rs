@@ -4,4 +4,3 @@
 
 pub use otlp2parquet_batch;
 pub use otlp2parquet_core::*;
-pub use otlp2parquet_storage;

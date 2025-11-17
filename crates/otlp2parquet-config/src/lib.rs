@@ -354,7 +354,7 @@ fn default_table_metrics_summary() -> String {
 }
 
 impl IcebergConfig {
-    /// Convert to the HashMap format expected by otlp2parquet-iceberg crate
+    /// Convert to the HashMap format expected by otlp2parquet-writer crate
     pub fn to_tables_map(&self) -> HashMap<String, String> {
         let mut map = HashMap::new();
         map.insert("logs".to_string(), self.tables.logs.clone());

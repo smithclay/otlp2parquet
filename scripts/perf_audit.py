@@ -226,7 +226,7 @@ def generate_findings() -> List[Finding]:
                 ))
 
     # Finding 5: Row group size configuration
-    parquet_writer_file = Path("crates/otlp2parquet-storage/src/parquet_writer.rs")
+    parquet_writer_file = Path("crates/otlp2parquet-writer/src/writer.rs")
     if parquet_writer_file.exists():
         with open(parquet_writer_file) as f:
             content = f.read()
@@ -234,7 +234,7 @@ def generate_findings() -> List[Finding]:
                 findings.append(Finding(
                     type="io_tuning",
                     detail="Row group size hardcoded to 32k rows",
-                    file="crates/otlp2parquet-storage/src/parquet_writer.rs:76",
+                    file="crates/otlp2parquet-writer/src/writer.rs",
                     proposed_fix="Expose as configurable parameter; test 16k, 32k, 64k for optimal throughput"
                 ))
 

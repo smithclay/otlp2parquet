@@ -30,5 +30,4 @@ blake3 = { workspace = true }      # For content hashing
 [dev-dependencies]
 # For testing Parquet output
 parquet = { workspace = true, features = ["arrow"] }
-otlp2parquet-storage = { path = "../otlp2parquet-storage", features = ["services-fs"] }
 tokio = { workspace = true, features = ["rt", "macros"] }

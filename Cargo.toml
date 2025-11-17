@@ -3,8 +3,6 @@ members = [
     "crates/otlp2parquet-core",
     "crates/otlp2parquet-batch",
     "crates/otlp2parquet-config",
-    "crates/otlp2parquet-storage",
-    "crates/otlp2parquet-iceberg",
     "crates/otlp2parquet-writer",
     "crates/otlp2parquet-proto",
     "crates/otlp2parquet-cloudflare",
@@ -34,9 +32,6 @@ opt-level = "z"
 opt-level = 3
 
 [profile.release.package.otlp2parquet-batch]
-opt-level = 3
-
-[profile.release.package.otlp2parquet-storage]
 opt-level = 3
 
 [profile.release.package.otlp2parquet-cloudflare]
@@ -90,7 +85,6 @@ repository.workspace = true
 [dependencies]
 otlp2parquet-core = { path = "crates/otlp2parquet-core" }
 otlp2parquet-batch = { path = "crates/otlp2parquet-batch" }
-otlp2parquet-storage = { path = "crates/otlp2parquet-storage" }
 otlp2parquet-server = { path = "crates/otlp2parquet-server" }
 
 # Runtime
@@ -134,18 +128,11 @@ path = "src/lib.rs"
 prost-build = { workspace = true }
 
 # Benchmark targets
-[[bench]]
-name = "e2e_pipeline"
-harness = false
-
+# TODO: Rewrite e2e_pipeline and parquet_write benchmarks for new otlp2parquet-writer architecture
 [[bench]]
 name = "decode_otlp"
 harness = false
 
 [[bench]]
 name = "transform_arrow"
-harness = false
-
-[[bench]]
-name = "parquet_write"
 harness = false

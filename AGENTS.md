@@ -41,8 +41,7 @@ Build a Rust workspace that ingests OpenTelemetry logs, metrics, and traces via 
    - `otlp2parquet-core` - Schema definitions and core types
    - `otlp2parquet-batch` - In-memory batching logic
    - `otlp2parquet-config` - Configuration parsing and defaults
-   - `otlp2parquet-storage` - OpenDAL storage abstraction
-   - `otlp2parquet-iceberg` - Iceberg REST catalog integration
+   - `otlp2parquet-writer` - Unified writer with icepick integration
    - `otlp2parquet-proto` - OTLP protobuf definitions
    - Platform-specific: `cloudflare`, `lambda`, `server`
 
