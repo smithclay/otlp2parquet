@@ -3407,6 +3407,7 @@ dependencies = [
  "blake3",
  "chrono",
  "icepick",
+ "opendal",
  "otlp2parquet-core",
  "parquet 55.2.0",
  "serde_json",

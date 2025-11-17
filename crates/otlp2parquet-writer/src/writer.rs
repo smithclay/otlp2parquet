@@ -31,6 +31,7 @@ pub struct WriteResult {
 }
 
 /// Configuration for the writer
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct WriterConfig {
     /// Base path for writing files
@@ -42,6 +43,7 @@ pub struct WriterConfig {
 }
 
 /// Catalog configuration
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct CatalogConfig {
     /// Catalog type (S3Tables, R2Catalog, etc.)
