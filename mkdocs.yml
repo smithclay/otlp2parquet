@@ -69,9 +69,13 @@ nav:
   - 'Guides':
     - 'Overview': 'guides/index.md'
     - 'Sending Data': 'guides/sending-data.md'
+    - 'Troubleshooting': 'guides/troubleshooting.md'
     - 'Lambda Local Development': 'guides/lambda-local-development.md'
     - 'Plain S3 Storage': 'guides/plain-s3.md'
     - 'Building from Source': 'guides/building-from-source.md'
+  - 'Reference':
+    - 'Environment Variables': 'reference/environment-variables.md'
+    - 'Catalog Types': 'reference/catalog-types.md'
   - 'Contributing':
     - 'Overview': 'contributing/overview.md'
     - 'Performance': 'contributing/performance.md'

@@ -5,14 +5,16 @@
 
 > Put your observability data in cost-effective cloud object storage, servers optional.
 
-`otlp2parquet` ingests OpenTelemetry logs, metrics, and traces and stores them in object storage as Parquet files with Apache Iceberg. Deploy in 3 minutes to AWS Lambda, run self-hosted with Docker, or deploy to the edge with Cloudflare Workers.
+`otlp2parquet` ingests OpenTelemetry logs, metrics, and traces and stores them in object storage as Parquet files with optional Apache Iceberg catalog integration. Deploy in 3 minutes to AWS Lambda with S3 Tables, run self-hosted with Docker, or deploy to the edge with Cloudflare Workers using R2 Data Catalog.
 
 **Key Features:**
 - ✅ Ingests OTLP HTTP (protobuf, JSON, JSONL) for logs, metrics, and traces
 - ✅ Writes Parquet files for [easy querying in DuckDB](https://duckdb.org/docs/stable/data/parquet/overview)
-- ✅ Apache Iceberg support (ACID, schema evolution, time travel)
-- ✅ Small and fast: ~5 MB Rust binary, <10ms cold start (WASM)
-- ✅ Serverless-ready: AWS Lambda, Cloudflare Workers
+- ✅ Apache Iceberg support via [icepick](https://crates.io/crates/icepick) (ACID, schema evolution, time travel)
+- ✅ Native AWS S3 Tables support (ARN-based configuration for Lambda)
+- ✅ R2 Data Catalog support for Cloudflare Workers (edge-native Iceberg)
+- ✅ Small and fast: 1.3 MB WASM binary (43.8% of CF Workers limit), <10ms cold start
+- ✅ Simplified architecture: Single unified writer crate with catalog abstraction
 
 ---
 
@@ -42,7 +44,7 @@ duckdb -c "SELECT * FROM iceberg_scan('glue://otel.logs', aws_region='us-west-2'
 
 **That's it!** Tables are auto-created, ACID transactions enabled, and data is immediately queryable.
 
-📖 [Full AWS Lambda Guide →](docs/deployment/aws-lambda.md)
+📖 [Full AWS Lambda Guide →](docs/setup/aws-lambda.md)
 
 ---
 
@@ -58,7 +60,7 @@ docker-compose up
 
 - In-memory batching for optimal Parquet file sizes
 - Supports S3, R2, GCS, Azure, and local filesystem
-- [Docker Deployment Guide →](docs/deployment/docker.md)
+- [Docker Deployment Guide →](docs/setup/docker.md)
 
 ### ⚡ Cloudflare Workers
 
@@ -68,9 +70,10 @@ Edge-native OTLP ingestion with WASM:
 npx wrangler deploy
 ```
 
-- ~2.5MB compressed binary, <10ms cold start
+- 1.3MB compressed binary (43.8% of 3MB limit), <10ms cold start
+- R2 Data Catalog support for Iceberg tables
 - R2 storage integration
-- [Cloudflare Workers Guide →](docs/deployment/cloudflare.md)
+- [Cloudflare Workers Guide →](docs/setup/cloudflare.md)
 
 ---
 
@@ -90,7 +93,8 @@ npx wrangler deploy
 | **Storage Support** | | | |
 | Parquet | ✅ | ✅ | ✅ |
 | Iceberg (REST Catalog API) | ✅ | ❌ | ✅ |
-| AWS S3 Tables | ✅ | ❌ | ✅ |
+| AWS S3 Tables | ❌ | ❌ | ✅ |
+| R2 Data Catalog | ❌ | ✅ | ❌ |
 | **Security** | | | |
 | Basic Auth Header | ❌ | ✅ | ❌ |
 | **Advanced Features** | | | |
@@ -129,21 +133,20 @@ OTLP Client → otlp2parquet → Parquet files → Query Engines
 
 ### Getting Started
 
-- [AWS Lambda Deployment](docs/deployment/aws-lambda.md) - 3-minute serverless deployment
-- [Docker Deployment](docs/deployment/docker.md) - Self-hosted server
-- [Cloudflare Workers Deployment](docs/deployment/cloudflare.md) - Edge deployment
+- [AWS Lambda Deployment](docs/setup/aws-lambda.md) - 3-minute serverless deployment
+- [Docker Deployment](docs/setup/docker.md) - Self-hosted server
+- [Cloudflare Workers Deployment](docs/setup/cloudflare.md) - Edge deployment
 
 ### Guides
 
-- [Sending Data from Applications](docs/sending-data.md)
-- [Querying Data with DuckDB](docs/querying-data.md)
-- [Configuration Reference](docs/configuration.md)
+- [Sending Data from Applications](docs/guides/sending-data.md)
+- [Configuration Reference](docs/concepts/configuration.md)
 
 ### Advanced
 
-- [Local Development with SAM CLI](docs/advanced/lambda-local-development.md)
-- [Using Plain S3 without Iceberg](docs/advanced/plain-s3.md)
-- [Architecture Overview](docs/developers/architecture.md)
+- [Local Development with SAM CLI](docs/guides/lambda-local-development.md)
+- [Using Plain S3 without Iceberg](docs/guides/plain-s3.md)
+- [Architecture Overview](docs/concepts/architecture.md)
 
 ---
 
@@ -183,7 +186,7 @@ Other projects with OTLP to Parquet support:
 
 ## Contributing
 
-Contributions are welcome! Please see [Developer Documentation](docs/developers/index.md) for:
+Contributions are welcome! Please see [AGENTS.md](AGENTS.md) for:
 
 - Development setup
 - Architecture overview

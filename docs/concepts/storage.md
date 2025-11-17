@@ -2,7 +2,7 @@
 
 This guide explains how `otlp2parquet` stores data.
 
-`otlp2parquet` uses a two-layer model for data storage. The foundational layer is plain Parquet files in object storage. An optional, higher-level table format layer using Apache Iceberg can be added for better management and query performance.
+`otlp2parquet` uses a two-layer model for data storage via the [icepick](https://crates.io/crates/icepick) library. The foundational layer is plain Parquet files in object storage. An optional, higher-level table format layer using Apache Iceberg can be added for better management and query performance.
 
 | Layer | Description | Best For |
 | :--- | :--- | :--- |
@@ -65,20 +65,31 @@ Apache Iceberg is an open table format for huge analytic datasets. `otlp2parquet
 
 ### How It Works
 
-When Iceberg is enabled, writing data becomes a two-step, transactional operation:
-1.  `otlp2parquet` writes a Parquet file to object storage.
-2.  It then connects to an **Iceberg Catalog** and atomically commits the new file's path and statistics to the target table.
+When Iceberg is enabled, writing data becomes a two-step operation handled by icepick:
+
+1.  **Write Parquet File**: icepick converts Arrow RecordBatch to Parquet and writes to object storage
+2.  **Commit to Catalog**: icepick atomically commits the new file's metadata to the Iceberg catalog
+
+**Warn-and-Succeed Pattern:**
+- Catalog operations are non-blocking
+- If catalog commit fails, a warning is logged but the Parquet file is still written
+- Data durability is prioritized over catalog consistency
+- Ensures data is never lost even if catalog is temporarily unavailable
 
 Query engines ask the catalog for a manifest of files, which is significantly faster than scanning directories.
 
 ### Supported Catalogs
 
-`otlp2parquet` supports the standard [Iceberg REST Catalog protocol](https://iceberg.apache.org/spec/#rest-catalog-api), including:
+`otlp2parquet` supports multiple Iceberg catalog types via icepick:
 
-*   AWS Glue Catalog
-*   AWS S3 Tables
-*   Tabular
-*   Polaris
+| Catalog | Platforms | Type | Use Case |
+|---------|-----------|------|----------|
+| **S3 Tables** | Lambda only | AWS-managed | Simplified ARN-based config, automatic compaction |
+| **R2 Data Catalog** | Cloudflare only | Edge-native | WASM-compatible, zero egress fees |
+| **Nessie** | Server only | Self-hosted | Git-like version control, Docker-friendly |
+| **AWS Glue** | Server only | AWS-managed | REST catalog for server deployments |
+
+For detailed setup and configuration of each catalog type, see the [Catalog Types Reference](../reference/catalog-types.md).
 
 ### Querying Iceberg Tables
 
@@ -91,4 +102,42 @@ SELECT service_name, body
 FROM otel_logs
 WHERE timestamp > now() - interval '1 hour';
 ```
-This avoids slow file scanning and provides immediate, consistent results. For configuration details, see the [Configuration guide](configuration.md).
+This avoids slow file scanning and provides immediate, consistent results.
+
+---
+
+## Storage Backends (via OpenDAL)
+
+The icepick library uses [Apache OpenDAL](https://opendal.apache.org/) to provide a unified abstraction over different object storage backends.
+
+### Supported Backends
+
+| Backend | Platforms | Use Case |
+|---------|-----------|----------|
+| **S3** | Lambda, Server | AWS deployments, broad ecosystem support |
+| **R2** | Cloudflare, Server | Zero egress fees, edge-optimized |
+| **Filesystem** | Server only | Local development, testing |
+| **GCS** | Server only | Google Cloud deployments |
+| **Azure Blob** | Server only | Azure deployments |
+
+### Platform Constraints
+
+- **Lambda**: S3 only (event-driven architecture)
+- **Cloudflare Workers**: R2 only (WASM compatibility)
+- **Server**: All backends supported (configurable)
+
+### Configuration
+
+Storage backend is configured via `OTLP2PARQUET_STORAGE_BACKEND` environment variable or `config.toml`:
+
+```toml
+[storage]
+backend = "s3"
+
+[storage.s3]
+bucket = "my-data-bucket"
+region = "us-west-2"
+endpoint = "https://s3.amazonaws.com"  # Optional, for custom endpoints
+```
+
+For complete configuration reference, see [Environment Variables Reference](../reference/environment-variables.md).

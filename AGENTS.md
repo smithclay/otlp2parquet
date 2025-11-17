@@ -41,9 +41,12 @@ Build a Rust workspace that ingests OpenTelemetry logs, metrics, and traces via 
    - `otlp2parquet-core` - Schema definitions and core types
    - `otlp2parquet-batch` - In-memory batching logic
    - `otlp2parquet-config` - Configuration parsing and defaults
-   - `otlp2parquet-writer` - Unified writer with icepick integration
+   - `otlp2parquet-writer` - Unified writer abstraction with icepick integration
    - `otlp2parquet-proto` - OTLP protobuf definitions
-   - Platform-specific: `cloudflare`, `lambda`, `server`
+   - Platform-specific: `otlp2parquet-cloudflare`, `otlp2parquet-lambda`, `otlp2parquet-server`
+   - External dependency: `icepick` - Iceberg/Parquet writer library (not in workspace)
+
+   **Architecture Change**: Previously used separate `otlp2parquet-storage` and `otlp2parquet-iceberg` crates. Now consolidated into single `otlp2parquet-writer` crate that uses `icepick` for all Parquet writing and optional catalog operations.
 
 ## Supported Signals
 
@@ -71,45 +74,54 @@ Build a Rust workspace that ingests OpenTelemetry logs, metrics, and traces via 
 
 ## Apache Iceberg Integration
 
-**Optional layer on top of Parquet files** - Provides ACID transactions, schema evolution, and faster queries
-- **Platforms**: Server and Lambda only (not WASM/Cloudflare)
-- **Protocol**: Iceberg REST Catalog API (AWS S3 Tables, Glue, Tabular, Polaris)
+**Optional layer on top of Parquet files** - Provides ACID transactions, schema evolution, and faster queries via `icepick` library
+- **Implementation**: Uses [icepick](https://crates.io/crates/icepick) for unified Parquet writing and catalog operations
+- **Platforms**:
+  - Lambda: S3 Tables catalog (ARN-based configuration)
+  - Server: Nessie, Glue, or plain Parquet (REST catalog API)
+  - Cloudflare Workers: R2 Data Catalog (WASM-compatible)
 - **Configuration**: Via `config.toml` `[iceberg]` section or `OTLP2PARQUET_ICEBERG_*` env vars
-- **Behavior**: Two-step commit (write Parquet → commit to catalog)
-- **Resilience**: Catalog failures log warnings but don't block ingestion
+- **Behavior**: Atomic write-and-commit via icepick (Parquet file + catalog metadata)
+- **Resilience**: Warn-and-succeed pattern - catalog failures log warnings but Parquet files are still written
 - **Tables**: One per schema (logs, traces, 5 metric types)
 
-### AWS Glue Iceberg REST Catalog
+### AWS S3 Tables (Lambda - Recommended)
 
-AWS Glue provides a fully-managed Iceberg REST catalog that integrates with S3 Tables for metadata management:
+AWS S3 Tables provides a fully-managed Iceberg catalog service with simplified ARN-based configuration:
 
-**Why Glue over S3 Tables REST API?**
-- S3 Tables REST API doesn't support snapshot management (add-snapshot operations)
-- AWS Glue provides full Iceberg REST catalog support, same pattern used by AWS Firehose
-- Enables ACID transactions, schema evolution, and time travel
+**Configuration:**
+- `OTLP2PARQUET_ICEBERG_BUCKET_ARN`: S3 Tables bucket ARN
+  - Format: `arn:aws:s3tables:region:account-id:bucket/bucket-name`
+  - Example: `arn:aws:s3tables:us-west-2:123456789012:bucket/my-otlp-bucket`
+- Auto-detected when ARN is provided
+- No REST endpoint configuration needed
+
+**IAM Permissions Required:**
+- `s3tables:GetTable`, `s3tables:GetTableMetadataLocation`
+- `s3tables:CreateTable`, `s3tables:UpdateTableMetadataLocation`
+- `s3tables:GetNamespace`, `s3tables:CreateNamespace`
+- `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`, `s3:ListBucket`
+
+**Benefits:**
+- Simplified configuration (just ARN)
+- Managed service with automatic compaction
+- Native S3 integration
+- CloudFormation support
+
+### AWS Glue Iceberg REST Catalog (Server - Alternative)
+
+AWS Glue provides a fully-managed Iceberg REST catalog for self-hosted server deployments:
 
 **Configuration Requirements:**
 - `OTLP2PARQUET_ICEBERG_REST_URI`: `https://glue.<region>.amazonaws.com/iceberg`
-- `OTLP2PARQUET_ICEBERG_WAREHOUSE`: AWS account ID (Glue catalog ID), e.g., `123456789012`
-- `OTLP2PARQUET_ICEBERG_NAMESPACE`: Glue database name, e.g., `otel`
-- `OTLP2PARQUET_ICEBERG_DATA_LOCATION`: S3 bucket for table data, e.g., `s3://my-data-bucket`
-
-**Implementation Details:**
-- SigV4 signing: Uses `glue` service name (not `s3tables`)
-- REST URL format: `https://glue.<region>.amazonaws.com/iceberg/v1/catalogs/<catalog-id>/namespaces/<namespace>/tables/<table>`
-- Catalog prefix: `catalogs/<account-id>` automatically prepended to REST paths
-- Table location: Required in CreateTable request, format: `s3://<bucket>/<namespace>/<table-name>`
+- `OTLP2PARQUET_ICEBERG_WAREHOUSE`: AWS account ID (Glue catalog ID)
+- `OTLP2PARQUET_ICEBERG_NAMESPACE`: Glue database name (e.g., `otel`)
+- `OTLP2PARQUET_ICEBERG_DATA_LOCATION`: S3 bucket for data (e.g., `s3://my-data-bucket`)
 
 **IAM Permissions Required:**
 - `glue:GetDatabase`, `glue:GetTable`, `glue:CreateTable`, `glue:UpdateTable`
 - `lakeformation:GetDataAccess` for Lake Formation integration
 - Standard S3 permissions for data bucket
-
-**Setup:**
-1. Create Glue database: `aws glue create-database --database-input '{"Name":"otel"}'`
-2. Grant Lake Formation permissions to Lambda/server role
-3. Configure environment variables pointing to Glue endpoint
-4. Tables are auto-created on first write with Arrow schema conversion
 
 ## Notes for AI Agent
 
@@ -171,3 +183,35 @@ AWS Glue provides a fully-managed Iceberg REST catalog that integrates with S3 T
 - **Document tradeoffs** made for size
 - **Test all feature combinations** - `make check` and `make test` cover all platforms
 - **WASM optimization flags** - Already configured in Makefile with nontrapping-float-to-int
+
+### Working with icepick Integration
+
+The `otlp2parquet-writer` crate provides a unified `OtlpWriter` trait implemented by `IcepickWriter`. This abstraction handles:
+
+**Core Functionality:**
+- Parquet file writing via icepick's Arrow → Parquet conversion
+- Optional catalog commits (S3 Tables, Nessie, R2 Data Catalog)
+- Platform-specific catalog initialization
+- Warn-and-succeed pattern for catalog failures
+
+**Platform-Specific Initialization:**
+- **Lambda**: S3 Tables catalog detected via `OTLP2PARQUET_ICEBERG_BUCKET_ARN` environment variable
+- **Cloudflare Workers**: R2 Data Catalog when `OTLP2PARQUET_CATALOG_TYPE="r2"` is set
+- **Server**: Configurable catalog (Nessie REST, Glue, or plain Parquet)
+
+**Error Handling Pattern:**
+- Catalog operations are non-blocking (warn-and-succeed)
+- Write failures are logged but don't prevent Parquet file creation
+- Data durability prioritized over catalog consistency
+- Parquet files always written first, catalog commit is best-effort
+
+**Testing:**
+- E2E tests (core): `make test-e2e` - Tests plain Parquet writing
+- E2E tests (Iceberg): `make test-e2e-iceberg` - Tests with Nessie catalog
+- WASM build: `make wasm-full` - Full WASM pipeline with optimizations
+- WASM size check: `make wasm-size` - Verify binary stays under 3MB limit
+
+**WASM Constraints:**
+- S3 Tables catalog NOT available on WASM (Lambda-only, uses native AWS SDK)
+- R2 Data Catalog IS available on WASM (Cloudflare Workers, WASM-compatible)
+- Plain Parquet writing always available on all platforms
