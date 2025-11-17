@@ -53,7 +53,8 @@ pub struct CatalogConfig {
 }
 
 /// Trait for writing OTLP data to Parquet files
-#[async_trait]
+#[cfg_attr(not(target_family = "wasm"), async_trait)]
+#[cfg_attr(target_family = "wasm", async_trait(?Send))]
 pub trait OtlpWriter: Send + Sync {
     /// Write a single RecordBatch to storage with optional catalog commit
     ///
@@ -179,7 +180,8 @@ impl IcepickWriter {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_family = "wasm"), async_trait)]
+#[cfg_attr(target_family = "wasm", async_trait(?Send))]
 impl OtlpWriter for IcepickWriter {
     async fn write_batch(
         &self,

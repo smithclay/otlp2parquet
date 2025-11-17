@@ -2,19 +2,18 @@
 
 use arrow::array::{Array, RecordBatch, StringArray, TimestampNanosecondArray};
 use otlp2parquet_batch::{LogSignalProcessor, PassthroughBatcher};
-use otlp2parquet_core::otlp;
+use otlp2parquet_core::{otlp, SignalType};
+use otlp2parquet_writer::{IcepickWriter, OtlpWriter};
 use serde_json::json;
 use std::sync::Arc;
 use worker::{console_error, Response, Result};
-
-use crate::parquet;
 
 /// Handle logs request
 pub async fn handle_logs_request(
     body_bytes: &[u8],
     format: otlp2parquet_core::InputFormat,
     content_type: Option<&str>,
-    storage: &Arc<otlp2parquet_storage::opendal_storage::OpenDalStorage>,
+    writer: &Arc<IcepickWriter>,
 ) -> Result<Response> {
     // Cloudflare Workers: Always use passthrough (no batching)
     // Batching requires time-based operations which aren't supported in WASM
@@ -46,34 +45,24 @@ pub async fn handle_logs_request(
 
     let mut uploaded_paths = Vec::new();
     for batch in uploads {
-        // WASM-specific: Write Parquet synchronously, then upload via OpenDAL
-        // (parquet_opendal doesn't work in WASM due to tokio::spawn requiring Send)
-        let parquet_bytes = parquet::write_batches_to_parquet(&batch.batches).map_err(|e| {
-            console_error!("Failed to serialize Parquet: {:?}", e);
-            worker::Error::RustError(format!("Parquet serialization error: {}", e))
-        })?;
+        // Write using OtlpWriter trait
+        for record_batch in &batch.batches {
+            let result = writer
+                .write_batch(
+                    record_batch,
+                    SignalType::Logs,
+                    None,
+                    &batch.metadata.service_name,
+                    batch.metadata.first_timestamp_nanos,
+                )
+                .await
+                .map_err(|e| {
+                    console_error!("Failed to write logs: {:?}", e);
+                    worker::Error::RustError(format!("Write error: {}", e))
+                })?;
 
-        // Compute Blake3 hash for content-addressable storage
-        let hash_bytes = blake3::hash(&parquet_bytes);
-        let hash_hex = hex::encode(hash_bytes.as_bytes());
-
-        // Generate partition path with hash
-        let partition_path = otlp2parquet_storage::partition::generate_partition_path(
-            &batch.metadata.service_name,
-            batch.metadata.first_timestamp_nanos,
-            &hash_hex,
-        );
-
-        // Upload to R2 via OpenDAL (this DOES work in WASM)
-        storage
-            .write(&partition_path, parquet_bytes)
-            .await
-            .map_err(|e| {
-                console_error!("Failed to write to R2: {:?}", e);
-                worker::Error::RustError(format!("Storage error: {}", e))
-            })?;
-
-        uploaded_paths.push(partition_path);
+            uploaded_paths.push(result.path);
+        }
     }
 
     let response_body = json!({
@@ -91,7 +80,7 @@ pub async fn handle_traces_request(
     body_bytes: &[u8],
     format: otlp2parquet_core::InputFormat,
     content_type: Option<&str>,
-    storage: &Arc<otlp2parquet_storage::opendal_storage::OpenDalStorage>,
+    writer: &Arc<IcepickWriter>,
 ) -> Result<Response> {
     // Parse OTLP traces request
     let request = otlp::traces::parse_otlp_trace_request(body_bytes, format).map_err(|e| {
@@ -121,31 +110,24 @@ pub async fn handle_traces_request(
 
         spans_processed += metadata.span_count;
 
-        let parquet_bytes = parquet::write_batches_to_parquet(&batches).map_err(|e| {
-            console_error!("Failed to serialize traces Parquet: {:?}", e);
-            worker::Error::RustError(format!("Parquet serialization error: {}", e))
-        })?;
+        // Write using OtlpWriter trait
+        for batch in &batches {
+            let result = writer
+                .write_batch(
+                    batch,
+                    SignalType::Traces,
+                    None,
+                    metadata.service_name.as_ref(),
+                    metadata.first_timestamp_nanos,
+                )
+                .await
+                .map_err(|e| {
+                    console_error!("Failed to write traces: {:?}", e);
+                    worker::Error::RustError(format!("Write error: {}", e))
+                })?;
 
-        let hash_bytes = blake3::hash(&parquet_bytes);
-        let hash_hex = hex::encode(hash_bytes.as_bytes());
-
-        let partition_path = otlp2parquet_storage::partition::generate_partition_path_with_signal(
-            "traces",
-            metadata.service_name.as_ref(),
-            metadata.first_timestamp_nanos,
-            &hash_hex,
-            None,
-        );
-
-        storage
-            .write(&partition_path, parquet_bytes)
-            .await
-            .map_err(|e| {
-                console_error!("Failed to write traces to R2: {:?}", e);
-                worker::Error::RustError(format!("Storage error: {}", e))
-            })?;
-
-        uploaded_paths.push(partition_path);
+            uploaded_paths.push(result.path);
+        }
     }
 
     if spans_processed == 0 {
@@ -170,7 +152,7 @@ pub async fn handle_metrics_request(
     body_bytes: &[u8],
     format: otlp2parquet_core::InputFormat,
     content_type: Option<&str>,
-    storage: &Arc<otlp2parquet_storage::opendal_storage::OpenDalStorage>,
+    writer: &Arc<IcepickWriter>,
 ) -> Result<Response> {
     // Parse OTLP metrics request
     let request = otlp::metrics::parse_otlp_request(body_bytes, format).map_err(|e| {
@@ -206,36 +188,22 @@ pub async fn handle_metrics_request(
             let service_name = extract_service_name(&batch);
             let timestamp_nanos = extract_first_timestamp(&batch);
 
-            let parquet_bytes = parquet::write_batches_to_parquet(&[batch]).map_err(|e| {
-                console_error!(
-                    "Failed to serialize {} metrics Parquet: {:?}",
-                    metric_type,
-                    e
-                );
-                worker::Error::RustError(format!("Parquet serialization error: {}", e))
-            })?;
-
-            let hash_bytes = blake3::hash(&parquet_bytes);
-            let hash_hex = hex::encode(hash_bytes.as_bytes());
-
-            let partition_path =
-                otlp2parquet_storage::partition::generate_partition_path_with_signal(
-                    "metrics",
+            // Write using OtlpWriter trait
+            let result = writer
+                .write_batch(
+                    &batch,
+                    SignalType::Metrics,
+                    Some(&metric_type),
                     &service_name,
                     timestamp_nanos,
-                    &hash_hex,
-                    Some(&metric_type),
-                );
-
-            storage
-                .write(&partition_path, parquet_bytes)
+                )
                 .await
                 .map_err(|e| {
-                    console_error!("Failed to write {} metrics to R2: {:?}", metric_type, e);
-                    worker::Error::RustError(format!("Storage error: {}", e))
+                    console_error!("Failed to write {} metrics: {:?}", metric_type, e);
+                    worker::Error::RustError(format!("Write error: {}", e))
                 })?;
 
-            uploaded_paths.push(partition_path);
+            uploaded_paths.push(result.path);
         }
     }
 

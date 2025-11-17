@@ -3076,17 +3076,14 @@ dependencies = [
 name = "otlp2parquet-cloudflare"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "arrow",
  "base64 0.22.1",
- "blake3",
- "hex",
+ "icepick",
  "once_cell",
  "otlp2parquet-batch",
  "otlp2parquet-config",
  "otlp2parquet-core",
- "otlp2parquet-storage",
- "parquet",
+ "otlp2parquet-writer",
  "serde_json",
  "wasm-bindgen",
  "worker",

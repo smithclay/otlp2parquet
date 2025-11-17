@@ -1,22 +1,21 @@
 // Cloudflare Workers runtime adapter
 //
-// Uses OpenDAL S3 for R2 storage and handles incoming requests via Worker fetch events
+// Uses icepick with OpenDAL S3 for R2 storage and handles incoming requests via Worker fetch events
 //
-// Philosophy: Use OpenDAL S3 with R2-compatible endpoint
-// Worker crate provides the runtime, OpenDAL provides storage abstraction
+// Philosophy: Use otlp2parquet-writer for unified write path
+// Worker crate provides the runtime, icepick provides storage abstraction
 // Entry point is #[event(fetch)] macro, not main()
 
 mod auth;
 mod handlers;
-mod parquet;
 
 use once_cell::sync::OnceCell;
 use otlp2parquet_config::{EnvSource, Platform, RuntimeConfig, ENV_PREFIX};
+use otlp2parquet_writer::IcepickWriter;
 use std::sync::Arc;
 use worker::*;
 
-static STORAGE: OnceCell<Arc<otlp2parquet_storage::opendal_storage::OpenDalStorage>> =
-    OnceCell::new();
+static WRITER: OnceCell<Arc<IcepickWriter>> = OnceCell::new();
 static CONFIG: OnceCell<RuntimeConfig> = OnceCell::new();
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -56,7 +55,7 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
     // Load config once (with platform detection and env var overrides)
     let config = CONFIG.get_or_try_init(|| load_worker_config(&env))?;
 
-    let storage = if let Some(existing) = STORAGE.get() {
+    let writer = if let Some(existing) = WRITER.get() {
         existing.clone()
     } else {
         // Generic S3-compatible storage configuration
@@ -104,20 +103,22 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
         );
 
         let instance = Arc::new(
-            otlp2parquet_storage::opendal_storage::OpenDalStorage::new_s3(
+            otlp2parquet_writer::initialize_cloudflare_writer(
                 &bucket,
                 &region,
                 endpoint.as_deref(),
                 access_key_id.as_deref(),
                 secret_access_key.as_deref(),
+                String::new(), // No base path prefix
             )
+            .await
             .map_err(|e| {
-                console_error!("Failed to initialize OpenDAL S3 storage: {:?}", e);
-                worker::Error::RustError(format!("Storage initialization error: {}", e))
+                console_error!("Failed to initialize writer: {:?}", e);
+                worker::Error::RustError(format!("Writer initialization error: {}", e))
             })?,
         );
 
-        let _ = STORAGE.set(instance.clone());
+        let _ = WRITER.set(instance.clone());
         instance
     };
 
@@ -168,13 +169,13 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
     // Route to appropriate handler based on signal type
     match signal {
         SignalKind::Logs => {
-            handlers::handle_logs_request(&body_bytes, format, content_type, &storage).await
+            handlers::handle_logs_request(&body_bytes, format, content_type, &writer).await
         }
         SignalKind::Traces => {
-            handlers::handle_traces_request(&body_bytes, format, content_type, &storage).await
+            handlers::handle_traces_request(&body_bytes, format, content_type, &writer).await
         }
         SignalKind::Metrics => {
-            handlers::handle_metrics_request(&body_bytes, format, content_type, &storage).await
+            handlers::handle_metrics_request(&body_bytes, format, content_type, &writer).await
         }
     }
 }
