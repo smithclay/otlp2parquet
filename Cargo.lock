@@ -3263,8 +3263,6 @@ name = "otlp2parquet-config"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "aws-config",
- "aws-sdk-sts",
  "serde",
  "thiserror 2.0.17",
  "toml",
@@ -3395,6 +3393,21 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "otlp2parquet-writer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrow 55.2.0",
+ "async-trait",
+ "chrono",
+ "icepick",
+ "otlp2parquet-core",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

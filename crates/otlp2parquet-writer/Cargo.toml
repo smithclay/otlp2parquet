@@ -1,0 +1,18 @@
+[package]
+name = "otlp2parquet-writer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+icepick = { path = "../../../icepick", default-features = false }
+otlp2parquet-core = { path = "../otlp2parquet-core" }
+arrow = { version = "55", default-features = false }
+anyhow = "1"
+chrono = "0.4"
+thiserror = "2"
+tracing = "0.1"
+tokio = { version = "1", features = ["sync"] }
+async-trait = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }

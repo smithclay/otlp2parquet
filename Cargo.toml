@@ -5,6 +5,7 @@ members = [
     "crates/otlp2parquet-config",
     "crates/otlp2parquet-storage",
     "crates/otlp2parquet-iceberg",
+    "crates/otlp2parquet-writer",
     "crates/otlp2parquet-proto",
     "crates/otlp2parquet-cloudflare",
     "crates/otlp2parquet-lambda",
