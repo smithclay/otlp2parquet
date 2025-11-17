@@ -246,6 +246,11 @@ pub struct IcebergConfig {
     /// Optional fully-qualified data location (e.g., s3://bucket/path)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_location: Option<String>,
+
+    /// AWS S3 Tables bucket ARN (for Lambda with S3 Tables)
+    /// Format: arn:aws:s3tables:region:account:bucket/bucket-name
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bucket_arn: Option<String>,
 }
 
 impl Default for IcebergConfig {
@@ -260,6 +265,7 @@ impl Default for IcebergConfig {
             format_version: default_iceberg_format_version(),
             tables: IcebergTableNames::default(),
             data_location: None,
+            bucket_arn: None,
         }
     }
 }

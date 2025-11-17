@@ -6,14 +6,14 @@ edition = "2021"
 [dependencies]
 icepick = { path = "../../../icepick", default-features = false }
 otlp2parquet-core = { path = "../otlp2parquet-core" }
-arrow = { version = "55", default-features = false }
+arrow = { version = "56.2", default-features = false }
 anyhow = "1"
 chrono = "0.4"
 thiserror = "2"
 tracing = "0.1"
 tokio = { version = "1", features = ["sync"] }
 async-trait = "0.1"
-parquet = { version = "55", default-features = false }
+parquet = { version = "56.2", default-features = false }
 blake3 = "1.5"
 serde_json = "1"
 opendal = { version = "0.54", default-features = false }

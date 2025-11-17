@@ -5,15 +5,10 @@
 // Philosophy: Use lambda_runtime's provided tokio
 // We don't add our own tokio - lambda_runtime provides it
 
-use anyhow::Result;
-use arrow::record_batch::RecordBatch;
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use otlp2parquet_batch::PassthroughBatcher;
 use otlp2parquet_config::{RuntimeConfig, StorageBackend};
-use otlp2parquet_storage::iceberg::{
-    IcebergCatalog, IcebergCommitter, IcebergConfig, IcebergRestConfig, IcebergWriter,
-};
-use otlp2parquet_storage::{set_parquet_row_group_size, ParquetWriter};
+use otlp2parquet_core::parquet::encoding::set_parquet_row_group_size;
 use std::sync::Arc;
 
 mod handlers;
@@ -88,387 +83,12 @@ async fn handle_request(
     }
 }
 
-/// Unified writer that routes to either IcebergWriter or PlainS3 writer
-pub(crate) enum Writer {
-    /// Integrated write + commit to S3 Tables with Iceberg catalog (AWS SigV4 auth)
-    Iceberg {
-        writer: Arc<
-            otlp2parquet_storage::iceberg::IcebergWriter<
-                otlp2parquet_storage::iceberg::aws::AwsSigV4HttpClient,
-            >,
-        >,
-        passthrough: PassthroughBatcher,
-    },
-    /// Plain S3 write with optional post-write catalog commit
-    PlainS3 {
-        parquet_writer: Arc<ParquetWriter>,
-        passthrough: PassthroughBatcher,
-        iceberg_committer: Option<Arc<IcebergCommitter>>,
-    },
-}
-
-impl Writer {
-    /// Create Writer from configuration (no direct env probing).
-    pub async fn from_config(config: &RuntimeConfig) -> Result<Self, Error> {
-        let integrated = config
-            .lambda
-            .as_ref()
-            .map(|lambda| lambda.integrated_iceberg)
-            .unwrap_or(false);
-
-        if integrated {
-            let iceberg_cfg = config.iceberg.as_ref().ok_or_else(|| {
-                Error::from("lambda.integrated_iceberg=true requires [iceberg] configuration")
-            })?;
-            tracing::info!("Lambda writer mode: integrated Iceberg");
-            return Self::build_integrated_writer(config, iceberg_cfg).await;
-        }
-
-        tracing::info!("Lambda writer mode: plain S3 with optional Iceberg commits");
-        Self::build_plain_s3_writer(config).await
-    }
-
-    async fn build_integrated_writer(
-        config: &RuntimeConfig,
-        iceberg_cfg: &otlp2parquet_config::IcebergConfig,
-    ) -> Result<Self, Error> {
-        let rest_uri = if iceberg_cfg.rest_uri.is_empty() {
-            return Err(Error::from(
-                "iceberg.rest_uri must be set for integrated Iceberg mode",
-            ));
-        } else {
-            iceberg_cfg.rest_uri.clone()
-        };
-
-        let warehouse = iceberg_cfg
-            .warehouse
-            .as_ref()
-            .ok_or_else(|| {
-                Error::from("iceberg.warehouse is required for integrated Iceberg mode")
-            })?
-            .clone();
-
-        let namespace_str = iceberg_cfg
-            .namespace
-            .as_ref()
-            .ok_or_else(|| {
-                Error::from("iceberg.namespace is required for integrated Iceberg mode")
-            })?
-            .clone();
-        let namespace_parts = iceberg_cfg.namespace_vec();
-        if namespace_parts.is_empty() {
-            return Err(Error::from(
-                "iceberg.namespace must include at least one segment",
-            ));
-        }
-
-        let s3 = config
-            .storage
-            .s3
-            .as_ref()
-            .ok_or_else(|| Error::from("S3 configuration required for Lambda"))?;
-
-        let storage = Arc::new(
-            otlp2parquet_storage::opendal_storage::OpenDalStorage::new_s3(
-                &s3.bucket,
-                &s3.region,
-                s3.endpoint.as_deref(),
-                None,
-                None,
-            )
-            .map_err(|e| Error::from(format!("Failed to initialize storage: {}", e)))?,
-        );
-
-        use otlp2parquet_storage::iceberg::aws::AwsSigV4HttpClient;
-        use otlp2parquet_storage::iceberg::catalog::NamespaceIdent;
-
-        let http_client = AwsSigV4HttpClient::new(&s3.region)
-            .await
-            .map_err(|e| Error::from(format!("Failed to create AWS SigV4 HTTP client: {}", e)))?;
-        let namespace =
-            NamespaceIdent::from_vec(namespace_parts).map_err(|e| Error::from(e.to_string()))?;
-        let tables = iceberg_cfg.to_tables_map();
-        let catalog_prefix = format!("catalogs/{}", warehouse);
-
-        let catalog = Arc::new(IcebergCatalog::new(
-            http_client,
-            rest_uri.clone(),
-            catalog_prefix,
-            namespace,
-            tables,
-            iceberg_cfg.data_location.clone(),
-        ));
-
-        let iceberg_writer_config = IcebergConfig {
-            rest_uri,
-            warehouse,
-            namespace: namespace_str,
-        };
-
-        let writer = Arc::new(IcebergWriter::new(
-            catalog,
-            storage.operator().clone(),
-            iceberg_writer_config,
-        ));
-
-        Ok(Writer::Iceberg {
-            writer,
-            passthrough: PassthroughBatcher::default(),
-        })
-    }
-
-    async fn build_plain_s3_writer(config: &RuntimeConfig) -> Result<Self, Error> {
-        let s3 = config
-            .storage
-            .s3
-            .as_ref()
-            .ok_or_else(|| Error::from("S3 configuration required for Lambda"))?;
-
-        let storage = Arc::new(
-            otlp2parquet_storage::opendal_storage::OpenDalStorage::new_s3(
-                &s3.bucket,
-                &s3.region,
-                s3.endpoint.as_deref(),
-                None,
-                None,
-            )
-            .map_err(|e| Error::from(format!("Failed to initialize storage: {}", e)))?,
-        );
-
-        let parquet_writer = Arc::new(ParquetWriter::new(storage.operator().clone()));
-
-        let iceberg_committer = {
-            use otlp2parquet_storage::iceberg::init::{
-                initialize_committer_with_config, InitResult,
-            };
-
-            if let Some(iceberg_cfg) = &config.iceberg {
-                let rest_config = IcebergRestConfig {
-                    rest_uri: iceberg_cfg.rest_uri.clone(),
-                    warehouse: iceberg_cfg.warehouse.clone(),
-                    namespace: iceberg_cfg.namespace_vec(),
-                    tables: iceberg_cfg.to_tables_map(),
-                    catalog_name: iceberg_cfg.catalog_name.clone(),
-                    format_version: iceberg_cfg.format_version,
-                    target_file_size_bytes: iceberg_cfg.target_file_size_bytes,
-                    staging_prefix: iceberg_cfg.staging_prefix.clone(),
-                    data_location: iceberg_cfg.data_location.clone(),
-                };
-
-                match initialize_committer_with_config(rest_config).await {
-                    InitResult::Success {
-                        committer,
-                        table_count,
-                    } => {
-                        tracing::info!(
-                            "Iceberg catalog integration enabled with {} tables (post-write mode)",
-                            table_count
-                        );
-                        Some(committer)
-                    }
-                    InitResult::CatalogError(msg) => {
-                        tracing::warn!(
-                            "Failed to create Iceberg catalog: {} - continuing without Iceberg",
-                            msg
-                        );
-                        None
-                    }
-                    InitResult::NamespaceError(msg) => {
-                        tracing::warn!(
-                            "Failed to parse Iceberg namespace: {} - continuing without Iceberg",
-                            msg
-                        );
-                        None
-                    }
-                    InitResult::NotConfigured(msg) => {
-                        tracing::warn!(
-                            "Iceberg committer not configured correctly: {} - continuing without Iceberg",
-                            msg
-                        );
-                        None
-                    }
-                }
-            } else {
-                None
-            }
-        };
-
-        Ok(Writer::PlainS3 {
-            parquet_writer,
-            passthrough: PassthroughBatcher::default(),
-            iceberg_committer,
-        })
-    }
-
-    /// Write logs batch
-    pub async fn write_logs(
-        &self,
-        batch: &RecordBatch,
-        service_name: &str,
-        timestamp_nanos: i64,
-    ) -> Result<Vec<String>, Error> {
-        match self {
-            Writer::Iceberg { writer, .. } => {
-                let result = writer
-                    .write_and_commit("logs", None, batch)
-                    .await
-                    .map_err(|e| Error::from(format!("Iceberg write failed: {}", e)))?;
-                Ok(vec![result.path])
-            }
-            Writer::PlainS3 {
-                parquet_writer,
-                iceberg_committer,
-                ..
-            } => {
-                let write_result = parquet_writer
-                    .write_batches_with_hash(
-                        std::slice::from_ref(batch),
-                        service_name,
-                        timestamp_nanos,
-                    )
-                    .await
-                    .map_err(|e| Error::from(format!("S3 write failed: {}", e)))?;
-
-                let path = write_result.path.clone();
-
-                if let Some(committer) = iceberg_committer {
-                    if let Err(e) = committer
-                        .commit_with_signal(
-                            "logs",
-                            None,
-                            std::slice::from_ref(&write_result),
-                            parquet_writer.operator(),
-                        )
-                        .await
-                    {
-                        tracing::warn!("Failed to commit logs to Iceberg catalog: {}", e);
-                    }
-                }
-
-                Ok(vec![path])
-            }
-        }
-    }
-
-    /// Write metrics batch
-    pub async fn write_metrics(
-        &self,
-        batch: &RecordBatch,
-        service_name: &str,
-        timestamp_nanos: i64,
-        metric_type: &str,
-    ) -> Result<Vec<String>, Error> {
-        match self {
-            Writer::Iceberg { writer, .. } => {
-                let result = writer
-                    .write_and_commit("metrics", Some(metric_type), batch)
-                    .await
-                    .map_err(|e| Error::from(format!("Iceberg write failed: {}", e)))?;
-                Ok(vec![result.path])
-            }
-            Writer::PlainS3 {
-                parquet_writer,
-                iceberg_committer,
-                ..
-            } => {
-                let write_result = parquet_writer
-                    .write_batches_with_signal(
-                        std::slice::from_ref(batch),
-                        service_name,
-                        timestamp_nanos,
-                        "metrics",
-                        Some(metric_type),
-                    )
-                    .await
-                    .map_err(|e| Error::from(format!("S3 write failed: {}", e)))?;
-
-                let path = write_result.path.clone();
-
-                if let Some(committer) = iceberg_committer {
-                    if let Err(e) = committer
-                        .commit_with_signal(
-                            "metrics",
-                            Some(metric_type),
-                            std::slice::from_ref(&write_result),
-                            parquet_writer.operator(),
-                        )
-                        .await
-                    {
-                        tracing::warn!(
-                            "Failed to commit {} metrics to Iceberg catalog: {}",
-                            metric_type,
-                            e
-                        );
-                    }
-                }
-
-                Ok(vec![path])
-            }
-        }
-    }
-
-    /// Write traces batch
-    pub async fn write_traces(
-        &self,
-        batch: &RecordBatch,
-        service_name: &str,
-        timestamp_nanos: i64,
-    ) -> Result<Vec<String>, Error> {
-        match self {
-            Writer::Iceberg { writer, .. } => {
-                let result = writer
-                    .write_and_commit("traces", None, batch)
-                    .await
-                    .map_err(|e| Error::from(format!("Iceberg write failed: {}", e)))?;
-                Ok(vec![result.path])
-            }
-            Writer::PlainS3 {
-                parquet_writer,
-                iceberg_committer,
-                ..
-            } => {
-                let write_result = parquet_writer
-                    .write_batches_with_hash(
-                        std::slice::from_ref(batch),
-                        service_name,
-                        timestamp_nanos,
-                    )
-                    .await
-                    .map_err(|e| Error::from(format!("S3 write failed: {}", e)))?;
-
-                let path = write_result.path.clone();
-
-                if let Some(committer) = iceberg_committer {
-                    if let Err(e) = committer
-                        .commit_with_signal(
-                            "traces",
-                            None,
-                            std::slice::from_ref(&write_result),
-                            parquet_writer.operator(),
-                        )
-                        .await
-                    {
-                        tracing::warn!("Failed to commit traces to Iceberg catalog: {}", e);
-                    }
-                }
-
-                Ok(vec![path])
-            }
-        }
-    }
-
-    /// Get passthrough batcher
-    pub fn passthrough(&self) -> &PassthroughBatcher {
-        match self {
-            Writer::Iceberg { passthrough, .. } => passthrough,
-            Writer::PlainS3 { passthrough, .. } => passthrough,
-        }
-    }
-}
+// Old Writer enum removed - now using otlp2parquet_writer::OtlpWriter trait
 
 #[derive(Clone)]
 pub(crate) struct LambdaState {
-    pub writer: Arc<Writer>,
+    pub writer: Arc<dyn otlp2parquet_writer::OtlpWriter>,
+    pub passthrough: PassthroughBatcher,
     pub max_payload_bytes: usize,
 }
 
@@ -503,11 +123,22 @@ pub async fn run() -> Result<(), Error> {
     let max_payload_bytes = config.request.max_payload_bytes;
     tracing::info!("Lambda payload cap set to {} bytes", max_payload_bytes);
 
-    // Initialize writer based on environment
-    let writer = Arc::new(Writer::from_config(&config).await?);
+    // Initialize writer using new icepick-based implementation
+    let bucket_arn = config
+        .iceberg
+        .as_ref()
+        .and_then(|ic| ic.bucket_arn.as_ref())
+        .ok_or_else(|| {
+            Error::from("Lambda requires iceberg.bucket_arn configuration for S3 Tables")
+        })?;
+
+    let writer = otlp2parquet_writer::initialize_lambda_writer(bucket_arn, String::new())
+        .await
+        .map_err(|e| Error::from(format!("Failed to initialize writer: {}", e)))?;
 
     let state = Arc::new(LambdaState {
-        writer,
+        writer: Arc::new(writer),
+        passthrough: PassthroughBatcher::default(),
         max_payload_bytes,
     });
 
