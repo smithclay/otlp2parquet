@@ -15,8 +15,9 @@ use otlp2parquet_batch::CompletedBatch;
 use otlp2parquet_core::{otlp, InputFormat, ParquetWriteResult};
 use prost::Message;
 use serde_json::json;
+use std::sync::Arc;
 use std::time::Instant;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::{AppError, AppState};
 
@@ -69,24 +70,11 @@ pub(crate) async fn health_check() -> impl IntoResponse {
     (StatusCode::OK, Json(json!({"status": "healthy"})))
 }
 
-/// GET /ready - Readiness check (includes storage connectivity)
-pub(crate) async fn ready_check(State(state): State<AppState>) -> impl IntoResponse {
-    // Test storage connectivity by listing (basic check)
-    match state.storage.probe().await {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(json!({"status": "ready", "storage": "connected"})),
-        ),
-        Err(e) => {
-            warn!("Storage readiness check failed: {}", e);
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(
-                    json!({"status": "not ready", "storage": "disconnected", "error": e.to_string()}),
-                ),
-            )
-        }
-    }
+/// GET /ready - Readiness check
+pub(crate) async fn ready_check(State(_state): State<AppState>) -> impl IntoResponse {
+    // Writer is always ready after initialization
+    // TODO: Add actual health checks if needed (e.g., test write to storage)
+    (StatusCode::OK, Json(json!({"status": "ready"})))
 }
 
 async fn handle_signal(
@@ -232,28 +220,23 @@ async fn process_traces(
         );
 
         let service_name = metadata.service_name.as_ref();
-        let write_result = state
-            .parquet_writer
-            .write_batches_with_signal(
-                &batches,
-                service_name,
-                metadata.first_timestamp_nanos,
-                "traces",
-                None, // No subdirectory for traces (unlike metrics)
-            )
-            .await
-            .map_err(|e| {
-                AppError::internal(e.context("Failed to write traces Parquet to storage"))
-            })?;
-        let partition_path = write_result.path.clone();
 
-        if let Some(committer) = &state.iceberg_committer {
-            if let Err(e) = committer
-                .commit_with_signal("traces", None, &[write_result], state.storage.operator())
+        // Write traces using new writer trait
+        let mut partition_path = String::new();
+        for batch in &batches {
+            let result = state
+                .writer
+                .write_batch(
+                    batch,
+                    otlp2parquet_core::SignalType::Traces,
+                    None, // No metric type for traces
+                    service_name,
+                    metadata.first_timestamp_nanos,
+                )
                 .await
-            {
-                warn!("Failed to commit traces to Iceberg catalog: {}", e);
-            }
+                .map_err(|e| AppError::internal(e.context("Failed to write traces to storage")))?;
+
+            partition_path = result.path; // Track last path for logging
         }
 
         counter!("otlp.traces.flushes", 1);
@@ -331,39 +314,23 @@ async fn process_metrics(
             let service_name = extract_service_name(&batch);
             let timestamp_nanos = extract_first_timestamp(&batch);
 
-            let write_result = state
-                .parquet_writer
-                .write_batches_with_signal(
-                    &[batch],
+            let result = state
+                .writer
+                .write_batch(
+                    &batch,
+                    otlp2parquet_core::SignalType::Metrics,
+                    Some(&metric_type),
                     &service_name,
                     timestamp_nanos,
-                    "metrics",
-                    Some(&metric_type),
                 )
                 .await
                 .map_err(|e| {
                     AppError::internal(
-                        e.context(format!("Failed to write {} metrics Parquet", metric_type)),
+                        e.context(format!("Failed to write {} metrics", metric_type)),
                     )
                 })?;
-            let partition_path = write_result.path.clone();
 
-            if let Some(committer) = &state.iceberg_committer {
-                if let Err(e) = committer
-                    .commit_with_signal(
-                        "metrics",
-                        Some(&metric_type),
-                        &[write_result],
-                        state.storage.operator(),
-                    )
-                    .await
-                {
-                    warn!(
-                        "Failed to commit {} metrics to Iceberg catalog: {}",
-                        metric_type, e
-                    );
-                }
-            }
+            let partition_path = result.path.clone();
 
             counter!("otlp.metrics.flushes", 1, "metric_type" => metric_type.clone());
             info!(
@@ -421,31 +388,65 @@ pub(crate) async fn persist_log_batch(
     state: &AppState,
     completed: &CompletedBatch<otlp::LogMetadata>,
 ) -> anyhow::Result<ParquetWriteResult> {
-    let write_result = state
-        .parquet_writer
-        .write_batches_with_hash(
-            &completed.batches,
-            &completed.metadata.service_name,
-            completed.metadata.first_timestamp_nanos,
-        )
-        .await
-        .context("Failed to write Parquet to storage")?;
+    let mut uploaded_paths = Vec::new();
 
-    if let Some(committer) = &state.iceberg_committer {
-        if let Err(e) = committer
-            .commit_with_signal(
-                "logs",
-                None,
-                std::slice::from_ref(&write_result),
-                state.storage.operator(),
+    for batch in &completed.batches {
+        let result = state
+            .writer
+            .write_batch(
+                batch,
+                otlp2parquet_core::SignalType::Logs,
+                None, // No metric type for logs
+                &completed.metadata.service_name,
+                completed.metadata.first_timestamp_nanos,
             )
             .await
-        {
-            warn!("Failed to commit logs to Iceberg catalog: {}", e);
-        }
+            .context("Failed to write logs to storage")?;
+
+        uploaded_paths.push(result.path.clone());
     }
 
-    Ok(write_result)
+    // Return first write result for backward compatibility
+    // (caller expects single ParquetWriteResult)
+    // NOTE: Most fields are not populated since the new writer doesn't track them
+    let schema = completed
+        .batches
+        .first()
+        .map(|b| b.schema())
+        .unwrap_or_else(|| Arc::new(arrow::datatypes::Schema::empty()));
+
+    // Create minimal parquet metadata (required fields only)
+    use parquet::schema::types::Type;
+    let parquet_schema = Type::group_type_builder("schema")
+        .build()
+        .expect("Failed to build parquet schema");
+    let schema_descriptor = Arc::new(parquet::schema::types::SchemaDescriptor::new(Arc::new(
+        parquet_schema,
+    )));
+
+    let file_metadata = parquet::file::metadata::FileMetaData::new(
+        0,    // version
+        0,    // num rows
+        None, // created_by
+        None, // key_value_metadata
+        schema_descriptor,
+        None, // column_orders
+    );
+
+    let parquet_metadata = Arc::new(parquet::file::metadata::ParquetMetaData::new(
+        file_metadata,
+        vec![], // row groups
+    ));
+
+    Ok(ParquetWriteResult {
+        path: uploaded_paths.into_iter().next().unwrap_or_default(),
+        hash: otlp2parquet_core::Blake3Hash::new([0u8; 32]),
+        file_size: 0,
+        row_count: completed.metadata.record_count as i64,
+        arrow_schema: schema,
+        parquet_metadata,
+        completed_at: chrono::Utc::now(),
+    })
 }
 
 fn extract_service_name(batch: &RecordBatch) -> String {

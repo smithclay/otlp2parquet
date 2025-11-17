@@ -22,9 +22,7 @@ use axum::{
 };
 use otlp2parquet_batch::{BatchConfig, BatchManager, PassthroughBatcher};
 use otlp2parquet_config::RuntimeConfig;
-use otlp2parquet_storage::iceberg::{IcebergCommitter, IcebergRestConfig};
-use otlp2parquet_storage::opendal_storage::OpenDalStorage;
-use otlp2parquet_storage::{set_parquet_row_group_size, ParquetWriter};
+use otlp2parquet_core::parquet::encoding::set_parquet_row_group_size;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,17 +33,15 @@ mod handlers;
 mod init;
 
 use handlers::{handle_logs, handle_metrics, handle_traces, health_check, ready_check};
-use init::{init_storage, init_tracing};
+use init::{init_tracing, init_writer};
 
 /// Application state shared across all requests
 #[derive(Clone)]
 pub(crate) struct AppState {
-    pub storage: Arc<OpenDalStorage>,
-    pub parquet_writer: Arc<ParquetWriter>,
+    pub writer: Arc<dyn otlp2parquet_writer::OtlpWriter>,
     pub batcher: Option<Arc<BatchManager>>,
     pub passthrough: PassthroughBatcher,
     pub max_payload_bytes: usize,
-    pub iceberg_committer: Option<Arc<IcebergCommitter>>,
 }
 
 /// Error type that implements IntoResponse
@@ -143,9 +139,8 @@ pub async fn run() -> Result<()> {
         .listen_addr
         .clone();
 
-    // Initialize storage
-    let storage = init_storage(&config)?;
-    let parquet_writer = Arc::new(ParquetWriter::new(storage.operator().clone()));
+    // Initialize writer (handles both storage and optional Iceberg catalog)
+    let writer = init_writer(&config).await?;
 
     // Configure batching
     let batch_config = BatchConfig {
@@ -170,97 +165,12 @@ pub async fn run() -> Result<()> {
     let max_payload_bytes = config.request.max_payload_bytes;
     info!("Max payload size set to {} bytes", max_payload_bytes);
 
-    // Initialize Iceberg committer if configured
-    let iceberg_committer = {
-        use otlp2parquet_storage::iceberg::init::{
-            initialize_committer, initialize_committer_with_config, InitResult,
-        };
-
-        if let Some(iceberg_cfg) = &config.iceberg {
-            let rest_config = IcebergRestConfig {
-                rest_uri: iceberg_cfg.rest_uri.clone(),
-                warehouse: iceberg_cfg.warehouse.clone(),
-                namespace: iceberg_cfg.namespace_vec(),
-                tables: iceberg_cfg.to_tables_map(),
-                catalog_name: iceberg_cfg.catalog_name.clone(),
-                format_version: iceberg_cfg.format_version,
-                target_file_size_bytes: iceberg_cfg.target_file_size_bytes,
-                staging_prefix: iceberg_cfg.staging_prefix.clone(),
-                data_location: iceberg_cfg.data_location.clone(),
-            };
-
-            match initialize_committer_with_config(rest_config).await {
-                InitResult::Success {
-                    committer,
-                    table_count,
-                } => {
-                    info!(
-                        "Iceberg catalog integration enabled with {} tables",
-                        table_count
-                    );
-                    Some(committer)
-                }
-                InitResult::CatalogError(msg) => {
-                    info!(
-                        "Failed to create Iceberg catalog: {} - continuing without Iceberg",
-                        msg
-                    );
-                    None
-                }
-                InitResult::NamespaceError(msg) => {
-                    info!(
-                        "Failed to parse Iceberg namespace: {} - continuing without Iceberg",
-                        msg
-                    );
-                    None
-                }
-                InitResult::NotConfigured(msg) => {
-                    info!("Iceberg catalog not configured: {}", msg);
-                    None
-                }
-            }
-        } else {
-            match initialize_committer().await {
-                InitResult::Success {
-                    committer,
-                    table_count,
-                } => {
-                    info!(
-                        "Iceberg catalog integration enabled with {} tables",
-                        table_count
-                    );
-                    Some(committer)
-                }
-                InitResult::NotConfigured(msg) => {
-                    info!("Iceberg catalog not configured: {}", msg);
-                    None
-                }
-                InitResult::CatalogError(msg) => {
-                    info!(
-                        "Failed to create Iceberg catalog: {} - continuing without Iceberg",
-                        msg
-                    );
-                    None
-                }
-                InitResult::NamespaceError(msg) => {
-                    info!(
-                        "Failed to parse Iceberg namespace: {} - continuing without Iceberg",
-                        msg
-                    );
-                    None
-                }
-            }
-        }
-    };
-
     // Create app state
     let state = AppState {
-        storage,
-        parquet_writer,
+        writer: Arc::new(writer),
         batcher,
         passthrough: PassthroughBatcher::default(),
         max_payload_bytes,
-        iceberg_committer,
     };
 
     let router_state = state.clone();

@@ -9,9 +9,13 @@ license.workspace = true
 otlp2parquet-core = { path = "../otlp2parquet-core" }
 otlp2parquet-batch = { path = "../otlp2parquet-batch" }
 otlp2parquet-config = { path = "../otlp2parquet-config" }
-otlp2parquet-storage = { path = "../otlp2parquet-storage", features = ["services-fs", "services-s3", "iceberg"] }
+otlp2parquet-writer = { path = "../otlp2parquet-writer" }
 arrow = { workspace = true }
+parquet = { workspace = true }
 prost = { workspace = true }
+icepick = { path = "../../../icepick", default-features = false }
+opendal = { version = "0.54", default-features = false, features = ["services-fs", "services-s3"] }
+chrono = { workspace = true }
 
 # HTTP server
 axum = { version = "0.7", default-features = false, features = ["tokio", "http1", "http2", "json"] }
