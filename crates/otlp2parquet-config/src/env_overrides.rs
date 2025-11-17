@@ -102,13 +102,21 @@ pub fn apply_env_overrides<E: EnvSource>(config: &mut RuntimeConfig, env: &E) ->
     if config.iceberg.is_none()
         && (has_any(
             env,
-            &["ICEBERG_REST_URI", "ICEBERG_NAMESPACE", "ICEBERG_WAREHOUSE"],
+            &[
+                "ICEBERG_REST_URI",
+                "ICEBERG_NAMESPACE",
+                "ICEBERG_WAREHOUSE",
+                "ICEBERG_BUCKET_ARN",
+            ],
         ))
     {
         config.iceberg = Some(Default::default());
     }
 
     if let Some(ref mut iceberg) = config.iceberg {
+        if let Some(bucket_arn) = get_env_string(env, "ICEBERG_BUCKET_ARN")? {
+            iceberg.bucket_arn = Some(bucket_arn);
+        }
         if let Some(rest_uri) = get_env_string(env, "ICEBERG_REST_URI")? {
             iceberg.rest_uri = rest_uri;
         }

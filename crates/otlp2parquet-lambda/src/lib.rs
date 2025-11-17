@@ -152,7 +152,7 @@ pub async fn run() -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use otlp2parquet_config::Platform;
+    use otlp2parquet_config::{IcebergConfig, Platform};
 
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
         use std::sync::{Mutex, OnceLock};
@@ -162,22 +162,52 @@ mod tests {
     }
 
     #[test]
-    fn lambda_integrated_flag_defaults_to_false() {
-        let config = RuntimeConfig::from_platform_defaults(Platform::Lambda);
-        let lambda_cfg = config.lambda.expect("lambda defaults missing");
-        assert!(!lambda_cfg.integrated_iceberg);
+    fn lambda_requires_bucket_arn_configuration() {
+        // Lambda now always uses icepick with S3 Tables, which requires bucket_arn
+        let mut config = RuntimeConfig::from_platform_defaults(Platform::Lambda);
+
+        // Without bucket_arn, initialization should fail
+        assert!(
+            config.iceberg.is_none()
+                || config
+                    .iceberg
+                    .as_ref()
+                    .and_then(|ic| ic.bucket_arn.as_ref())
+                    .is_none()
+        );
+
+        // With bucket_arn, config is valid
+        config.iceberg = Some(IcebergConfig {
+            bucket_arn: Some(
+                "arn:aws:s3tables:us-west-2:123456789012:bucket/test-bucket".to_string(),
+            ),
+            ..Default::default()
+        });
+
+        assert!(config
+            .iceberg
+            .as_ref()
+            .and_then(|ic| ic.bucket_arn.as_ref())
+            .is_some());
     }
 
     #[test]
-    fn lambda_integrated_flag_respects_env_override() {
+    fn lambda_bucket_arn_respects_env_override() {
         let _guard = env_lock();
-        std::env::set_var("OTLP2PARQUET_LAMBDA_INTEGRATED_ICEBERG", "true");
+        let test_arn = "arn:aws:s3tables:us-east-1:999999999999:bucket/my-bucket";
+        std::env::set_var("OTLP2PARQUET_ICEBERG_BUCKET_ARN", test_arn);
 
         let config =
             RuntimeConfig::load_for_platform(Platform::Lambda).expect("config load should succeed");
-        let lambda_cfg = config.lambda.expect("lambda config missing after override");
-        assert!(lambda_cfg.integrated_iceberg);
 
-        std::env::remove_var("OTLP2PARQUET_LAMBDA_INTEGRATED_ICEBERG");
+        let bucket_arn = config
+            .iceberg
+            .as_ref()
+            .and_then(|ic| ic.bucket_arn.as_ref())
+            .expect("bucket_arn should be set from env");
+
+        assert_eq!(bucket_arn, test_arn);
+
+        std::env::remove_var("OTLP2PARQUET_ICEBERG_BUCKET_ARN");
     }
 }
