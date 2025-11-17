@@ -4,6 +4,17 @@
 
 use std::sync::Arc;
 
+/// OpenTelemetry signal types
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SignalType {
+    /// Logs signal
+    Logs,
+    /// Traces signal
+    Traces,
+    /// Metrics signal
+    Metrics,
+}
+
 /// Blake3 content hash for deduplication
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Blake3Hash([u8; 32]);

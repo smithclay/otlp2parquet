@@ -13,6 +13,7 @@
 use anyhow::Result;
 use arrow::array::RecordBatch;
 
+pub mod iceberg_schemas;
 pub mod otlp;
 pub mod parquet;
 pub mod schema;
@@ -21,7 +22,7 @@ pub mod types;
 // Re-export commonly used types
 pub use otlp::{InputFormat, LogMetadata};
 pub use schema::otel_logs_schema;
-pub use types::{Blake3Hash, ParquetWriteResult};
+pub use types::{Blake3Hash, ParquetWriteResult, SignalType};
 
 /// Parse OTLP log data and convert to Arrow RecordBatch
 ///
