@@ -42,10 +42,10 @@ Resources:
 
   # S3 Tables Namespace - Logical grouping for Iceberg tables (only created if not using existing)
   S3TablesNamespace:
-    Type: AWS::S3Tables::TableBucketNamespace
+    Type: AWS::S3Tables::Namespace
     Condition: CreateNewBucket
     Properties:
-      TableBucketARN: !GetAtt S3TablesBucket.Arn
+      TableBucketARN: !GetAtt S3TablesBucket.TableBucketARN
       Namespace: 'otel'
 
   # Lambda execution role with S3 Tables permissions
@@ -112,7 +112,7 @@ Resources:
   OtlpFunctionUrl:
     Type: AWS::Lambda::Url
     Properties:
-      AuthType: NONE
+      AuthType: AWS_IAM  # Requires AWS SigV4 signed requests
       TargetFunctionArn: !GetAtt OtlpIngestFunction.Arn
 
   # Lambda permission for Function URL invocations
@@ -176,3 +176,15 @@ Outputs:
     Value: !Ref AWS::Region
     Export:
       Name: !Sub '${AWS::StackName}-Region'
+
+  # Authentication Example
+  TestCommand:
+    Description: Test the endpoint with curl (requires curl 7.75+ for --aws-sigv4)
+    Value: !Sub |
+      curl -X POST ${OtlpFunctionUrl.FunctionUrl}v1/logs \
+        -H "Content-Type: application/x-protobuf" \
+        --data-binary @testdata/logs.pb \
+        --aws-sigv4 "aws:amz:${AWS::Region}:lambda" \
+        --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY"
+
+      Note: Requires AWS credentials with lambda:InvokeFunctionUrl permission

@@ -10,7 +10,7 @@
 **Key Features:**
 - ✅ Ingests OTLP HTTP (protobuf, JSON, JSONL) for logs, metrics, and traces
 - ✅ Writes Parquet files for [easy querying in DuckDB](https://duckdb.org/docs/stable/data/parquet/overview)
-- ✅ Apache Iceberg support via [icepick](https://crates.io/crates/icepick) (ACID, schema evolution, time travel)
+- ✅ Apache Iceberg support via [icepick](https://crates.io/crates/icepick)
 - ✅ Native AWS S3 Tables support (ARN-based configuration for Lambda)
 - ✅ R2 Data Catalog support for Cloudflare Workers (edge-native Iceberg)
 - ✅ Small and fast: 1.3 MB WASM binary (43.8% of CF Workers limit), <10ms cold start
@@ -20,29 +20,37 @@
 
 ## Quick Start: AWS Lambda (3 minutes)
 
-Deploy serverless OTLP ingestion with Apache Iceberg to AWS:
+Deploy serverless OTLP ingestion with S3 storage to AWS:
 
 ```bash
-# 1. Download template
-curl -O https://raw.githubusercontent.com/smithclay/otlp2parquet/main/deploy/aws-lambda.yaml
+# 1. Download CloudFormation template
+curl -O https://raw.githubusercontent.com/smithclay/otlp2parquet/main/examples/aws-lambda-s3-tables/template.yaml
 
 # 2. Deploy stack
 aws cloudformation deploy \
-  --template-file aws-lambda.yaml \
+  --template-file template.yaml \
   --stack-name otlp2parquet \
   --region us-west-2 \
   --capabilities CAPABILITY_NAMED_IAM
 
-# 3. Send test data
+# 3. Get function URL
+aws cloudformation describe-stacks \
+  --stack-name otlp2parquet \
+  --query 'Stacks[0].Outputs[?OutputKey==`FunctionUrl`].OutputValue' \
+  --output text
+
+# 4. Send test data (requires curl 7.75+ for AWS SigV4 auth)
 curl -X POST <function-url>/v1/logs \
   -H "Content-Type: application/json" \
-  -d '{"resourceLogs":[{"scopeLogs":[{"logRecords":[...]}]}]}'
+  -d '{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"body":{"stringValue":"Hello"},"timeUnixNano":"1234567890"}]}]}]}' \
+  --aws-sigv4 "aws:amz:us-west-2:lambda" \
+  --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY"
 
-# 4. Query with DuckDB
-duckdb -c "SELECT * FROM iceberg_scan('glue://otel.logs', aws_region='us-west-2')"
+# 5. Query Parquet files with DuckDB
+duckdb -c "INSTALL httpfs; LOAD httpfs; SELECT * FROM read_parquet('s3://otlp-logs/logs/**/*.parquet')"
 ```
 
-**That's it!** Tables are auto-created, ACID transactions enabled, and data is immediately queryable.
+**That's it!** Data is written to S3 as Parquet files, ready to query.
 
 📖 [Full AWS Lambda Guide →](docs/setup/aws-lambda.md)
 
@@ -70,7 +78,7 @@ Edge-native OTLP ingestion with WASM:
 npx wrangler deploy
 ```
 
-- 1.3MB compressed binary (43.8% of 3MB limit), <10ms cold start
+- 1.3MB compressed binary, <10ms cold start
 - R2 Data Catalog support for Iceberg tables
 - R2 storage integration
 - [Cloudflare Workers Guide →](docs/setup/cloudflare.md)
@@ -91,12 +99,13 @@ npx wrangler deploy
 | OTLP Traces | ✅ | ✅ | ✅ |
 | OTLP Profiles | ❌ | ❌ | ❌ |
 | **Storage Support** | | | |
-| Parquet | ✅ | ✅ | ✅ |
+| Plain Object Storage (Parquet) | ✅ | ✅ | ✅ |
 | Iceberg (REST Catalog API) | ✅ | ❌ | ✅ |
 | AWS S3 Tables | ❌ | ❌ | ✅ |
 | R2 Data Catalog | ❌ | ✅ | ❌ |
-| **Security** | | | |
+| **Serverless Function Authentication** | | | |
 | Basic Auth Header | ❌ | ✅ | ❌ |
+| AWS IAM (SigV4) | ❌ | ❌ | ✅ |
 | **Advanced Features** | | | |
 | In-Memory Batching | ✅ | ❌ | ❌ |
 

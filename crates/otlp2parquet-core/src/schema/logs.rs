@@ -31,6 +31,8 @@ pub fn otel_logs_schema_arc() -> Arc<Schema> {
 }
 
 fn build_schema() -> Schema {
+    let map_type = map_type();
+
     let fields = vec![
         // ============ Common Fields (IDs 1-20) ============
         // Shared across all signal types for cross-signal queries and schema evolution
@@ -45,55 +47,11 @@ fn build_schema() -> Schema {
         field_with_id(field::SERVICE_NAME, DataType::Utf8, false, 4),
         field_with_id(field::SERVICE_NAMESPACE, DataType::Utf8, true, 5),
         field_with_id(field::SERVICE_INSTANCE_ID, DataType::Utf8, true, 6),
-        field_with_id(
-            field::RESOURCE_ATTRIBUTES,
-            DataType::Map(
-                Arc::new(Field::new(
-                    field::ENTRIES,
-                    DataType::Struct(
-                        vec![
-                            Field::new(field::KEY, DataType::Utf8, false),
-                            Field::new(
-                                field::VALUE,
-                                DataType::Struct(any_value_fields_for_builder()),
-                                true,
-                            ),
-                        ]
-                        .into(),
-                    ),
-                    false,
-                )),
-                false,
-            ),
-            false,
-            7,
-        ),
+        field_with_id(field::RESOURCE_ATTRIBUTES, map_type.clone(), false, 7),
         field_with_id(field::RESOURCE_SCHEMA_URL, DataType::Utf8, true, 8),
         field_with_id(field::SCOPE_NAME, DataType::Utf8, false, 9),
         field_with_id(field::SCOPE_VERSION, DataType::Utf8, true, 10),
-        field_with_id(
-            field::SCOPE_ATTRIBUTES,
-            DataType::Map(
-                Arc::new(Field::new(
-                    field::ENTRIES,
-                    DataType::Struct(
-                        vec![
-                            Field::new(field::KEY, DataType::Utf8, false),
-                            Field::new(
-                                field::VALUE,
-                                DataType::Struct(any_value_fields_for_builder()),
-                                true,
-                            ),
-                        ]
-                        .into(),
-                    ),
-                    false,
-                )),
-                false,
-            ),
-            false,
-            11,
-        ),
+        field_with_id(field::SCOPE_ATTRIBUTES, map_type.clone(), false, 11),
         field_with_id(field::SCOPE_SCHEMA_URL, DataType::Utf8, true, 12),
         // ============ Logs-Specific Fields (IDs 21+) ============
         field_with_id(
@@ -117,29 +75,7 @@ fn build_schema() -> Schema {
             true,
             26,
         ),
-        field_with_id(
-            field::LOG_ATTRIBUTES,
-            DataType::Map(
-                Arc::new(Field::new(
-                    field::ENTRIES,
-                    DataType::Struct(
-                        vec![
-                            Field::new(field::KEY, DataType::Utf8, false),
-                            Field::new(
-                                field::VALUE,
-                                DataType::Struct(any_value_fields_for_builder()),
-                                true,
-                            ),
-                        ]
-                        .into(),
-                    ),
-                    false,
-                )),
-                false,
-            ),
-            false,
-            27,
-        ),
+        field_with_id(field::LOG_ATTRIBUTES, map_type, false, 27),
     ];
 
     let mut metadata = HashMap::new();
@@ -149,6 +85,24 @@ fn build_schema() -> Schema {
     );
 
     Schema::new_with_metadata(fields, metadata)
+}
+
+/// Helper function to create a Map<String, String> type
+fn map_type() -> DataType {
+    let entry_fields: Fields = vec![
+        Field::new(field::KEY, DataType::Utf8, false),
+        Field::new(field::VALUE, DataType::Utf8, true),
+    ]
+    .into();
+
+    DataType::Map(
+        Arc::new(Field::new(
+            field::ENTRIES,
+            DataType::Struct(entry_fields),
+            false,
+        )),
+        false,
+    )
 }
 
 /// Common resource attribute keys that are extracted to dedicated columns.

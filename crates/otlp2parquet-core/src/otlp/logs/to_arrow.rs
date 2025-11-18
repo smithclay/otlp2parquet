@@ -17,10 +17,26 @@ use prost::Message;
 use std::sync::Arc;
 
 use crate::otlp::common::{
-    any_value_builder::{any_value_string, append_any_value},
+    any_value_builder::{any_value_string, any_value_to_json_value, append_any_value},
     builder_helpers::{map_field_names, new_any_value_struct_builder, SPAN_ID_SIZE, TRACE_ID_SIZE},
 };
 use crate::schema::{otel_logs_schema_arc, EXTRACTED_RESOURCE_ATTRS};
+
+/// Convert AnyValue to a string representation for Map<String, String> schema
+fn any_value_to_string(value: Option<&AnyValue>) -> String {
+    value
+        .and_then(any_value_string)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            value
+                .map(|v| {
+                    // For non-string types, convert to JSON string representation
+                    let json = any_value_to_json_value(v);
+                    json.to_string()
+                })
+                .unwrap_or_default()
+        })
+}
 
 /// Metadata extracted during OTLP parsing
 #[derive(Debug, Clone)]
@@ -48,10 +64,10 @@ pub struct ArrowConverter {
     resource_schema_url_builder: StringBuilder,
     scope_name_builder: StringBuilder,
     scope_version_builder: StringBuilder,
-    scope_attributes_builder: MapBuilder<StringBuilder, StructBuilder>,
+    scope_attributes_builder: MapBuilder<StringBuilder, StringBuilder>,
     scope_schema_url_builder: StringBuilder,
-    resource_attributes_builder: MapBuilder<StringBuilder, StructBuilder>,
-    log_attributes_builder: MapBuilder<StringBuilder, StructBuilder>,
+    resource_attributes_builder: MapBuilder<StringBuilder, StringBuilder>,
+    log_attributes_builder: MapBuilder<StringBuilder, StringBuilder>,
 
     // Metadata tracking (not part of schema)
     service_name: Arc<str>,
@@ -97,18 +113,18 @@ impl ArrowConverter {
             scope_attributes_builder: MapBuilder::new(
                 Some(map_field_names()),
                 StringBuilder::with_capacity(capacity * 4, capacity * 64),
-                new_any_value_struct_builder(),
+                StringBuilder::with_capacity(capacity * 4, capacity * 128),
             ),
             scope_schema_url_builder: StringBuilder::with_capacity(capacity, capacity * 64),
             resource_attributes_builder: MapBuilder::new(
                 Some(map_field_names()),
                 StringBuilder::with_capacity(capacity * 8, capacity * 128),
-                new_any_value_struct_builder(),
+                StringBuilder::with_capacity(capacity * 8, capacity * 256),
             ),
             log_attributes_builder: MapBuilder::new(
                 Some(map_field_names()),
                 StringBuilder::with_capacity(capacity * 16, capacity * 256),
-                new_any_value_struct_builder(),
+                StringBuilder::with_capacity(capacity * 16, capacity * 512),
             ),
             service_name: Arc::from(""),
             first_timestamp: None,
@@ -447,7 +463,10 @@ impl ArrowConverter {
 
         for &(key, value) in &scope_ctx.attributes {
             self.scope_attributes_builder.keys().append_value(key);
-            append_any_value(self.scope_attributes_builder.values(), value)?;
+            let value_str = any_value_to_string(value);
+            self.scope_attributes_builder
+                .values()
+                .append_value(value_str);
         }
         self.scope_attributes_builder.append(true)?;
 
@@ -459,13 +478,17 @@ impl ArrowConverter {
 
         for &(key, value) in &resource_ctx.attributes {
             self.resource_attributes_builder.keys().append_value(key);
-            append_any_value(self.resource_attributes_builder.values(), value)?;
+            let value_str = any_value_to_string(value);
+            self.resource_attributes_builder
+                .values()
+                .append_value(value_str);
         }
         self.resource_attributes_builder.append(true)?;
 
         for attr in &log_record.attributes {
             self.log_attributes_builder.keys().append_value(&attr.key);
-            append_any_value(self.log_attributes_builder.values(), attr.value.as_ref())?;
+            let value_str = any_value_to_string(attr.value.as_ref());
+            self.log_attributes_builder.values().append_value(value_str);
         }
         self.log_attributes_builder.append(true)?;
 

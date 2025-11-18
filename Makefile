@@ -163,6 +163,7 @@ wasm-full: wasm-compress wasm-profile ## Build, optimize, compress, and profile 
 .PHONY: clean
 clean: ## Remove build artifacts
 	@cargo clean
+	@rm -rf target/lambda
 
 .PHONY: clean-wasm
 clean-wasm: ## Remove WASM-specific artifacts

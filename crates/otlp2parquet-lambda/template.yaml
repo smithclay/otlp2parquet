@@ -62,9 +62,11 @@ Resources:
             Path: /{proxy+}
             Method: ANY
             PayloadFormatVersion: "2.0"
-      # Function URL for HTTP access (no auth - configure as needed)
+      # Function URL for HTTP access with IAM authentication
+      # Clients must sign requests with AWS SigV4 using valid AWS credentials
+      # See "Authentication Examples" section in Outputs for usage
       FunctionUrlConfig:
-        AuthType: NONE  # Change to AWS_IAM for authenticated access
+        AuthType: AWS_IAM  # Requires AWS SigV4 signed requests
         Cors:
           AllowOrigins:
             - "*"
@@ -72,6 +74,9 @@ Resources:
             - POST
           AllowHeaders:
             - content-type
+            - authorization
+            - x-amz-date
+            - x-amz-security-token
           MaxAge: 300
       LoggingConfig:
         LogFormat: JSON
@@ -98,11 +103,3 @@ Outputs:
     Value: !GetAtt OtlpToParquetFunction.Arn
     Export:
       Name: !Sub ${AWS::StackName}-FunctionArn
-
-  # Example curl command
-  TestCommand:
-    Description: Test the endpoint with curl
-    Value: !Sub |
-      curl -X POST ${OtlpToParquetFunctionUrl.FunctionUrl}v1/logs \
-        -H "Content-Type: application/x-protobuf" \
-        --data-binary @testdata/logs.pb

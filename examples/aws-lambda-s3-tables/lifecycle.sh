@@ -306,10 +306,16 @@ EOF
     otlp_body=$(cat "$payload_file")
 
     local wrapped_event
+    local req_id="test-$(date +%s)"
+    local req_time="$(date -u +"%d/%b/%Y:%H:%M:%S +0000")"
+    local req_epoch="$(date +%s)000"
+    local body_json
+    body_json=$(echo "$otlp_body" | jq -Rsa .)
+
     wrapped_event=$(cat <<EOF
 {
   "version": "2.0",
-  "routeKey": "\\$default",
+  "routeKey": "\$default",
   "rawPath": "${otlp_path}",
   "rawQueryString": "",
   "headers": {
@@ -327,13 +333,13 @@ EOF
       "sourceIp": "127.0.0.1",
       "userAgent": "lifecycle-test"
     },
-    "requestId": "test-$(date +%s)",
-    "routeKey": "\\$default",
-    "stage": "\\$default",
-    "time": "$(date -u +"%d/%b/%Y:%H:%M:%S +0000")",
-    "timeEpoch": $(date +%s)000
+    "requestId": "${req_id}",
+    "routeKey": "\$default",
+    "stage": "\$default",
+    "time": "${req_time}",
+    "timeEpoch": ${req_epoch}
   },
-  "body": $(echo "$otlp_body" | jq -Rsa .),
+  "body": ${body_json},
   "isBase64Encoded": false
 }
 EOF
