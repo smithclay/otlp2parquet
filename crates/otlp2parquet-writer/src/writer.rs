@@ -84,6 +84,8 @@ pub struct IcepickWriter {
     table_cache: Arc<RwLock<HashMap<String, Table>>>,
     /// Base path prefix for file writes
     base_path: String,
+    /// Iceberg namespace for tables (defaults to "otlp")
+    namespace: String,
 }
 
 impl IcepickWriter {
@@ -93,11 +95,22 @@ impl IcepickWriter {
         catalog: Option<Arc<dyn Catalog>>,
         base_path: String,
     ) -> Result<Self> {
+        Self::new_with_namespace(file_io, catalog, base_path, "otlp".to_string())
+    }
+
+    /// Create a new IcepickWriter with custom namespace
+    pub fn new_with_namespace(
+        file_io: FileIO,
+        catalog: Option<Arc<dyn Catalog>>,
+        base_path: String,
+        namespace: String,
+    ) -> Result<Self> {
         Ok(Self {
             file_io,
             catalog,
             table_cache: Arc::new(RwLock::new(HashMap::new())),
             base_path,
+            namespace,
         })
     }
 
@@ -127,7 +140,7 @@ impl IcepickWriter {
             otlp2parquet_core::iceberg_schemas::schema_for_signal(signal_type, metric_type);
 
         // Load or create table
-        let namespace = icepick::NamespaceIdent::new(vec!["otel".to_string()]);
+        let namespace = icepick::NamespaceIdent::new(vec![self.namespace.clone()]);
         let table_ident = icepick::TableIdent::new(namespace.clone(), table_name.to_string());
 
         let table = match catalog.load_table(&table_ident).await {

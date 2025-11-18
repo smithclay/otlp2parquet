@@ -13,7 +13,7 @@ otlp2parquet-core = { path = "../otlp2parquet-core" }
 otlp2parquet-batch = { path = "../otlp2parquet-batch" }
 otlp2parquet-config = { path = "../otlp2parquet-config" }
 otlp2parquet-writer = { path = "../otlp2parquet-writer" }
-icepick = { version = "0.1", default-features = false }
+icepick = { git = "https://github.com/smithclay/icepick.git", rev = "55768f84f79fcfb70e715d3e61b080c78cb8692c", default-features = false }
 
 # Cloudflare Workers runtime
 worker = "0.6"

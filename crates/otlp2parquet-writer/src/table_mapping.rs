@@ -8,14 +8,14 @@ use otlp2parquet_core::SignalType;
 #[allow(dead_code)]
 pub fn table_name_for_signal(signal: SignalType, metric_type: Option<&str>) -> String {
     match signal {
-        SignalType::Logs => "logs".to_string(),
-        SignalType::Traces => "traces".to_string(),
+        SignalType::Logs => "otel_logs".to_string(),
+        SignalType::Traces => "otel_traces".to_string(),
         SignalType::Metrics => match metric_type {
-            Some("gauge") => "metrics_gauge".to_string(),
-            Some("sum") => "metrics_sum".to_string(),
-            Some("histogram") => "metrics_histogram".to_string(),
-            Some("exponential_histogram") => "metrics_exponential_histogram".to_string(),
-            Some("summary") => "metrics_summary".to_string(),
+            Some("gauge") => "otel_metrics_gauge".to_string(),
+            Some("sum") => "otel_metrics_sum".to_string(),
+            Some("histogram") => "otel_metrics_histogram".to_string(),
+            Some("exponential_histogram") => "otel_metrics_exponential_histogram".to_string(),
+            Some("summary") => "otel_metrics_summary".to_string(),
             _ => panic!("Unknown or missing metric type: {:?}", metric_type),
         },
     }
@@ -39,27 +39,30 @@ mod tests {
 
     #[test]
     fn test_table_name_for_signal() {
-        assert_eq!(table_name_for_signal(SignalType::Logs, None), "logs");
-        assert_eq!(table_name_for_signal(SignalType::Traces, None), "traces");
+        assert_eq!(table_name_for_signal(SignalType::Logs, None), "otel_logs");
+        assert_eq!(
+            table_name_for_signal(SignalType::Traces, None),
+            "otel_traces"
+        );
         assert_eq!(
             table_name_for_signal(SignalType::Metrics, Some("gauge")),
-            "metrics_gauge"
+            "otel_metrics_gauge"
         );
         assert_eq!(
             table_name_for_signal(SignalType::Metrics, Some("sum")),
-            "metrics_sum"
+            "otel_metrics_sum"
         );
         assert_eq!(
             table_name_for_signal(SignalType::Metrics, Some("histogram")),
-            "metrics_histogram"
+            "otel_metrics_histogram"
         );
         assert_eq!(
             table_name_for_signal(SignalType::Metrics, Some("exponential_histogram")),
-            "metrics_exponential_histogram"
+            "otel_metrics_exponential_histogram"
         );
         assert_eq!(
             table_name_for_signal(SignalType::Metrics, Some("summary")),
-            "metrics_summary"
+            "otel_metrics_summary"
         );
     }
 
