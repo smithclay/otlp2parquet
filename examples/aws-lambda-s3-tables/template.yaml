@@ -46,7 +46,7 @@ Resources:
     Condition: CreateNewBucket
     Properties:
       TableBucketARN: !GetAtt S3TablesBucket.TableBucketARN
-      Namespace: 'otel'
+      Namespace: 'otlp'
 
   # Lambda execution role with S3 Tables permissions
   LambdaExecutionRole:
@@ -74,8 +74,8 @@ Resources:
                 Action:
                   - s3tables:*
                 Resource:
-                  - !If [CreateNewBucket, !GetAtt S3TablesBucket.Arn, !Ref ExistingS3TablesBucketArn]
-                  - !If [CreateNewBucket, !Sub '${S3TablesBucket.Arn}/*', !Sub '${ExistingS3TablesBucketArn}/*']
+                  - !If [CreateNewBucket, !GetAtt S3TablesBucket.TableBucketARN, !Ref ExistingS3TablesBucketArn]
+                  - !If [CreateNewBucket, !Sub '${S3TablesBucket.TableBucketARN}/*', !Sub '${ExistingS3TablesBucketArn}/*']
 
   # CloudWatch log group with 7-day retention for cost optimization
   LambdaLogGroup:
@@ -103,7 +103,7 @@ Resources:
       Environment:
         Variables:
           # S3 Tables Iceberg integration (ARN contains all needed config: region, bucket, etc.)
-          OTLP2PARQUET_ICEBERG_BUCKET_ARN: !If [CreateNewBucket, !GetAtt S3TablesBucket.Arn, !Ref ExistingS3TablesBucketArn]
+          OTLP2PARQUET_ICEBERG_BUCKET_ARN: !If [CreateNewBucket, !GetAtt S3TablesBucket.TableBucketARN, !Ref ExistingS3TablesBucketArn]
 
           # Logging
           RUST_LOG: 'debug'
@@ -155,7 +155,7 @@ Outputs:
 
   S3TablesBucketArn:
     Description: S3 Tables bucket ARN
-    Value: !If [CreateNewBucket, !GetAtt S3TablesBucket.Arn, !Ref ExistingS3TablesBucketArn]
+    Value: !If [CreateNewBucket, !GetAtt S3TablesBucket.TableBucketARN, !Ref ExistingS3TablesBucketArn]
     Export:
       Name: !Sub '${AWS::StackName}-TableBucketArn'
 

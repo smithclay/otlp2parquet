@@ -16,7 +16,7 @@ STACK_OUTPUTS="${SCRIPT_DIR}/stack-outputs.json"
 TESTDATA_DIR="${SCRIPT_DIR}/../../testdata"
 
 DEFAULT_REGION="${AWS_REGION:-us-west-2}"
-DEFAULT_STACK="otlp2parquet"
+DEFAULT_STACK="otlp"
 DEFAULT_ARCH="arm64"
 DEFAULT_VERSION="latest"
 
@@ -393,6 +393,47 @@ EOF
   section "Recent CloudWatch Logs"
   aws logs tail "$log_group" --region "$region" --since 5m --format short || \
     warn "No logs found yet. Invoke the Lambda to generate logs."
+
+  # Query S3 Tables with DuckDB if available
+  if command -v duckdb >/dev/null 2>&1; then
+    local table_bucket_arn
+    if table_bucket_arn=$(get_output_value "$stack_name" "$region" "S3TablesBucketArn" 2>/dev/null); then
+      section "Querying S3 Tables with DuckDB"
+      info "Connecting to S3 Tables bucket: ${table_bucket_arn}"
+
+      # Query with DuckDB using S3 Tables endpoint
+      # Note: DuckDB reads AWS credentials via credential_chain (from ~/.aws/credentials)
+      duckdb -c "
+-- Install required extensions (S3 Tables support is in stable)
+INSTALL aws;
+INSTALL httpfs;
+INSTALL iceberg;
+LOAD aws;
+LOAD httpfs;
+LOAD iceberg;
+
+-- Create secret using credential_chain (auto-detects from ~/.aws/credentials)
+CREATE SECRET (
+    TYPE s3,
+    PROVIDER credential_chain
+);
+
+-- Attach S3 Tables bucket as Iceberg catalog
+ATTACH '${table_bucket_arn}' AS s3tables (
+    TYPE iceberg,
+    ENDPOINT_TYPE s3_tables
+);
+
+-- Show available tables
+SHOW ALL TABLES;
+
+-- Query logs table if it exists
+SELECT * FROM s3tables.otlp.otel_logs LIMIT 5;
+" 2>&1 || warn "DuckDB query failed. Table may not exist yet."
+    fi
+  else
+    info "DuckDB not installed. Install it to query S3 Tables: https://duckdb.org/docs/installation/"
+  fi
 
   info "Tests completed. Tail logs with: ./lifecycle.sh logs --stack-name ${stack_name} --region ${region}"
 }
