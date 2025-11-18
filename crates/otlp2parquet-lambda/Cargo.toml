@@ -27,6 +27,9 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+[build-dependencies]
+chrono = { version = "0.4", features = ["clock"] }
+
 [[bin]]
 name = "bootstrap"
 path = "src/main.rs"

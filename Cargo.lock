@@ -2682,6 +2682,7 @@ dependencies = [
  "arrow",
  "aws_lambda_events",
  "base64 0.22.1",
+ "chrono",
  "icepick",
  "lambda_runtime",
  "opendal",

@@ -240,14 +240,15 @@ impl OtlpWriter for IcepickWriter {
                 .get_or_create_table(&table_name, signal_type, metric_type)
                 .await?;
 
-            // Use the table's FileIO - it has the correct region and configuration from S3TablesCatalog
-            // For S3 Tables, use partition_path relative to table.location()
+            // For S3 Tables: table.location() provides the base S3 URI for this table
+            // Construct full path: table_location + partition_path
             let file_path = format!(
                 "{}/{}",
                 table.location().trim_end_matches('/'),
                 partition_path
             );
-            tracing::debug!("Writing Parquet file using table FileIO: {}", file_path);
+
+            tracing::debug!("Writing Parquet file: {}", file_path);
             icepick::arrow_to_parquet(batch, &file_path, table.file_io())
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to write Parquet: {}", e))?;
@@ -286,8 +287,15 @@ impl OtlpWriter for IcepickWriter {
 
         let completed_at = chrono::Utc::now();
 
+        // Return partition_path for catalog writes, full_path for non-catalog writes
+        let result_path = if self.catalog.is_some() {
+            partition_path
+        } else {
+            full_path
+        };
+
         Ok(WriteResult {
-            path: full_path,
+            path: result_path,
             file_size: 0, // TODO: Get actual file size from write operation
             row_count,
             signal_type,

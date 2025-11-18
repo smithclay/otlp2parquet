@@ -127,6 +127,17 @@ pub async fn run() -> Result<(), Error> {
         .without_time() // Lambda adds timestamps
         .init();
 
+    // Log version information
+    let version = env!("CARGO_PKG_VERSION");
+    let git_hash = env!("GIT_HASH");
+    let build_timestamp = env!("BUILD_TIMESTAMP");
+
+    tracing::info!(
+        "otlp2parquet Lambda v{} (git:{}, built:{})",
+        version,
+        git_hash,
+        build_timestamp
+    );
     tracing::info!("Lambda runtime - using lambda_runtime's tokio + OpenDAL S3");
 
     // Load configuration
