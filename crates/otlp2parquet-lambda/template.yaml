@@ -31,10 +31,6 @@ Globals:
     Environment:
       Variables:
         RUST_LOG: info
-        # WARNING: Batching on Lambda can cause data loss!
-        # Lambda invocations are stateless - unflushed batches are lost when invocation ends.
-        # Only enable if you have high-volume sustained traffic (200K rows, 128MB, or 10s threshold).
-        OTLP2PARQUET_BATCHING_ENABLED: "false"
 
 Resources:
   # Lambda function
@@ -43,10 +39,9 @@ Resources:
     Metadata:
       BuildMethod: rust-cargolambda
       BuildProperties:
-        Binary: otlp2parquet
         CargoPackage: otlp2parquet-lambda
     Properties:
-      CodeUri: ../..  # Points to workspace root for cargo build
+      CodeUri: .  # Points to lambda crate directory
       Handler: bootstrap  # Required for custom runtime
       Description: Ingests OTLP logs and writes Parquet to S3
       Environment:
@@ -91,41 +86,6 @@ Resources:
       LogGroupName: !Sub /aws/lambda/${OtlpToParquetFunction}
       RetentionInDays: !Ref LogRetentionDays
 
-  # S3 bucket for Parquet files
-  LogsBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Ref BucketName
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      VersioningConfiguration:
-        Status: Enabled
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      LifecycleConfiguration:
-        Rules:
-          - Id: DeleteOldVersions
-            Status: Enabled
-            NoncurrentVersionExpirationInDays: 30
-          # Optional: Transition to cheaper storage classes
-          - Id: TransitionToIA
-            Status: Enabled
-            Transitions:
-              - TransitionInDays: 30
-                StorageClass: STANDARD_IA
-              - TransitionInDays: 90
-                StorageClass: INTELLIGENT_TIERING
-      Tags:
-        - Key: Application
-          Value: otlp2parquet
-        - Key: ManagedBy
-          Value: SAM
-
 Outputs:
   FunctionUrl:
     Description: OTLP HTTP endpoint URL
@@ -139,22 +99,10 @@ Outputs:
     Export:
       Name: !Sub ${AWS::StackName}-FunctionArn
 
-  BucketName:
-    Description: S3 bucket for Parquet files
-    Value: !Ref LogsBucket
-    Export:
-      Name: !Sub ${AWS::StackName}-BucketName
-
-  BucketArn:
-    Description: S3 bucket ARN
-    Value: !GetAtt LogsBucket.Arn
-    Export:
-      Name: !Sub ${AWS::StackName}-BucketArn
-
   # Example curl command
   TestCommand:
     Description: Test the endpoint with curl
     Value: !Sub |
       curl -X POST ${OtlpToParquetFunctionUrl.FunctionUrl}v1/logs \
         -H "Content-Type: application/x-protobuf" \
-        --data-binary @test-payload.pb
+        --data-binary @testdata/logs.pb

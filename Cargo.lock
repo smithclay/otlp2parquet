@@ -2684,6 +2684,7 @@ dependencies = [
  "base64 0.22.1",
  "icepick",
  "lambda_runtime",
+ "opendal",
  "otlp2parquet-batch",
  "otlp2parquet-config",
  "otlp2parquet-core",

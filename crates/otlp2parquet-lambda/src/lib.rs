@@ -11,11 +11,16 @@ use otlp2parquet_config::{RuntimeConfig, StorageBackend};
 use otlp2parquet_core::parquet::encoding::set_parquet_row_group_size;
 use std::sync::Arc;
 
+// Imports for REST catalog support
+use icepick::catalog::Catalog;
+
 mod handlers;
 mod response;
 
 use handlers::{canonical_path, handle_http_request};
-use response::{build_api_gateway_response, build_function_url_response};
+use response::{
+    build_api_gateway_v1_response, build_api_gateway_v2_response, build_function_url_response,
+};
 pub(crate) use response::{HttpLambdaResponse, HttpRequestEvent, HttpResponseData};
 
 /// Lambda handler for OTLP HTTP requests
@@ -26,12 +31,12 @@ async fn handle_request(
     let (request, _context) = event.into_parts();
 
     match request {
-        HttpRequestEvent::ApiGateway(boxed_request) => {
+        HttpRequestEvent::ApiGatewayV1(boxed_request) => {
             let request = &*boxed_request;
             let method = request.http_method.as_str();
             let path = canonical_path(request.path.as_deref());
 
-            // Extract Content-Type header from API Gateway request
+            // Extract Content-Type header from API Gateway v1 request
             let content_type = request
                 .headers
                 .get("content-type")
@@ -46,7 +51,29 @@ async fn handle_request(
                 &state,
             )
             .await;
-            Ok(build_api_gateway_response(response))
+            Ok(build_api_gateway_v1_response(response))
+        }
+        HttpRequestEvent::ApiGatewayV2(boxed_request) => {
+            let request = &*boxed_request;
+            let method = request.request_context.http.method.as_str();
+            let path = canonical_path(request.raw_path.as_deref());
+
+            // Extract Content-Type header from API Gateway v2 (HTTP API) request
+            let content_type = request
+                .headers
+                .get("content-type")
+                .and_then(|v| v.to_str().ok());
+
+            let response = handle_http_request(
+                method,
+                &path,
+                request.body.as_deref(),
+                request.is_base64_encoded,
+                content_type,
+                &state,
+            )
+            .await;
+            Ok(build_api_gateway_v2_response(response))
         }
         HttpRequestEvent::FunctionUrl(boxed_request) => {
             let request = &*boxed_request;
@@ -123,18 +150,88 @@ pub async fn run() -> Result<(), Error> {
     let max_payload_bytes = config.request.max_payload_bytes;
     tracing::info!("Lambda payload cap set to {} bytes", max_payload_bytes);
 
-    // Initialize writer using new icepick-based implementation
-    let bucket_arn = config
-        .iceberg
-        .as_ref()
-        .and_then(|ic| ic.bucket_arn.as_ref())
-        .ok_or_else(|| {
-            Error::from("Lambda requires iceberg.bucket_arn configuration for S3 Tables")
+    // Initialize writer - support both REST catalog and S3 Tables
+    let iceberg_cfg = config.iceberg.as_ref().ok_or_else(|| {
+        Error::from("Lambda requires iceberg configuration (rest_uri or bucket_arn)")
+    })?;
+
+    let writer = if !iceberg_cfg.rest_uri.is_empty() {
+        // REST catalog (Nessie, Glue REST, etc.)
+        tracing::info!(
+            "Initializing Lambda with REST catalog: endpoint={}, namespace={:?}",
+            iceberg_cfg.rest_uri,
+            iceberg_cfg.namespace
+        );
+
+        // Build REST catalog
+        let mut builder = icepick::RestCatalog::builder("otlp2parquet", &iceberg_cfg.rest_uri);
+        builder = builder.with_prefix("main"); // Nessie branch
+
+        // Create S3 operator for storage
+        let s3_config = config.storage.s3.as_ref().ok_or_else(|| {
+            Error::from("Lambda with REST catalog requires S3 storage configuration")
         })?;
 
-    let writer = otlp2parquet_writer::initialize_lambda_writer(bucket_arn, String::new())
-        .await
-        .map_err(|e| Error::from(format!("Failed to initialize writer: {}", e)))?;
+        let mut s3_builder = opendal::services::S3::default()
+            .bucket(&s3_config.bucket)
+            .region(&s3_config.region);
+
+        if let Some(endpoint) = &s3_config.endpoint {
+            tracing::info!("Using custom S3 endpoint: {}", endpoint);
+            s3_builder = s3_builder.endpoint(endpoint);
+        }
+
+        let operator = opendal::Operator::new(s3_builder)
+            .map_err(|e| Error::from(format!("Failed to build S3 operator: {}", e)))?
+            .finish();
+
+        let file_io = icepick::FileIO::new(operator);
+
+        // Build catalog with file_io
+        let catalog = builder
+            .with_file_io(file_io.clone())
+            .with_bearer_token("") // Anonymous/no auth for Nessie
+            .build()
+            .map_err(|e| Error::from(format!("Failed to create REST catalog: {}", e)))?;
+
+        // Get namespace from config
+        let namespace = iceberg_cfg
+            .namespace
+            .clone()
+            .unwrap_or_else(|| "otlp".to_string());
+
+        // Create namespace if it doesn't exist
+        let namespace_ident = icepick::NamespaceIdent::new(vec![namespace.clone()]);
+        match catalog
+            .create_namespace(&namespace_ident, Default::default())
+            .await
+        {
+            Ok(_) => tracing::info!("Created namespace: {}", namespace),
+            Err(e) => tracing::info!(
+                "Namespace creation result for '{}': {} (may already exist)",
+                namespace,
+                e
+            ),
+        }
+
+        otlp2parquet_writer::IcepickWriter::new_with_namespace(
+            file_io,
+            Some(Arc::new(catalog)),
+            String::new(),
+            namespace,
+        )
+        .map_err(|e| Error::from(format!("Failed to initialize writer: {}", e)))?
+    } else if let Some(bucket_arn) = &iceberg_cfg.bucket_arn {
+        // S3 Tables catalog (AWS managed)
+        tracing::info!("Initializing Lambda with S3 Tables catalog: {}", bucket_arn);
+        otlp2parquet_writer::initialize_lambda_writer(bucket_arn, String::new())
+            .await
+            .map_err(|e| Error::from(format!("Failed to initialize writer: {}", e)))?
+    } else {
+        return Err(Error::from(
+            "Lambda requires either iceberg.rest_uri or iceberg.bucket_arn configuration",
+        ));
+    };
 
     let state = Arc::new(LambdaState {
         writer: Arc::new(writer),

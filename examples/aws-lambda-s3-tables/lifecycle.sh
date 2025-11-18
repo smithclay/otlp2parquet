@@ -4,7 +4,6 @@ set -euo pipefail
 # lifecycle.sh - Manage the AWS Lambda + S3 Tables example stack end-to-end
 #
 # Commands:
-#   setup    - Configure Glue + Lake Formation prerequisites
 #   deploy   - Package and deploy the Lambda stack
 #   test     - Invoke the Lambda with sample OTLP payloads
 #   logs     - Tail CloudWatch logs for the Lambda function
@@ -37,7 +36,6 @@ usage() {
 Usage: ./lifecycle.sh <command> [options]
 
 Commands:
-  setup      Configure AWS Glue and Lake Formation defaults
   deploy     Upload Lambda binary and deploy CloudFormation stack
   test       Invoke the Lambda with bundled OTLP fixtures
   logs       Tail CloudWatch logs for the deployed Lambda
@@ -52,7 +50,6 @@ Defaults:
   Version:     ${DEFAULT_VERSION}
 
 Examples:
-  ./lifecycle.sh setup --region us-west-2
   ./lifecycle.sh deploy --region us-west-2 --arch arm64
   ./lifecycle.sh test --stack-name my-stack --verbose
   ./lifecycle.sh logs --follow
@@ -103,95 +100,6 @@ get_output_value() {
     --region "$region" \
     --query "Stacks[0].Outputs[?OutputKey==\`${key}\`].OutputValue" \
     --output text
-}
-
-command_setup() {
-  local region="$DEFAULT_REGION"
-  local stack_name="$DEFAULT_STACK"
-  local database="otel"
-
-  while [[ $# -gt 0 ]]; do
-    case $1 in
-      --region)
-        region="$2"
-        shift 2
-        ;;
-      --stack-name)
-        stack_name="$2"
-        shift 2
-        ;;
-      --database)
-        database="$2"
-        shift 2
-        ;;
-      --help)
-        cat <<EOF
-Usage: ./lifecycle.sh setup [--region <aws-region>] [--stack-name <stack>] [--database <glue-db>]
-Configures Glue database + optional Lake Formation grants (when stack already exists).
-EOF
-        return 0
-        ;;
-      *)
-        error "Unknown option for setup: $1"
-        ;;
-    fi
-  done
-
-  require_tools aws jq
-
-  section "Glue + Lake Formation setup"
-  info "Region: ${region}"
-  info "Glue Database: ${database}"
-
-  local account_id
-  if ! account_id=$(aws sts get-caller-identity --query Account --output text 2>/dev/null); then
-    error "Unable to determine AWS account. Is the AWS CLI configured?"
-  fi
-  info "AWS Account: ${account_id}"
-
-  local lambda_role=""
-  if lambda_role=$(get_output_value "$stack_name" "$region" "LambdaRoleArn" 2>/dev/null); then
-    if [[ "$lambda_role" == "None" || -z "$lambda_role" ]]; then
-      lambda_role=""
-    fi
-  fi
-  if [[ -n "$lambda_role" ]]; then
-    info "Lambda Role detected: ${lambda_role}"
-  else
-    warn "Lambda role not found. Deploy the stack before granting Lake Formation permissions."
-  fi
-
-  if aws glue create-database \
-    --database-input "{\"Name\":\"${database}\",\"Description\":\"OTLP2Parquet Iceberg namespace\"}" \
-    --region "$region" >/dev/null 2>&1; then
-    info "Glue database '${database}' created."
-  else
-    warn "Glue database '${database}' may already exist or creation was skipped."
-  fi
-
-  if aws glue get-database --name "$database" --region "$region" >/dev/null 2>&1; then
-    info "Verified Glue database '${database}'."
-  else
-    warn "Unable to verify Glue database '${database}'."
-  fi
-
-  if [[ -n "$lambda_role" ]]; then
-    if aws lakeformation grant-permissions \
-      --principal DataLakePrincipalIdentifier="$lambda_role" \
-      --resource "{\"Database\":{\"Name\":\"${database}\"}}" \
-      --permissions CREATE_TABLE DESCRIBE \
-      --region "$region" >/dev/null 2>&1; then
-      info "Lake Formation database permissions granted."
-    else
-      warn "Lake Formation permissions may already exist or the call failed."
-    fi
-    warn "Grant table-level permissions after first write (see README)."
-  fi
-
-  echo ""
-  info "Glue REST Endpoint: https://glue.${region}.amazonaws.com/iceberg"
-  info "Catalog ID: ${account_id}"
-  info "Next step: ./lifecycle.sh deploy --region ${region}"
 }
 
 command_deploy() {
@@ -581,7 +489,7 @@ EOF
   local deployment_bucket="otlp2parquet-deployment-${account_id}"
 
   local table_bucket=""
-  if table_bucket=$(get_output_value "$stack_name" "$region" "TableBucketName" 2>/dev/null); then
+  if table_bucket=$(get_output_value "$stack_name" "$region" "S3TablesBucketName" 2>/dev/null); then
     if [[ "$table_bucket" == "None" ]]; then
       table_bucket=""
     fi
@@ -660,9 +568,6 @@ fi
 shift || true
 
 case "$COMMAND" in
-  setup)
-    command_setup "$@"
-    ;;
   deploy)
     command_deploy "$@"
     ;;

@@ -116,7 +116,7 @@ Resources:
           OTLP2PARQUET_ICEBERG_BUCKET_ARN: !GetAtt S3TablesBucket.Arn
 
           # Logging
-          RUST_LOG: 'info'
+          RUST_LOG: 'debug'
 
 Conditions:
   HasCustomBucketName: !Not [!Equals [!Ref S3TablesBucketName, '']]

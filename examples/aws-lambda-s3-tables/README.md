@@ -1,117 +1,132 @@
-# AWS Lambda + S3 Tables Example
+# Single Lambda -> S3 Tables
 
-Production-ready deployment of `otlp2parquet` as an AWS Lambda function with AWS S3 Tables (Apache Iceberg).
+This example deploys **one** `otlp2parquet` Lambda function with debug logging to AWS S3 Tables. No Glue catalogs, Lake Formation configuration, or extra data buckets are involved--the function writes directly to the managed S3 Tables bucket created by the CloudFormation stack and you can hit its HTTP endpoint with OTLP requests.
 
-## Quick Start
-
-Deploy in 3 commands:
-
-```bash
-# 1. Deploy the Lambda stack
-./lifecycle.sh deploy --region us-west-2
-
-# 2. Test with sample data
-./lifecycle.sh test --region us-west-2
-
-# 3. View logs
-./lifecycle.sh logs --region us-west-2 --follow
+```
+OTLP client -> Lambda Function URL -> otlp2parquet Lambda -> S3 Tables bucket/namespace
+                                                    \\-> CloudWatch Logs (debug)
 ```
 
-## What's Included
+## What's in this folder
 
-- **`template.yaml`** - CloudFormation template creating:
-  - S3 Tables Bucket (managed Iceberg catalog + storage)
-  - S3 Tables Namespace (`otel`)
-  - Lambda function (arm64)
-  - IAM execution role with S3 Tables permissions
-  - CloudWatch log group
-
-- **`lifecycle.sh`** - Unified workflow script:
-  - `deploy` Lambda package + CloudFormation stack
-  - `test` OTLP fixtures (logs, traces, metrics)
-  - `logs` tailing + `status` outputs + `delete` cleanup
-
-## Lifecycle Script
-
-`lifecycle.sh` provides a single CLI for managing the deployment:
-
-| Command | Purpose | Common flags |
-| --- | --- | --- |
-| `deploy` | Download/upload Lambda zip and deploy CloudFormation | `--region`, `--stack-name`, `--arch`, `--version`, `--local-binary` |
-| `test` | Invoke Lambda with bundled OTLP fixtures and show summary | `--stack-name`, `--region`, `--verbose` |
-| `logs` | Tail `/aws/lambda/<function>` logs | `--stack-name`, `--region`, `--since`, `--follow` |
-| `status` | Persist/print CloudFormation outputs | `--stack-name`, `--region` |
-| `delete` | Delete the stack and optional deployment bucket | `--stack-name`, `--region`, `--force`, `--retain-bucket` |
-
-Each subcommand validates prerequisites (AWS CLI, jq, unzip) and prints the next recommended step.
+- `template.yaml` - CloudFormation stack that provisions:
+  - an S3 Tables bucket + `otel` namespace (Parquet + Iceberg metadata live together)
+  - a single Lambda function with `RUST_LOG=debug`
+  - IAM role + CloudWatch log group
+- `lifecycle.sh` - helper script for packaging the Lambda zip, deploying the stack, printing outputs, streaming logs, and deleting everything when finished.
 
 ## Prerequisites
 
-- AWS CLI configured (`aws configure`)
-- Permissions to create: Lambda, S3 Tables, IAM roles, CloudFormation stacks
-- `jq` installed for JSON parsing
+- AWS CLI + credentials with permission to create CloudFormation stacks, Lambda, S3, and S3 Tables.
+- `jq`, `unzip`, and optionally `curl` for testing the HTTP endpoint.
+- (Optional) `cargo-lambda` if you want to build the Lambda binary locally via `make build-lambda`.
 
-## Architecture
-
-```
-Lambda → S3 Tables Catalog API → S3 Tables (Parquet storage + metadata)
-         (create/update tables)    (managed Iceberg catalog)
-```
-
-**Key Components:**
-
-- **S3 Tables Bucket**: Managed service combining Iceberg catalog + object storage
-- **S3 Tables Namespace**: Logical grouping (`otel`) for all telemetry tables
-- **Lambda Function**: Processes OTLP data and writes to S3 Tables via icepick
-- **IAM Role**: Grants `s3tables:*` and `s3:*` permissions
-
-## Usage
-
-### Deploy
+## 1. Build or download the Lambda package
 
 ```bash
-# Deploy with defaults (arm64, us-west-2)
-./lifecycle.sh deploy --region us-west-2
+# Option A: build locally (produces target/lambda/bootstrap-arm64.zip)
+make build-lambda
 
-# Deploy with specific options
-./lifecycle.sh deploy --arch amd64 --region us-west-2 --stack-name my-otlp-stack
-
-# Deploy specific version
-./lifecycle.sh deploy --version v0.0.2
-
-# Deploy locally built binary (for development)
-./lifecycle.sh deploy --local-binary ../../target/lambda/bootstrap/bootstrap.zip
+# Option B: use a published release in lifecycle.sh with --version <tag> or --version latest (default)
 ```
 
-### Test
+The `deploy` command accepts either the locally built `target/lambda/bootstrap-arm64.zip` (recommended while iterating) or it will download the requested release zip for you.
+
+## 2. Deploy the stack (Lambda + S3 Tables)
 
 ```bash
-# Run all tests
-./lifecycle.sh test
-
-# Test specific stack
-./lifecycle.sh test --stack-name my-otlp-stack --region us-west-2
-
-# Verbose output
-./lifecycle.sh test --verbose
+# Deploy arm64 Lambda that writes to an auto-created S3 Tables bucket + namespace
+./lifecycle.sh deploy \
+  --region us-west-2 \
+  --stack-name otlp2parquet \
+  --local-binary target/lambda/bootstrap-arm64.zip
 ```
 
-### Cleanup
+What happens:
+
+1. The Lambda zip is uploaded to a small deployment bucket (`otlp2parquet-deployment-<account>`).
+2. CloudFormation creates:
+   - S3 Tables bucket and `otel` namespace
+   - IAM role with `s3tables:*` and `s3:*` access to that bucket
+   - Lambda function (arm64 by default) with `RUST_LOG=debug`
+   - 7-day retention CloudWatch log group `/aws/lambda/<stack>-ingest`
+
+All stack outputs (Lambda name, S3 Tables bucket ARN, etc.) are saved to `stack-outputs.json`. Re-run `./lifecycle.sh status` anytime to refresh them.
+
+## 3. Create an HTTP endpoint for OTLP clients
+
+The stack keeps things simple by letting you attach a Lambda Function URL. After deployment:
 
 ```bash
-# Delete stack and resources
-./lifecycle.sh delete --region us-west-2
+STACK=otlp2parquet
+REGION=us-west-2
+FUNCTION=$(jq -r '.[] | select(.OutputKey=="LambdaFunctionName") | .OutputValue' stack-outputs.json)
+
+# Expose the Lambda over HTTPS (public, unauthenticated)
+aws lambda create-function-url-config \
+  --function-name "$FUNCTION" \
+  --auth-type NONE \
+  --region "$REGION"
+
+# Capture the URL for later use
+FUNCTION_URL=$(aws lambda get-function-url-config \
+  --function-name "$FUNCTION" \
+  --region "$REGION" \
+  --query FunctionUrl \
+  --output text)
+echo "Function URL: $FUNCTION_URL"
 ```
 
-## How It Works
+You now have an HTTPS endpoint such as `https://<id>.lambda-url.us-west-2.on.aws/v1/logs` that accepts OTLP HTTP traffic directly.
 
-The Lambda function:
-1. Receives OTLP data (protobuf/JSON)
-2. Converts to Arrow RecordBatch
-3. Writes Parquet files to S3 Tables
-4. Commits Iceberg table metadata via S3 Tables API
+## 4. Send OTLP data to the Lambda
 
-Tables created automatically on first write:
+Use any OTLP-capable client. For a quick sanity check, reuse the repo fixtures:
+
+```bash
+# Logs
+curl -X POST "$FUNCTION_URL/v1/logs" \
+  -H 'content-type: application/json' \
+  --data-binary @../../testdata/log.json
+
+# Traces
+curl -X POST "$FUNCTION_URL/v1/traces" \
+  -H 'content-type: application/json' \
+  --data-binary @../../testdata/trace.json
+
+# Metrics (one metric type per request)
+curl -X POST "$FUNCTION_URL/v1/metrics" \
+  -H 'content-type: application/json' \
+  --data-binary @../../testdata/metrics_gauge.json
+```
+
+Successful invocations:
+
+- write Parquet files into the S3 Tables bucket partitions (`logs/{service}/year=.../file.parquet`, etc.)
+- update the Iceberg metadata that S3 Tables manages automatically
+- emit verbose debug logs for every batch (visible in CloudWatch)
+
+## 5. Query the data directly from S3 Tables
+
+S3 Tables exposes Iceberg metadata natively. You can query it with DuckDB + the Iceberg extension:
+
+```bash
+BUCKET=$(jq -r '.[] | select(.OutputKey=="S3TablesBucketName") | .OutputValue' stack-outputs.json)
+REGION=us-west-2
+
+duckdb -c "
+  INSTALL iceberg;
+  LOAD iceberg;
+  CREATE SECRET (TYPE S3, REGION '${REGION}');
+
+  -- list batches written by the Lambda
+  SELECT count(*) AS total_logs
+  FROM iceberg_scan('s3tables://${BUCKET}/otel/logs');
+"
+```
+
+The stack eagerly creates the following tables on first write:
+
 - `otel.logs`
 - `otel.traces`
 - `otel.metrics_gauge`
@@ -120,92 +135,27 @@ Tables created automatically on first write:
 - `otel.metrics_exponential_histogram`
 - `otel.metrics_summary`
 
-## Configuration
+Alternatively, point AWS Athena at S3 Tables--no Glue database configuration required.
 
-The Lambda uses these environment variables (set in `template.yaml`):
+## 6. Debug logging and observability
 
-```bash
-# Storage backend
-OTLP2PARQUET_STORAGE_BACKEND=s3
-OTLP2PARQUET_S3_REGION=us-west-2
-
-# S3 Tables Iceberg integration (ARN-based)
-OTLP2PARQUET_ICEBERG_BUCKET_ARN=arn:aws:s3tables:us-west-2:123456789012:bucket/my-bucket
-
-# Logging
-RUST_LOG=info
-```
-
-## Querying Data
-
-### DuckDB
+- `RUST_LOG=debug` is enabled by default in `template.yaml`. Every ingestion step is logged through `tracing`, which makes it easy to inspect batch contents, partition keys, and S3 Tables API calls.
+- Tail logs while exercising the HTTP endpoint:
 
 ```bash
-duckdb -c "
-  INSTALL iceberg;
-  LOAD iceberg;
-
-  CREATE SECRET (
-    TYPE S3,
-    REGION 'us-west-2'
-  );
-
-  -- Query via S3 Tables
-  SELECT COUNT(*) FROM iceberg_scan('s3tables://your-bucket/otel/logs');
-"
+./lifecycle.sh logs --region us-west-2 --stack-name otlp2parquet --follow
 ```
 
-### AWS Athena
+## 7. Clean up
 
-S3 Tables are automatically available in Athena:
+To remove the Lambda, S3 Tables bucket, namespace, IAM role, and log group:
 
-```sql
-SELECT COUNT(*) FROM otel.logs;
-SELECT COUNT(*) FROM otel.traces;
-SELECT COUNT(*) FROM otel.metrics_gauge;
+```bash
+./lifecycle.sh delete --region us-west-2 --stack-name otlp2parquet
 ```
 
-## Production Extensions
+Add `--retain-bucket` if you want to keep the deployment bucket that stored the Lambda package. The S3 Tables bucket is deleted automatically with the stack.
 
-This example is for testing and development. For production, add:
+---
 
-- **API Gateway** - HTTPS endpoint for OTLP clients
-- **Authentication** - API keys or IAM-based auth
-- **Monitoring** - CloudWatch dashboards and alarms
-- **VPC** - If accessing private resources
-- **Provisioned Concurrency** - Reduce cold start latency
-
-## Cost Estimate
-
-Approximate costs for 1 million OTLP requests/month:
-
-- Lambda invocations: ~$0.20
-- Lambda compute (arm64, 512MB): ~$1.00
-- S3 Tables storage (10GB): ~$0.23
-- S3 Tables API requests: ~$0.05
-- CloudWatch Logs (1GB): ~$0.50
-
-**Total: ~$2/month** (excluding data transfer and queries)
-
-## Troubleshooting
-
-**Lambda timeout errors**
-- Increase `Timeout` in `template.yaml`
-- Increase `MemorySize` for faster execution
-
-**IAM permission errors**
-- Check CloudWatch logs: `aws logs tail /aws/lambda/otlp2parquet-ingest`
-- Verify IAM role has `s3tables:*` and `s3:*` permissions
-
-**Missing tables**
-- Tables are created on first write (not pre-created)
-- Check Lambda logs for S3 Tables API errors
-- Verify `OTLP2PARQUET_ICEBERG_BUCKET_ARN` is correctly set
-
-**S3 Tables bucket not found**
-- Ensure the S3 Tables bucket and namespace were created by CloudFormation
-- Check stack outputs: `./lifecycle.sh status`
-
-## License
-
-Same as otlp2parquet project.
+This example intentionally sticks to the smallest possible footprint: one Lambda binary, one managed S3 Tables bucket/namespace, debug logging enabled, and a Lambda Function URL you can hit directly from your OTLP client. Use it as the baseline before layering on API Gateway auth, provisioning concurrency, or alternative catalogs.
