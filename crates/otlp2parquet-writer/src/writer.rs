@@ -4,7 +4,7 @@ use anyhow::Result;
 use arrow::array::RecordBatch;
 use async_trait::async_trait;
 use icepick::catalog::Catalog;
-use icepick::{DataFile, FileIO, Table};
+use icepick::{FileIO, Table};
 use otlp2parquet_core::SignalType;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -231,8 +231,8 @@ impl OtlpWriter for IcepickWriter {
 
         let row_count = batch.num_rows() as i64;
 
-        // If catalog is configured, get table first to use its FileIO (which has correct region/config)
-        if self.catalog.is_some() {
+        // Write Parquet file and get DataFile with statistics
+        let (data_file, result_path) = if let Some(catalog) = &self.catalog {
             let table_name = table_name_for_signal(signal_type, metric_type);
 
             // Get or create table - fail fast if this doesn't work
@@ -249,26 +249,18 @@ impl OtlpWriter for IcepickWriter {
             );
 
             tracing::debug!("Writing Parquet file: {}", file_path);
-            icepick::arrow_to_parquet(batch, &file_path, table.file_io())
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to write Parquet: {}", e))?;
 
-            // Create DataFile entry
-            let data_file = DataFile::builder()
-                .with_file_path(&partition_path)
-                .with_file_format("PARQUET")
-                .with_record_count(row_count)
-                .with_file_size_in_bytes(0) // TODO: Get actual file size
-                .build()
-                .map_err(|e| anyhow::anyhow!("Failed to build DataFile: {}", e))?;
+            // Write Parquet and collect statistics for DuckDB compatibility
+            let data_file = icepick::arrow_to_parquet(batch, &file_path, table.file_io())
+                .with_iceberg_schema(table.schema()?)
+                .finish_data_file()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to write Parquet with stats: {}", e))?;
 
             // Create transaction and commit
-            let transaction = table.transaction().append(vec![data_file]);
+            let transaction = table.transaction().append(vec![data_file.clone()]);
 
-            if let Err(e) = transaction
-                .commit(self.catalog.as_ref().unwrap().as_ref())
-                .await
-            {
+            if let Err(e) = transaction.commit(catalog.as_ref()).await {
                 tracing::warn!(
                     "Failed to commit {} to Iceberg catalog (file written successfully): {}",
                     table_name,
@@ -277,26 +269,30 @@ impl OtlpWriter for IcepickWriter {
             } else {
                 tracing::debug!("Successfully committed {} to Iceberg catalog", table_name);
             }
+
+            (data_file, partition_path)
         } else {
             // No catalog configured - use the FileIO provided during initialization
             tracing::debug!("Writing Parquet file without catalog: {}", full_path);
-            icepick::arrow_to_parquet(batch, &full_path, &self.file_io)
+
+            // Get Iceberg schema for statistics collection
+            let iceberg_schema =
+                otlp2parquet_core::iceberg_schemas::schema_for_signal(signal_type, metric_type);
+
+            let data_file = icepick::arrow_to_parquet(batch, &full_path, &self.file_io)
+                .with_iceberg_schema(&iceberg_schema)
+                .finish_data_file()
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to write Parquet: {}", e))?;
-        }
+                .map_err(|e| anyhow::anyhow!("Failed to write Parquet with stats: {}", e))?;
+
+            (data_file, full_path)
+        };
 
         let completed_at = chrono::Utc::now();
 
-        // Return partition_path for catalog writes, full_path for non-catalog writes
-        let result_path = if self.catalog.is_some() {
-            partition_path
-        } else {
-            full_path
-        };
-
         Ok(WriteResult {
             path: result_path,
-            file_size: 0, // TODO: Get actual file size from write operation
+            file_size: data_file.file_size_in_bytes() as u64,
             row_count,
             signal_type,
             metric_type: metric_type.map(String::from),

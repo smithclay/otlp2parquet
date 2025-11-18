@@ -19,6 +19,14 @@ fn field_with_id(name: &str, data_type: DataType, nullable: bool, id: i32) -> Fi
     Field::new(name, data_type, nullable).with_metadata(metadata)
 }
 
+/// Helper to create a List element Field with PARQUET:field_id metadata
+///
+/// Iceberg requires field IDs on all nested fields, including List elements.
+fn list_element_field(data_type: DataType, nullable: bool, element_id: i32) -> Field {
+    let metadata = HashMap::from([("PARQUET:field_id".to_string(), element_id.to_string())]);
+    Field::new("item", data_type, nullable).with_metadata(metadata)
+}
+
 /// Returns the base fields shared by all metric types
 fn base_fields() -> Vec<Field> {
     // S3 Tables doesn't support complex types (Map, Struct) - use JSON-encoded strings instead
@@ -140,13 +148,13 @@ fn build_histogram_schema() -> Schema {
     fields.push(field_with_id(field::SUM, DataType::Float64, false, 111));
     fields.push(field_with_id(
         field::BUCKET_COUNTS,
-        DataType::List(Arc::new(Field::new("item", DataType::Int64, false))),
+        DataType::List(Arc::new(list_element_field(DataType::Int64, false, 8003))),
         false,
         112,
     ));
     fields.push(field_with_id(
         field::EXPLICIT_BOUNDS,
-        DataType::List(Arc::new(Field::new("item", DataType::Float64, false))),
+        DataType::List(Arc::new(list_element_field(DataType::Float64, false, 8004))),
         false,
         113,
     ));
@@ -199,7 +207,7 @@ fn build_exponential_histogram_schema() -> Schema {
     ));
     fields.push(field_with_id(
         field::POSITIVE_BUCKET_COUNTS,
-        DataType::List(Arc::new(Field::new("item", DataType::Int64, false))),
+        DataType::List(Arc::new(list_element_field(DataType::Int64, false, 9003))),
         false,
         115,
     ));
@@ -211,7 +219,7 @@ fn build_exponential_histogram_schema() -> Schema {
     ));
     fields.push(field_with_id(
         field::NEGATIVE_BUCKET_COUNTS,
-        DataType::List(Arc::new(Field::new("item", DataType::Int64, false))),
+        DataType::List(Arc::new(list_element_field(DataType::Int64, false, 9004))),
         false,
         117,
     ));
@@ -249,13 +257,21 @@ fn build_summary_schema() -> Schema {
     fields.push(field_with_id(field::SUM, DataType::Float64, false, 111));
     fields.push(field_with_id(
         field::QUANTILE_VALUES,
-        DataType::List(Arc::new(Field::new("item", DataType::Float64, false))),
+        DataType::List(Arc::new(list_element_field(
+            DataType::Float64,
+            false,
+            10003,
+        ))),
         false,
         112,
     ));
     fields.push(field_with_id(
         field::QUANTILE_QUANTILES,
-        DataType::List(Arc::new(Field::new("item", DataType::Float64, false))),
+        DataType::List(Arc::new(list_element_field(
+            DataType::Float64,
+            false,
+            10004,
+        ))),
         false,
         113,
     ));

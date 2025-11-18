@@ -9,12 +9,11 @@
 
 **Key Features:**
 - ✅ Ingests OTLP HTTP (protobuf, JSON, JSONL) for logs, metrics, and traces
-- ✅ Writes Parquet files for [easy querying in DuckDB](https://duckdb.org/docs/stable/data/parquet/overview)
-- ✅ Apache Iceberg support via [icepick](https://crates.io/crates/icepick)
-- ✅ Native AWS S3 Tables support (ARN-based configuration for Lambda)
-- ✅ R2 Data Catalog support for Cloudflare Workers (edge-native Iceberg)
-- ✅ Small and fast: 1.3 MB WASM binary (43.8% of CF Workers limit), <10ms cold start
-- ✅ Simplified architecture: Single unified writer crate with catalog abstraction
+- ✅ Writes Parquet files to object storage
+- ✅ Optional Apache Iceberg support via [icepick](https://crates.io/crates/icepick)
+- ✅ Native AWS Lambda -> AWS S3 Tables support (ARN-based configuration)
+- ✅ R2 Data Catalog support for Cloudflare Workers (Webassembly)
+- ✅ Small and fast: 1.3 MB WASM binary, <10ms cold start
 
 ---
 
@@ -46,8 +45,7 @@ curl -X POST <function-url>/v1/logs \
   --aws-sigv4 "aws:amz:us-west-2:lambda" \
   --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY"
 
-# 5. Query Parquet files with DuckDB
-duckdb -c "INSTALL httpfs; LOAD httpfs; SELECT * FROM read_parquet('s3://otlp-logs/logs/**/*.parquet')"
+# 5. Query with duckdb
 ```
 
 **That's it!** Data is written to S3 as Parquet files, ready to query.

@@ -44,8 +44,9 @@ fn build_schema() -> Schema {
             false,
             1,
         ),
-        field_with_id(field::TRACE_ID, DataType::FixedSizeBinary(16), false, 2),
-        field_with_id(field::SPAN_ID, DataType::FixedSizeBinary(8), false, 3),
+        // S3 Tables doesn't support FixedSizeBinary - use Binary instead
+        field_with_id(field::TRACE_ID, DataType::Binary, false, 2),
+        field_with_id(field::SPAN_ID, DataType::Binary, false, 3),
         field_with_id(field::SERVICE_NAME, DataType::Utf8, false, 4),
         field_with_id(field::SERVICE_NAMESPACE, DataType::Utf8, true, 5),
         field_with_id(field::SERVICE_INSTANCE_ID, DataType::Utf8, true, 6),

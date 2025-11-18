@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result};
 use arrow::array::{
-    FixedSizeBinaryBuilder, Int32Builder, RecordBatch, StringBuilder, TimestampMicrosecondBuilder,
+    BinaryBuilder, Int32Builder, RecordBatch, StringBuilder, TimestampMicrosecondBuilder,
     TimestampNanosecondBuilder, UInt32Builder,
 };
 use otlp2parquet_proto::opentelemetry::proto::{
@@ -61,8 +61,8 @@ pub struct ArrowConverter {
     timestamp_builder: TimestampNanosecondBuilder,
     timestamp_time_builder: TimestampMicrosecondBuilder,
     observed_timestamp_builder: TimestampNanosecondBuilder,
-    trace_id_builder: FixedSizeBinaryBuilder,
-    span_id_builder: FixedSizeBinaryBuilder,
+    trace_id_builder: BinaryBuilder,
+    span_id_builder: BinaryBuilder,
     trace_flags_builder: UInt32Builder,
     severity_text_builder: StringBuilder,
     severity_number_builder: Int32Builder,
@@ -107,8 +107,14 @@ impl ArrowConverter {
             observed_timestamp_builder: TimestampNanosecondBuilder::with_capacity(capacity)
                 .with_timezone("UTC")
                 .with_data_type(schema.field(13).data_type().clone()),
-            trace_id_builder: FixedSizeBinaryBuilder::with_capacity(capacity, TRACE_ID_SIZE),
-            span_id_builder: FixedSizeBinaryBuilder::with_capacity(capacity, SPAN_ID_SIZE),
+            trace_id_builder: BinaryBuilder::with_capacity(
+                capacity,
+                capacity * TRACE_ID_SIZE as usize,
+            ),
+            span_id_builder: BinaryBuilder::with_capacity(
+                capacity,
+                capacity * SPAN_ID_SIZE as usize,
+            ),
             trace_flags_builder: UInt32Builder::with_capacity(capacity),
             severity_text_builder: StringBuilder::with_capacity(capacity, capacity * 20),
             severity_number_builder: Int32Builder::with_capacity(capacity),
@@ -404,17 +410,17 @@ impl ArrowConverter {
         }
 
         if log_record.trace_id.len() == TRACE_ID_SIZE as usize {
-            self.trace_id_builder.append_value(&log_record.trace_id)?;
+            self.trace_id_builder.append_value(&log_record.trace_id);
         } else {
             self.trace_id_builder
-                .append_value([0u8; TRACE_ID_SIZE as usize])?;
+                .append_value([0u8; TRACE_ID_SIZE as usize]);
         }
 
         if log_record.span_id.len() == SPAN_ID_SIZE as usize {
-            self.span_id_builder.append_value(&log_record.span_id)?;
+            self.span_id_builder.append_value(&log_record.span_id);
         } else {
             self.span_id_builder
-                .append_value([0u8; SPAN_ID_SIZE as usize])?;
+                .append_value([0u8; SPAN_ID_SIZE as usize]);
         }
 
         self.trace_flags_builder.append_value(log_record.flags);

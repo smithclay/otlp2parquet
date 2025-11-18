@@ -11,6 +11,17 @@ fn field_with_id(name: &str, data_type: DataType, nullable: bool, id: i32) -> Fi
     Field::new(name, data_type, nullable).with_metadata(metadata)
 }
 
+/// Helper to create a List element Field with PARQUET:field_id metadata
+///
+/// Iceberg requires field IDs on all nested fields, including List elements.
+/// Without this metadata, DuckDB fails when reading Iceberg tables with:
+/// "GetValueInternal on a value that is NULL" because the manifest references
+/// field IDs that don't exist in the Parquet file metadata.
+fn list_element_field(data_type: DataType, nullable: bool, element_id: i32) -> Field {
+    let metadata = HashMap::from([("PARQUET:field_id".to_string(), element_id.to_string())]);
+    Field::new("item", data_type, nullable).with_metadata(metadata)
+}
+
 /// Returns the Arrow schema for OTLP traces.
 pub fn otel_traces_schema() -> Schema {
     otel_traces_schema_arc().as_ref().clone()
@@ -28,20 +39,43 @@ fn build_schema() -> Schema {
     let timestamp_ns = DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into()));
     let string_type = DataType::Utf8;
 
-    let events_timestamp_list =
-        DataType::List(Arc::new(Field::new("item", timestamp_ns.clone(), false)));
-    let events_name_list = DataType::List(Arc::new(Field::new("item", string_type.clone(), false)));
+    // List types with element field IDs matching iceberg_schemas::traces_schema()
+    let events_timestamp_list = DataType::List(Arc::new(list_element_field(
+        timestamp_ns.clone(),
+        false,
+        5001,
+    )));
+    let events_name_list = DataType::List(Arc::new(list_element_field(
+        string_type.clone(),
+        false,
+        5002,
+    )));
     // Events/Links attributes: List<String> for S3 Tables compatibility (JSON-encoded strings)
-    let events_attributes_list =
-        DataType::List(Arc::new(Field::new("item", string_type.clone(), false)));
-    let links_trace_id_list =
-        DataType::List(Arc::new(Field::new("item", string_type.clone(), false)));
-    let links_span_id_list =
-        DataType::List(Arc::new(Field::new("item", string_type.clone(), false)));
-    let links_trace_state_list =
-        DataType::List(Arc::new(Field::new("item", string_type.clone(), true)));
-    let links_attributes_list =
-        DataType::List(Arc::new(Field::new("item", string_type.clone(), false)));
+    let events_attributes_list = DataType::List(Arc::new(list_element_field(
+        string_type.clone(),
+        false,
+        5003,
+    )));
+    let links_trace_id_list = DataType::List(Arc::new(list_element_field(
+        string_type.clone(),
+        false,
+        5004,
+    )));
+    let links_span_id_list = DataType::List(Arc::new(list_element_field(
+        string_type.clone(),
+        false,
+        5005,
+    )));
+    let links_trace_state_list = DataType::List(Arc::new(list_element_field(
+        string_type.clone(),
+        true,
+        5006,
+    )));
+    let links_attributes_list = DataType::List(Arc::new(list_element_field(
+        string_type.clone(),
+        false,
+        5007,
+    )));
 
     let fields = vec![
         // ============ Common Fields (IDs 1-20) ============

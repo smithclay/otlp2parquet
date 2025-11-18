@@ -58,23 +58,20 @@ fn resource_attrs_to_json_string(attributes: &[(String, String)]) -> String {
     serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
 }
 
-/// Helper to convert a ListArray from a ListBuilder to have non-nullable items
+/// Helper to convert a ListArray from a ListBuilder to use a specific field
 ///
-/// ListBuilder creates lists with nullable items by default, but our schema
-/// requires non-nullable items. This function reconstructs the array with
-/// the correct field definition.
-fn list_array_with_non_nullable_items<OffsetSize: OffsetSizeTrait>(
+/// ListBuilder creates lists with default fields, but our schema requires
+/// fields with specific metadata (field_id for Iceberg). This function
+/// reconstructs the array with the correct field definition from the schema.
+fn list_array_with_field<OffsetSize: OffsetSizeTrait>(
     list_array: GenericListArray<OffsetSize>,
-    item_type: DataType,
+    field: Field,
 ) -> GenericListArray<OffsetSize> {
     let values = list_array.values().clone();
     let offsets = list_array.offsets().clone();
     let nulls = list_array.nulls().cloned();
 
-    // Create field with non-nullable items
-    let field = Arc::new(Field::new("item", item_type, false));
-
-    GenericListArray::new(field, offsets, values, nulls)
+    GenericListArray::new(Arc::new(field), offsets, values, nulls)
 }
 
 /// Metadata extracted from metrics request
@@ -573,12 +570,27 @@ struct HistogramBuilder {
 
 impl HistogramBuilder {
     fn new() -> Self {
+        let schema = otel_metrics_histogram_schema_arc();
+        // Get bucket_counts field (index 11) and explicit_bounds field (index 12)
+        let bucket_counts_field = if let DataType::List(field) = schema.field(11).data_type() {
+            field.as_ref().clone()
+        } else {
+            panic!("Expected List type for bucket_counts");
+        };
+        let explicit_bounds_field = if let DataType::List(field) = schema.field(12).data_type() {
+            field.as_ref().clone()
+        } else {
+            panic!("Expected List type for explicit_bounds");
+        };
+
         Self {
             base: BaseColumnsBuilder::new(),
             count_builder: Int64Builder::new(),
             sum_builder: Float64Builder::new(),
-            bucket_counts_builder: ListBuilder::new(Int64Builder::new()),
-            explicit_bounds_builder: ListBuilder::new(Float64Builder::new()),
+            bucket_counts_builder: ListBuilder::new(Int64Builder::new())
+                .with_field(bucket_counts_field),
+            explicit_bounds_builder: ListBuilder::new(Float64Builder::new())
+                .with_field(explicit_bounds_field),
             min_builder: Float64Builder::new(),
             max_builder: Float64Builder::new(),
         }
@@ -637,15 +649,23 @@ impl HistogramBuilder {
     }
 
     fn finish(mut self, schema: Arc<arrow::datatypes::Schema>) -> Result<RecordBatch> {
-        // Convert list arrays to have non-nullable items (schema requirement)
-        let bucket_counts = list_array_with_non_nullable_items(
-            self.bucket_counts_builder.finish(),
-            DataType::Int64,
-        );
-        let explicit_bounds = list_array_with_non_nullable_items(
-            self.explicit_bounds_builder.finish(),
-            DataType::Float64,
-        );
+        // Get list element fields from schema (with field_id metadata)
+        let bucket_counts_field = if let DataType::List(field) = schema.field(11).data_type() {
+            field.as_ref().clone()
+        } else {
+            panic!("Expected List type for bucket_counts");
+        };
+        let explicit_bounds_field = if let DataType::List(field) = schema.field(12).data_type() {
+            field.as_ref().clone()
+        } else {
+            panic!("Expected List type for explicit_bounds");
+        };
+
+        // Convert list arrays to use schema fields (with field_id metadata)
+        let bucket_counts =
+            list_array_with_field(self.bucket_counts_builder.finish(), bucket_counts_field);
+        let explicit_bounds =
+            list_array_with_field(self.explicit_bounds_builder.finish(), explicit_bounds_field);
 
         let batch = RecordBatch::try_new(
             schema,
@@ -691,6 +711,21 @@ struct ExponentialHistogramBuilder {
 
 impl ExponentialHistogramBuilder {
     fn new() -> Self {
+        let schema = otel_metrics_exponential_histogram_schema_arc();
+        // Get positive_bucket_counts field (index 14) and negative_bucket_counts field (index 16)
+        let positive_bucket_counts_field =
+            if let DataType::List(field) = schema.field(14).data_type() {
+                field.as_ref().clone()
+            } else {
+                panic!("Expected List type for positive_bucket_counts");
+            };
+        let negative_bucket_counts_field =
+            if let DataType::List(field) = schema.field(16).data_type() {
+                field.as_ref().clone()
+            } else {
+                panic!("Expected List type for negative_bucket_counts");
+            };
+
         Self {
             base: BaseColumnsBuilder::new(),
             count_builder: Int64Builder::new(),
@@ -698,9 +733,11 @@ impl ExponentialHistogramBuilder {
             scale_builder: Int32Builder::new(),
             zero_count_builder: Int64Builder::new(),
             positive_offset_builder: Int32Builder::new(),
-            positive_bucket_counts_builder: ListBuilder::new(Int64Builder::new()),
+            positive_bucket_counts_builder: ListBuilder::new(Int64Builder::new())
+                .with_field(positive_bucket_counts_field),
             negative_offset_builder: Int32Builder::new(),
-            negative_bucket_counts_builder: ListBuilder::new(Int64Builder::new()),
+            negative_bucket_counts_builder: ListBuilder::new(Int64Builder::new())
+                .with_field(negative_bucket_counts_field),
             min_builder: Float64Builder::new(),
             max_builder: Float64Builder::new(),
         }
@@ -774,14 +811,28 @@ impl ExponentialHistogramBuilder {
     }
 
     fn finish(mut self, schema: Arc<arrow::datatypes::Schema>) -> Result<RecordBatch> {
-        // Convert list arrays to have non-nullable items (schema requirement)
-        let positive_bucket_counts = list_array_with_non_nullable_items(
+        // Get list element fields from schema (with field_id metadata)
+        let positive_bucket_counts_field =
+            if let DataType::List(field) = schema.field(14).data_type() {
+                field.as_ref().clone()
+            } else {
+                panic!("Expected List type for positive_bucket_counts");
+            };
+        let negative_bucket_counts_field =
+            if let DataType::List(field) = schema.field(16).data_type() {
+                field.as_ref().clone()
+            } else {
+                panic!("Expected List type for negative_bucket_counts");
+            };
+
+        // Convert list arrays to use schema fields (with field_id metadata)
+        let positive_bucket_counts = list_array_with_field(
             self.positive_bucket_counts_builder.finish(),
-            DataType::Int64,
+            positive_bucket_counts_field,
         );
-        let negative_bucket_counts = list_array_with_non_nullable_items(
+        let negative_bucket_counts = list_array_with_field(
             self.negative_bucket_counts_builder.finish(),
-            DataType::Int64,
+            negative_bucket_counts_field,
         );
 
         let batch = RecordBatch::try_new(
@@ -826,12 +877,27 @@ struct SummaryBuilder {
 
 impl SummaryBuilder {
     fn new() -> Self {
+        let schema = otel_metrics_summary_schema_arc();
+        // Get quantile_values field (index 11) and quantile_quantiles field (index 12)
+        let quantile_values_field = if let DataType::List(field) = schema.field(11).data_type() {
+            field.as_ref().clone()
+        } else {
+            panic!("Expected List type for quantile_values");
+        };
+        let quantile_quantiles_field = if let DataType::List(field) = schema.field(12).data_type() {
+            field.as_ref().clone()
+        } else {
+            panic!("Expected List type for quantile_quantiles");
+        };
+
         Self {
             base: BaseColumnsBuilder::new(),
             count_builder: Int64Builder::new(),
             sum_builder: Float64Builder::new(),
-            quantile_values_builder: ListBuilder::new(Float64Builder::new()),
-            quantile_quantiles_builder: ListBuilder::new(Float64Builder::new()),
+            quantile_values_builder: ListBuilder::new(Float64Builder::new())
+                .with_field(quantile_values_field),
+            quantile_quantiles_builder: ListBuilder::new(Float64Builder::new())
+                .with_field(quantile_quantiles_field),
         }
     }
 
@@ -874,14 +940,24 @@ impl SummaryBuilder {
     }
 
     fn finish(mut self, schema: Arc<arrow::datatypes::Schema>) -> Result<RecordBatch> {
-        // Convert list arrays to have non-nullable items (schema requirement)
-        let quantile_values = list_array_with_non_nullable_items(
-            self.quantile_values_builder.finish(),
-            DataType::Float64,
-        );
-        let quantile_quantiles = list_array_with_non_nullable_items(
+        // Get list element fields from schema (with field_id metadata)
+        let quantile_values_field = if let DataType::List(field) = schema.field(11).data_type() {
+            field.as_ref().clone()
+        } else {
+            panic!("Expected List type for quantile_values");
+        };
+        let quantile_quantiles_field = if let DataType::List(field) = schema.field(12).data_type() {
+            field.as_ref().clone()
+        } else {
+            panic!("Expected List type for quantile_quantiles");
+        };
+
+        // Convert list arrays to use schema fields (with field_id metadata)
+        let quantile_values =
+            list_array_with_field(self.quantile_values_builder.finish(), quantile_values_field);
+        let quantile_quantiles = list_array_with_field(
             self.quantile_quantiles_builder.finish(),
-            DataType::Float64,
+            quantile_quantiles_field,
         );
 
         let batch = RecordBatch::try_new(

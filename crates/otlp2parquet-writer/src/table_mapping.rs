@@ -5,7 +5,6 @@ use otlp2parquet_core::SignalType;
 /// Get the table name for a given signal type and optional metric type
 ///
 /// Returns the canonical table name used in Iceberg catalog
-#[allow(dead_code)]
 pub fn table_name_for_signal(signal: SignalType, metric_type: Option<&str>) -> String {
     match signal {
         SignalType::Logs => "otel_logs".to_string(),
@@ -24,7 +23,6 @@ pub fn table_name_for_signal(signal: SignalType, metric_type: Option<&str>) -> S
 /// Get the signal type string for partition paths
 ///
 /// Returns the top-level directory name (logs, traces, or metrics)
-#[allow(dead_code)]
 pub fn signal_type_for_partition(signal: SignalType) -> &'static str {
     match signal {
         SignalType::Logs => "logs",
