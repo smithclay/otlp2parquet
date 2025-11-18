@@ -108,6 +108,7 @@ command_deploy() {
   local arch="$DEFAULT_ARCH"
   local version="$DEFAULT_VERSION"
   local local_binary=""
+  local bucket_arn=""
 
   while [[ $# -gt 0 ]]; do
     case $1 in
@@ -131,6 +132,10 @@ command_deploy() {
         local_binary="$2"
         shift 2
         ;;
+      --bucket-arn)
+        bucket_arn="$2"
+        shift 2
+        ;;
       --help)
         cat <<EOF
 Usage: ./lifecycle.sh deploy [options]
@@ -139,6 +144,7 @@ Usage: ./lifecycle.sh deploy [options]
   --arch <arm64|amd64>        Lambda architecture (default: ${DEFAULT_ARCH})
   --version <tag>             GitHub release tag or 'latest' (default: ${DEFAULT_VERSION})
   --local-binary <path.zip>   Use local ZIP instead of downloading a release
+  --bucket-arn <arn>          Use existing S3 Tables bucket ARN instead of creating new one
 EOF
         return 0
         ;;
@@ -220,15 +226,19 @@ EOF
   fi
 
   section "Deploying CloudFormation stack (${stack_name})"
+
+  local param_overrides="LambdaCodeBucket=${deployment_bucket} LambdaCodeKey=${s3_key} LambdaArchitecture=${cfn_arch}"
+  if [[ -n "$bucket_arn" ]]; then
+    param_overrides="${param_overrides} ExistingS3TablesBucketArn=${bucket_arn}"
+    info "Using existing S3 Tables bucket: ${bucket_arn}"
+  fi
+
   aws cloudformation deploy \
     --template-file "${SCRIPT_DIR}/template.yaml" \
     --stack-name "$stack_name" \
     --region "$region" \
     --capabilities CAPABILITY_IAM \
-    --parameter-overrides \
-      "LambdaCodeBucket=${deployment_bucket}" \
-      "LambdaCodeKey=${s3_key}" \
-      "LambdaArchitecture=${cfn_arch}" \
+    --parameter-overrides ${param_overrides} \
     --no-fail-on-empty-changeset
 
   section "Stack Outputs"

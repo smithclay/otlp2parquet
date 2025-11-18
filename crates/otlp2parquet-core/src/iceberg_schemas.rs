@@ -28,93 +28,13 @@ use crate::otlp::field_names::arrow as field;
 /// This schema matches the Arrow schema defined in `schema::logs::otel_logs_schema()`.
 /// Field IDs are assigned sequentially with common fields (1-20) and logs-specific fields (21+).
 pub fn logs_schema() -> icepick::spec::Schema {
-    use icepick::spec::types::{MapType, NestedField, PrimitiveType, StructType, Type};
+    use icepick::spec::types::{NestedField, PrimitiveType, Type};
 
-    // Helper to create map type for attributes
-    let map_type = || {
-        Type::Map(MapType::new(
-            1001, // key_id (arbitrary, > 1000 for nested types)
-            Type::Primitive(PrimitiveType::String),
-            1002, // value_id
-            true, // value is optional
-            Type::Struct(StructType::new(vec![
-                NestedField::required_field(
-                    2001,
-                    field::TYPE.to_string(),
-                    Type::Primitive(PrimitiveType::String),
-                ),
-                NestedField::optional_field(
-                    2002,
-                    field::STRING_VALUE.to_string(),
-                    Type::Primitive(PrimitiveType::String),
-                ),
-                NestedField::optional_field(
-                    2003,
-                    field::BOOL_VALUE.to_string(),
-                    Type::Primitive(PrimitiveType::Boolean),
-                ),
-                NestedField::optional_field(
-                    2004,
-                    field::INT_VALUE.to_string(),
-                    Type::Primitive(PrimitiveType::Long),
-                ),
-                NestedField::optional_field(
-                    2005,
-                    field::DOUBLE_VALUE.to_string(),
-                    Type::Primitive(PrimitiveType::Double),
-                ),
-                NestedField::optional_field(
-                    2006,
-                    field::BYTES_VALUE.to_string(),
-                    Type::Primitive(PrimitiveType::Binary),
-                ),
-                NestedField::optional_field(
-                    2007,
-                    field::JSON_VALUE.to_string(),
-                    Type::Primitive(PrimitiveType::String),
-                ),
-            ])),
-        ))
-    };
+    // S3 Tables doesn't support Map types - use String (JSON-encoded)
+    let map_type = || Type::Primitive(PrimitiveType::String);
 
-    // AnyValue struct for Body field
-    let any_value_struct = Type::Struct(StructType::new(vec![
-        NestedField::required_field(
-            3001,
-            field::TYPE.to_string(),
-            Type::Primitive(PrimitiveType::String),
-        ),
-        NestedField::optional_field(
-            3002,
-            field::STRING_VALUE.to_string(),
-            Type::Primitive(PrimitiveType::String),
-        ),
-        NestedField::optional_field(
-            3003,
-            field::BOOL_VALUE.to_string(),
-            Type::Primitive(PrimitiveType::Boolean),
-        ),
-        NestedField::optional_field(
-            3004,
-            field::INT_VALUE.to_string(),
-            Type::Primitive(PrimitiveType::Long),
-        ),
-        NestedField::optional_field(
-            3005,
-            field::DOUBLE_VALUE.to_string(),
-            Type::Primitive(PrimitiveType::Double),
-        ),
-        NestedField::optional_field(
-            3006,
-            field::BYTES_VALUE.to_string(),
-            Type::Primitive(PrimitiveType::Binary),
-        ),
-        NestedField::optional_field(
-            3007,
-            field::JSON_VALUE.to_string(),
-            Type::Primitive(PrimitiveType::String),
-        ),
-    ]));
+    // S3 Tables doesn't support complex types - use String (JSON-encoded)
+    let any_value_type = Type::Primitive(PrimitiveType::String);
 
     let fields = vec![
         // ============ Common Fields (IDs 1-20) ============
@@ -126,12 +46,12 @@ pub fn logs_schema() -> icepick::spec::Schema {
         NestedField::required_field(
             2,
             field::TRACE_ID.to_string(),
-            Type::Primitive(PrimitiveType::Fixed(16)),
+            Type::Primitive(PrimitiveType::Binary), // S3 Tables doesn't support Fixed(16)
         ),
         NestedField::required_field(
             3,
             field::SPAN_ID.to_string(),
-            Type::Primitive(PrimitiveType::Fixed(8)),
+            Type::Primitive(PrimitiveType::Binary), // S3 Tables doesn't support Fixed(8)
         ),
         NestedField::required_field(
             4,
@@ -196,7 +116,7 @@ pub fn logs_schema() -> icepick::spec::Schema {
             field::SEVERITY_NUMBER.to_string(),
             Type::Primitive(PrimitiveType::Int),
         ),
-        NestedField::optional_field(26, field::BODY.to_string(), any_value_struct),
+        NestedField::optional_field(26, field::BODY.to_string(), any_value_type),
         NestedField::required_field(27, field::LOG_ATTRIBUTES.to_string(), map_type()),
     ];
 
@@ -212,18 +132,10 @@ pub fn logs_schema() -> icepick::spec::Schema {
 /// This schema matches the Arrow schema defined in `schema::traces::otel_traces_schema()`.
 /// Field IDs are assigned with common fields (1-20) and traces-specific fields (51+).
 pub fn traces_schema() -> icepick::spec::Schema {
-    use icepick::spec::types::{ListType, MapType, NestedField, PrimitiveType, Type};
+    use icepick::spec::types::{ListType, NestedField, PrimitiveType, Type};
 
-    // Simple Map<String, String> for attributes
-    let map_type = || {
-        Type::Map(MapType::new(
-            4001,
-            Type::Primitive(PrimitiveType::String),
-            4002,
-            true, // value optional
-            Type::Primitive(PrimitiveType::String),
-        ))
-    };
+    // S3 Tables doesn't support Map - use String (JSON-encoded)
+    let map_type = || Type::Primitive(PrimitiveType::String);
 
     let fields = vec![
         // ============ Common Fields (IDs 1-20) ============
@@ -361,15 +273,10 @@ pub fn traces_schema() -> icepick::spec::Schema {
 
 /// Returns the Iceberg schema for gauge metrics
 pub fn metrics_gauge_schema() -> icepick::spec::Schema {
-    use icepick::spec::types::{MapType, NestedField, PrimitiveType, Type};
+    use icepick::spec::types::{NestedField, PrimitiveType, Type};
 
-    let map_type = Type::Map(MapType::new(
-        6001,
-        Type::Primitive(PrimitiveType::String),
-        6002,
-        true,
-        Type::Primitive(PrimitiveType::String),
-    ));
+    // S3 Tables doesn't support Map - use String (JSON-encoded)
+    let map_type = Type::Primitive(PrimitiveType::String);
 
     let mut fields = base_metrics_fields(map_type);
     // Gauge-specific field
@@ -388,15 +295,10 @@ pub fn metrics_gauge_schema() -> icepick::spec::Schema {
 
 /// Returns the Iceberg schema for sum metrics
 pub fn metrics_sum_schema() -> icepick::spec::Schema {
-    use icepick::spec::types::{MapType, NestedField, PrimitiveType, Type};
+    use icepick::spec::types::{NestedField, PrimitiveType, Type};
 
-    let map_type = Type::Map(MapType::new(
-        7001,
-        Type::Primitive(PrimitiveType::String),
-        7002,
-        true,
-        Type::Primitive(PrimitiveType::String),
-    ));
+    // S3 Tables doesn't support Map - use String (JSON-encoded)
+    let map_type = Type::Primitive(PrimitiveType::String);
 
     let mut fields = base_metrics_fields(map_type);
     // Sum-specific fields
@@ -425,15 +327,10 @@ pub fn metrics_sum_schema() -> icepick::spec::Schema {
 
 /// Returns the Iceberg schema for histogram metrics
 pub fn metrics_histogram_schema() -> icepick::spec::Schema {
-    use icepick::spec::types::{ListType, MapType, NestedField, PrimitiveType, Type};
+    use icepick::spec::types::{ListType, NestedField, PrimitiveType, Type};
 
-    let map_type = Type::Map(MapType::new(
-        8001,
-        Type::Primitive(PrimitiveType::String),
-        8002,
-        true,
-        Type::Primitive(PrimitiveType::String),
-    ));
+    // S3 Tables doesn't support Map - use String (JSON-encoded)
+    let map_type = Type::Primitive(PrimitiveType::String);
 
     let mut fields = base_metrics_fields(map_type);
     // Histogram-specific fields
@@ -485,15 +382,10 @@ pub fn metrics_histogram_schema() -> icepick::spec::Schema {
 
 /// Returns the Iceberg schema for exponential histogram metrics
 pub fn metrics_exponential_histogram_schema() -> icepick::spec::Schema {
-    use icepick::spec::types::{ListType, MapType, NestedField, PrimitiveType, Type};
+    use icepick::spec::types::{ListType, NestedField, PrimitiveType, Type};
 
-    let map_type = Type::Map(MapType::new(
-        9001,
-        Type::Primitive(PrimitiveType::String),
-        9002,
-        true,
-        Type::Primitive(PrimitiveType::String),
-    ));
+    // S3 Tables doesn't support Map - use String (JSON-encoded)
+    let map_type = Type::Primitive(PrimitiveType::String);
 
     let mut fields = base_metrics_fields(map_type);
     // ExponentialHistogram-specific fields
@@ -565,15 +457,10 @@ pub fn metrics_exponential_histogram_schema() -> icepick::spec::Schema {
 
 /// Returns the Iceberg schema for summary metrics
 pub fn metrics_summary_schema() -> icepick::spec::Schema {
-    use icepick::spec::types::{ListType, MapType, NestedField, PrimitiveType, Type};
+    use icepick::spec::types::{ListType, NestedField, PrimitiveType, Type};
 
-    let map_type = Type::Map(MapType::new(
-        10001,
-        Type::Primitive(PrimitiveType::String),
-        10002,
-        true,
-        Type::Primitive(PrimitiveType::String),
-    ));
+    // S3 Tables doesn't support Map - use String (JSON-encoded)
+    let map_type = Type::Primitive(PrimitiveType::String);
 
     let mut fields = base_metrics_fields(map_type);
     // Summary-specific fields

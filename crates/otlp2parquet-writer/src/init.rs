@@ -10,50 +10,75 @@ use crate::{IcepickWriter, Platform};
 /// * `bucket_arn` - S3 Tables bucket ARN (e.g., "arn:aws:s3tables:us-west-2:123456789012:bucket/my-bucket")
 /// * `base_path` - Optional base path prefix for files (empty string for none)
 pub async fn initialize_lambda_writer(
-    #[cfg_attr(target_family = "wasm", allow(unused_variables))] bucket_arn: &str,
-    #[cfg_attr(target_family = "wasm", allow(unused_variables))] base_path: String,
+    bucket_arn: &str,
+    base_path: String,
 ) -> Result<IcepickWriter> {
-    // Create S3TablesCatalog from ARN
-    #[cfg(not(target_family = "wasm"))]
-    {
-        use std::sync::Arc;
-        // Parse ARN to extract bucket name and region
-        // Format: arn:aws:s3tables:region:account:bucket/bucket-name
-        let parts: Vec<&str> = bucket_arn.split(':').collect();
-        if parts.len() < 6 {
-            anyhow::bail!("Invalid S3 Tables ARN format");
-        }
-
-        let region = parts[3];
-        let bucket_name = parts[5]
-            .split('/')
-            .next_back()
-            .ok_or_else(|| anyhow::anyhow!("Invalid bucket name in ARN"))?;
-
-        // Create S3TablesCatalog
-        let catalog = icepick::S3TablesCatalog::from_arn("otlp2parquet", bucket_arn)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to create S3Tables catalog: {}", e))?;
-
-        // Create FileIO with OpenDAL S3 operator
-        // Use default AWS credentials from environment (Lambda execution role)
-        let s3_builder = opendal::services::S3::default()
-            .bucket(bucket_name)
-            .region(region);
-
-        let operator = opendal::Operator::new(s3_builder)
-            .map_err(|e| anyhow::anyhow!("Failed to build S3 operator: {}", e))?
-            .finish();
-
-        let file_io = icepick::FileIO::new(operator);
-
-        IcepickWriter::new(file_io, Some(Arc::new(catalog)), base_path)
-    }
-
     #[cfg(target_family = "wasm")]
     {
+        let _ = (bucket_arn, base_path);
         anyhow::bail!("S3TablesCatalog not supported on WASM")
     }
+
+    #[cfg(not(target_family = "wasm"))]
+    {
+        initialize_lambda_writer_impl(bucket_arn, base_path).await
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+async fn initialize_lambda_writer_impl(
+    bucket_arn: &str,
+    base_path: String,
+) -> Result<IcepickWriter> {
+    use std::sync::Arc;
+
+    tracing::debug!(
+        "Initializing Lambda writer with S3 Tables ARN: {}",
+        bucket_arn
+    );
+
+    // Create S3TablesCatalog - it manages its own FileIO internally
+    let catalog = icepick::S3TablesCatalog::from_arn("otlp2parquet", bucket_arn)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to create S3Tables catalog: {}", e))?;
+
+    tracing::info!("Successfully created S3TablesCatalog from ARN");
+
+    // S3TablesCatalog manages its own FileIO with correct region/credentials
+    // We'll get the FileIO from tables as needed
+    // For now, we need a placeholder FileIO for the writer initialization
+    // The actual FileIO will come from table.file_io() when we load/create tables
+
+    // Extract bucket info for FileIO placeholder
+    let parts: Vec<&str> = bucket_arn.split(':').collect();
+    if parts.len() < 6 {
+        anyhow::bail!("Invalid S3 Tables ARN format: {}", bucket_arn);
+    }
+
+    let region = parts[3];
+    let bucket_name = parts[5]
+        .split('/')
+        .next_back()
+        .ok_or_else(|| anyhow::anyhow!("Invalid bucket name in ARN"))?;
+
+    tracing::debug!(
+        "Extracted from ARN - region: {}, bucket: {}",
+        region,
+        bucket_name
+    );
+
+    // Create FileIO - this will be replaced by table.file_io() when we have a table
+    let s3_builder = opendal::services::S3::default()
+        .bucket(bucket_name)
+        .region(region);
+
+    let operator = opendal::Operator::new(s3_builder)
+        .map_err(|e| anyhow::anyhow!("Failed to build S3 operator: {}", e))?
+        .finish();
+
+    let file_io = icepick::FileIO::new(operator);
+
+    IcepickWriter::new(file_io, Some(Arc::new(catalog)), base_path)
 }
 
 /// Initialize a writer for Server with configurable storage

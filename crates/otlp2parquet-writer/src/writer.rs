@@ -229,56 +229,62 @@ impl OtlpWriter for IcepickWriter {
             )
         };
 
-        // Write Parquet file using icepick
-        icepick::arrow_to_parquet(batch, &full_path, &self.file_io)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to write Parquet: {}", e))?;
-
         let row_count = batch.num_rows() as i64;
-        let completed_at = chrono::Utc::now();
 
-        // If catalog is configured, commit to Iceberg
+        // If catalog is configured, get table first to use its FileIO (which has correct region/config)
         if self.catalog.is_some() {
             let table_name = table_name_for_signal(signal_type, metric_type);
 
-            match self
+            // Get or create table - fail fast if this doesn't work
+            let table = self
                 .get_or_create_table(&table_name, signal_type, metric_type)
+                .await?;
+
+            // Use the table's FileIO - it has the correct region and configuration from S3TablesCatalog
+            // For S3 Tables, use partition_path relative to table.location()
+            let file_path = format!(
+                "{}/{}",
+                table.location().trim_end_matches('/'),
+                partition_path
+            );
+            tracing::debug!("Writing Parquet file using table FileIO: {}", file_path);
+            icepick::arrow_to_parquet(batch, &file_path, table.file_io())
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to write Parquet: {}", e))?;
+
+            // Create DataFile entry
+            let data_file = DataFile::builder()
+                .with_file_path(&partition_path)
+                .with_file_format("PARQUET")
+                .with_record_count(row_count)
+                .with_file_size_in_bytes(0) // TODO: Get actual file size
+                .build()
+                .map_err(|e| anyhow::anyhow!("Failed to build DataFile: {}", e))?;
+
+            // Create transaction and commit
+            let transaction = table.transaction().append(vec![data_file]);
+
+            if let Err(e) = transaction
+                .commit(self.catalog.as_ref().unwrap().as_ref())
                 .await
             {
-                Ok(table) => {
-                    // Create DataFile entry
-                    let data_file = DataFile::builder()
-                        .with_file_path(&partition_path)
-                        .with_file_format("PARQUET")
-                        .with_record_count(row_count)
-                        .with_file_size_in_bytes(0) // TODO: Get actual file size
-                        .build()
-                        .map_err(|e| anyhow::anyhow!("Failed to build DataFile: {}", e))?;
-
-                    // Create transaction and commit
-                    let transaction = table.transaction().append(vec![data_file]);
-
-                    if let Err(e) = transaction
-                        .commit(self.catalog.as_ref().unwrap().as_ref())
-                        .await
-                    {
-                        tracing::warn!(
-                            "Failed to commit {} to Iceberg catalog (file written successfully): {}",
-                            table_name,
-                            e
-                        );
-                    } else {
-                        tracing::debug!("Successfully committed {} to Iceberg catalog", table_name);
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to get/create table for catalog commit (file written successfully): {}",
-                        e
-                    );
-                }
+                tracing::warn!(
+                    "Failed to commit {} to Iceberg catalog (file written successfully): {}",
+                    table_name,
+                    e
+                );
+            } else {
+                tracing::debug!("Successfully committed {} to Iceberg catalog", table_name);
             }
+        } else {
+            // No catalog configured - use the FileIO provided during initialization
+            tracing::debug!("Writing Parquet file without catalog: {}", full_path);
+            icepick::arrow_to_parquet(batch, &full_path, &self.file_io)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to write Parquet: {}", e))?;
         }
+
+        let completed_at = chrono::Utc::now();
 
         Ok(WriteResult {
             path: full_path,

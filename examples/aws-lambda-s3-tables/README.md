@@ -51,35 +51,18 @@ What happens:
    - Lambda function (arm64 by default) with `RUST_LOG=debug`
    - 7-day retention CloudWatch log group `/aws/lambda/<stack>-ingest`
 
-All stack outputs (Lambda name, S3 Tables bucket ARN, etc.) are saved to `stack-outputs.json`. Re-run `./lifecycle.sh status` anytime to refresh them.
+All stack outputs (Lambda name, S3 Tables bucket ARN, Function URL, etc.) are saved to `stack-outputs.json`. Re-run `./lifecycle.sh status` anytime to refresh them.
 
-## 3. Create an HTTP endpoint for OTLP clients
+## 3. Send OTLP data to the Lambda
 
-The stack keeps things simple by letting you attach a Lambda Function URL. After deployment:
+The stack automatically creates a Lambda Function URL (unauthenticated) for you. Get the URL from stack outputs:
 
 ```bash
-STACK=otlp2parquet
-REGION=us-west-2
-FUNCTION=$(jq -r '.[] | select(.OutputKey=="LambdaFunctionName") | .OutputValue' stack-outputs.json)
-
-# Expose the Lambda over HTTPS (public, unauthenticated)
-aws lambda create-function-url-config \
-  --function-name "$FUNCTION" \
-  --auth-type NONE \
-  --region "$REGION"
-
-# Capture the URL for later use
-FUNCTION_URL=$(aws lambda get-function-url-config \
-  --function-name "$FUNCTION" \
-  --region "$REGION" \
-  --query FunctionUrl \
-  --output text)
+FUNCTION_URL=$(jq -r '.[] | select(.OutputKey=="FunctionUrl") | .OutputValue' stack-outputs.json)
 echo "Function URL: $FUNCTION_URL"
 ```
 
 You now have an HTTPS endpoint such as `https://<id>.lambda-url.us-west-2.on.aws/v1/logs` that accepts OTLP HTTP traffic directly.
-
-## 4. Send OTLP data to the Lambda
 
 Use any OTLP-capable client. For a quick sanity check, reuse the repo fixtures:
 
@@ -106,7 +89,7 @@ Successful invocations:
 - update the Iceberg metadata that S3 Tables manages automatically
 - emit verbose debug logs for every batch (visible in CloudWatch)
 
-## 5. Query the data directly from S3 Tables
+## 4. Query the data directly from S3 Tables
 
 S3 Tables exposes Iceberg metadata natively. You can query it with DuckDB + the Iceberg extension:
 
@@ -127,17 +110,17 @@ duckdb -c "
 
 The stack eagerly creates the following tables on first write:
 
-- `otel.logs`
-- `otel.traces`
-- `otel.metrics_gauge`
-- `otel.metrics_sum`
-- `otel.metrics_histogram`
-- `otel.metrics_exponential_histogram`
-- `otel.metrics_summary`
+- `otel_logs`
+- `otel_traces`
+- `otel_metrics_gauge`
+- `otel_metrics_sum`
+- `otel_metrics_histogram`
+- `otel_metrics_exponential_histogram`
+- `otel_metrics_summary`
 
 Alternatively, point AWS Athena at S3 Tables--no Glue database configuration required.
 
-## 6. Debug logging and observability
+## 5. Debug logging and observability
 
 - `RUST_LOG=debug` is enabled by default in `template.yaml`. Every ingestion step is logged through `tracing`, which makes it easy to inspect batch contents, partition keys, and S3 Tables API calls.
 - Tail logs while exercising the HTTP endpoint:
@@ -146,7 +129,7 @@ Alternatively, point AWS Athena at S3 Tables--no Glue database configuration req
 ./lifecycle.sh logs --region us-west-2 --stack-name otlp2parquet --follow
 ```
 
-## 7. Clean up
+## 6. Clean up
 
 To remove the Lambda, S3 Tables bucket, namespace, IAM role, and log group:
 
