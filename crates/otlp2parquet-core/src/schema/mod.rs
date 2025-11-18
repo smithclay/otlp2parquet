@@ -2,7 +2,6 @@ pub mod logs;
 pub mod metrics;
 pub mod traces;
 
-pub(crate) use logs::any_value_fields_for_builder;
 pub use logs::{otel_logs_schema, otel_logs_schema_arc, EXTRACTED_RESOURCE_ATTRS};
 pub use metrics::{
     otel_metrics_exponential_histogram_schema, otel_metrics_exponential_histogram_schema_arc,

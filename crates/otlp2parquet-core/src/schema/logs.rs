@@ -7,7 +7,7 @@
 // diverging from the OTLP standard which uses snake_case. The conversion happens
 // during the OTLP → Arrow transformation. See CLAUDE.md for rationale.
 
-use arrow::datatypes::{DataType, Field, Fields, Schema, TimeUnit};
+use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
@@ -31,7 +31,9 @@ pub fn otel_logs_schema_arc() -> Arc<Schema> {
 }
 
 fn build_schema() -> Schema {
-    let map_type = map_type();
+    // S3 Tables doesn't support complex types (Map, Struct) - use JSON-encoded strings instead
+    // This matches the Iceberg schema definition in iceberg_schemas::logs_schema()
+    let string_type = DataType::Utf8;
 
     let fields = vec![
         // ============ Common Fields (IDs 1-20) ============
@@ -47,11 +49,13 @@ fn build_schema() -> Schema {
         field_with_id(field::SERVICE_NAME, DataType::Utf8, false, 4),
         field_with_id(field::SERVICE_NAMESPACE, DataType::Utf8, true, 5),
         field_with_id(field::SERVICE_INSTANCE_ID, DataType::Utf8, true, 6),
-        field_with_id(field::RESOURCE_ATTRIBUTES, map_type.clone(), false, 7),
+        // ResourceAttributes: JSON-encoded string for S3 Tables compatibility
+        field_with_id(field::RESOURCE_ATTRIBUTES, string_type.clone(), false, 7),
         field_with_id(field::RESOURCE_SCHEMA_URL, DataType::Utf8, true, 8),
         field_with_id(field::SCOPE_NAME, DataType::Utf8, false, 9),
         field_with_id(field::SCOPE_VERSION, DataType::Utf8, true, 10),
-        field_with_id(field::SCOPE_ATTRIBUTES, map_type.clone(), false, 11),
+        // ScopeAttributes: JSON-encoded string for S3 Tables compatibility
+        field_with_id(field::SCOPE_ATTRIBUTES, string_type.clone(), false, 11),
         field_with_id(field::SCOPE_SCHEMA_URL, DataType::Utf8, true, 12),
         // ============ Logs-Specific Fields (IDs 21+) ============
         field_with_id(
@@ -69,13 +73,10 @@ fn build_schema() -> Schema {
         field_with_id(field::TRACE_FLAGS, DataType::UInt32, false, 23),
         field_with_id(field::SEVERITY_TEXT, DataType::Utf8, false, 24),
         field_with_id(field::SEVERITY_NUMBER, DataType::Int32, false, 25),
-        field_with_id(
-            field::BODY,
-            DataType::Struct(any_value_fields_for_builder()),
-            true,
-            26,
-        ),
-        field_with_id(field::LOG_ATTRIBUTES, map_type, false, 27),
+        // Body: JSON-encoded string for S3 Tables compatibility
+        field_with_id(field::BODY, string_type.clone(), true, 26),
+        // LogAttributes: JSON-encoded string for S3 Tables compatibility
+        field_with_id(field::LOG_ATTRIBUTES, string_type, false, 27),
     ];
 
     let mut metadata = HashMap::new();
@@ -85,24 +86,6 @@ fn build_schema() -> Schema {
     );
 
     Schema::new_with_metadata(fields, metadata)
-}
-
-/// Helper function to create a Map<String, String> type
-fn map_type() -> DataType {
-    let entry_fields: Fields = vec![
-        Field::new(field::KEY, DataType::Utf8, false),
-        Field::new(field::VALUE, DataType::Utf8, true),
-    ]
-    .into();
-
-    DataType::Map(
-        Arc::new(Field::new(
-            field::ENTRIES,
-            DataType::Struct(entry_fields),
-            false,
-        )),
-        false,
-    )
 }
 
 /// Common resource attribute keys that are extracted to dedicated columns.
@@ -117,20 +100,6 @@ pub const EXTRACTED_RESOURCE_ATTRS: &[&str] = &[
     semconv::SERVICE_NAMESPACE,
     semconv::SERVICE_INSTANCE_ID,
 ];
-
-/// AnyValue fields for runtime array builders (no field_id metadata)
-pub(crate) fn any_value_fields_for_builder() -> Fields {
-    vec![
-        Field::new(field::TYPE, DataType::Utf8, false),
-        Field::new(field::STRING_VALUE, DataType::Utf8, true),
-        Field::new(field::BOOL_VALUE, DataType::Boolean, true),
-        Field::new(field::INT_VALUE, DataType::Int64, true),
-        Field::new(field::DOUBLE_VALUE, DataType::Float64, true),
-        Field::new(field::BYTES_VALUE, DataType::Binary, true),
-        Field::new(field::JSON_VALUE, DataType::LargeUtf8, true),
-    ]
-    .into()
-}
 
 #[cfg(test)]
 mod tests {
@@ -156,5 +125,78 @@ mod tests {
         assert_eq!(schema.field(12).name(), field::TIMESTAMP_TIME);
         assert_eq!(schema.field(13).name(), field::OBSERVED_TIMESTAMP);
         assert_eq!(schema.field(18).name(), field::LOG_ATTRIBUTES);
+    }
+
+    #[test]
+    fn test_arrow_iceberg_schema_compatibility() {
+        use crate::iceberg_schemas;
+        use icepick::spec::PrimitiveType;
+
+        // Get both schemas
+        let arrow_schema = otel_logs_schema();
+        let iceberg_schema = iceberg_schemas::logs_schema();
+
+        // Critical fields that MUST match between Arrow and Iceberg for S3 Tables compatibility
+        // These fields use complex types in traditional deployments but MUST be String for S3 Tables
+        let critical_string_fields = vec![
+            field::RESOURCE_ATTRIBUTES,
+            field::SCOPE_ATTRIBUTES,
+            field::BODY,
+            field::LOG_ATTRIBUTES,
+        ];
+
+        for field_name in critical_string_fields {
+            // Find field in Arrow schema
+            let arrow_field = arrow_schema
+                .field_with_name(field_name)
+                .unwrap_or_else(|_| panic!("Arrow schema missing field: {}", field_name));
+
+            // Find field in Iceberg schema
+            let iceberg_field = iceberg_schema
+                .fields()
+                .iter()
+                .find(|f| f.name() == field_name)
+                .unwrap_or_else(|| panic!("Iceberg schema missing field: {}", field_name));
+
+            // Arrow field MUST be String (Utf8)
+            assert_eq!(
+                arrow_field.data_type(),
+                &DataType::Utf8,
+                "Arrow schema field '{}' must be DataType::Utf8 (String) for S3 Tables compatibility. \
+                Found: {:?}. This indicates incomplete S3 Tables migration - attributes must be JSON-encoded strings.",
+                field_name,
+                arrow_field.data_type()
+            );
+
+            // Iceberg field MUST be PrimitiveType::String
+            assert!(
+                matches!(iceberg_field.field_type(), icepick::spec::Type::Primitive(PrimitiveType::String)),
+                "Iceberg schema field '{}' must be PrimitiveType::String for S3 Tables compatibility. \
+                Found: {:?}. This indicates schema drift between Arrow and Iceberg definitions.",
+                field_name,
+                iceberg_field.field_type()
+            );
+        }
+
+        // Verify field count matches (basic sanity check)
+        assert_eq!(
+            arrow_schema.fields().len(),
+            iceberg_schema.fields().len(),
+            "Arrow and Iceberg schemas have different field counts - indicates schema drift"
+        );
+
+        // Verify all field names match in order
+        for (arrow_field, iceberg_field) in
+            arrow_schema.fields().iter().zip(iceberg_schema.fields())
+        {
+            assert_eq!(
+                arrow_field.name(),
+                iceberg_field.name(),
+                "Field name mismatch at position - Arrow: '{}', Iceberg: '{}'. \
+                This indicates field ordering drift between schemas.",
+                arrow_field.name(),
+                iceberg_field.name()
+            );
+        }
     }
 }

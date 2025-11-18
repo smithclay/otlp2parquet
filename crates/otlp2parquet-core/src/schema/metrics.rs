@@ -7,7 +7,7 @@
 //
 // Reference: https://github.com/smithclay/duckdb-otlp/blob/main/src/schema/otlp_metrics_schemas.hpp
 
-use arrow::datatypes::{DataType, Field, Fields, Schema, TimeUnit};
+use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
@@ -21,7 +21,9 @@ fn field_with_id(name: &str, data_type: DataType, nullable: bool, id: i32) -> Fi
 
 /// Returns the base fields shared by all metric types
 fn base_fields() -> Vec<Field> {
-    let map_type = map_type();
+    // S3 Tables doesn't support complex types (Map, Struct) - use JSON-encoded strings instead
+    // This matches the Iceberg schema definition in iceberg_schemas
+    let string_type = DataType::Utf8;
 
     vec![
         // ============ Common Fields (IDs 1-20) ============
@@ -33,33 +35,17 @@ fn base_fields() -> Vec<Field> {
             1,
         ),
         field_with_id(field::SERVICE_NAME, DataType::Utf8, false, 4),
-        field_with_id(field::RESOURCE_ATTRIBUTES, map_type.clone(), false, 7),
+        // ResourceAttributes: JSON-encoded string for S3 Tables compatibility
+        field_with_id(field::RESOURCE_ATTRIBUTES, string_type.clone(), false, 7),
         field_with_id(field::SCOPE_NAME, DataType::Utf8, true, 9),
         field_with_id(field::SCOPE_VERSION, DataType::Utf8, true, 10),
         // ============ Metrics-Specific Base Fields (IDs 101-109) ============
         field_with_id(field::METRIC_NAME, DataType::Utf8, false, 101),
         field_with_id(field::METRIC_DESCRIPTION, DataType::Utf8, true, 102),
         field_with_id(field::METRIC_UNIT, DataType::Utf8, true, 103),
-        field_with_id(field::ATTRIBUTES, map_type, false, 104),
+        // Attributes: JSON-encoded string for S3 Tables compatibility
+        field_with_id(field::ATTRIBUTES, string_type, false, 104),
     ]
-}
-
-/// Helper function to create a Map<String, String> type
-fn map_type() -> DataType {
-    let entry_fields: Fields = vec![
-        Field::new(field::KEY, DataType::Utf8, false),
-        Field::new(field::VALUE, DataType::Utf8, true),
-    ]
-    .into();
-
-    DataType::Map(
-        Arc::new(Field::new(
-            field::ENTRIES,
-            DataType::Struct(entry_fields),
-            false,
-        )),
-        false,
-    )
 }
 
 /// Returns the Arrow schema for gauge metrics
@@ -370,5 +356,110 @@ mod tests {
                 .unwrap(),
             "sum"
         );
+    }
+
+    #[test]
+    fn test_arrow_iceberg_schema_compatibility() {
+        use crate::iceberg_schemas;
+        use icepick::spec::PrimitiveType;
+
+        // Test all metric types
+        let metric_types = vec![
+            (
+                "gauge",
+                otel_metrics_gauge_schema(),
+                iceberg_schemas::metrics_gauge_schema(),
+            ),
+            (
+                "sum",
+                otel_metrics_sum_schema(),
+                iceberg_schemas::metrics_sum_schema(),
+            ),
+            (
+                "histogram",
+                otel_metrics_histogram_schema(),
+                iceberg_schemas::metrics_histogram_schema(),
+            ),
+            (
+                "exponential_histogram",
+                otel_metrics_exponential_histogram_schema(),
+                iceberg_schemas::metrics_exponential_histogram_schema(),
+            ),
+            (
+                "summary",
+                otel_metrics_summary_schema(),
+                iceberg_schemas::metrics_summary_schema(),
+            ),
+        ];
+
+        for (metric_type, arrow_schema, iceberg_schema) in metric_types {
+            // Critical Map fields that MUST be String for S3 Tables
+            let critical_string_fields = vec![
+                field::RESOURCE_ATTRIBUTES,
+                field::ATTRIBUTES, // Metric-level attributes
+            ];
+
+            for field_name in critical_string_fields {
+                let arrow_field = arrow_schema
+                    .field_with_name(field_name)
+                    .unwrap_or_else(|_| {
+                        panic!("{} schema missing field: {}", metric_type, field_name)
+                    });
+
+                let iceberg_field = iceberg_schema
+                    .fields()
+                    .iter()
+                    .find(|f| f.name() == field_name)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{} Iceberg schema missing field: {}",
+                            metric_type, field_name
+                        )
+                    });
+
+                assert_eq!(
+                    arrow_field.data_type(),
+                    &DataType::Utf8,
+                    "{} Arrow schema field '{}' must be DataType::Utf8 (String) for S3 Tables. \
+                    Found: {:?}. Attributes must be JSON-encoded strings.",
+                    metric_type,
+                    field_name,
+                    arrow_field.data_type()
+                );
+
+                assert!(
+                    matches!(
+                        iceberg_field.field_type(),
+                        icepick::spec::Type::Primitive(PrimitiveType::String)
+                    ),
+                    "{} Iceberg schema field '{}' must be PrimitiveType::String for S3 Tables. \
+                    Found: {:?}",
+                    metric_type,
+                    field_name,
+                    iceberg_field.field_type()
+                );
+            }
+
+            // Verify field count and ordering
+            assert_eq!(
+                arrow_schema.fields().len(),
+                iceberg_schema.fields().len(),
+                "{} schemas have different field counts",
+                metric_type
+            );
+
+            for (arrow_field, iceberg_field) in
+                arrow_schema.fields().iter().zip(iceberg_schema.fields())
+            {
+                assert_eq!(
+                    arrow_field.name(),
+                    iceberg_field.name(),
+                    "{} field name mismatch - Arrow: '{}', Iceberg: '{}'",
+                    metric_type,
+                    arrow_field.name(),
+                    iceberg_field.name()
+                );
+            }
+        }
     }
 }

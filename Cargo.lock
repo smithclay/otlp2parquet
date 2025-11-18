@@ -1914,7 +1914,7 @@ dependencies = [
 [[package]]
 name = "icepick"
 version = "0.1.0"
-source = "git+https://github.com/smithclay/icepick.git?rev=52f5554f23f85d69d7b31d78c33faf0382f19abe#52f5554f23f85d69d7b31d78c33faf0382f19abe"
+source = "git+https://github.com/smithclay/icepick.git?rev=b69c0f60eb0933cabc45e5e593cf404d6d051b97#b69c0f60eb0933cabc45e5e593cf404d6d051b97"
 dependencies = [
  "apache-avro",
  "arrow",

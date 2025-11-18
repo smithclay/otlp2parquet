@@ -11,6 +11,7 @@ use otlp2parquet_proto::opentelemetry::proto::common::v1::{any_value, AnyValue};
 use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue};
 
 #[derive(Copy, Clone)]
+#[allow(dead_code)] // TODO: Remove when traces/metrics migrate to JSON-encoded strings
 struct AnyValueFieldIndexes {
     type_idx: usize,
     string_idx: usize,
@@ -28,6 +29,7 @@ struct AnyValueFieldIndexes {
 /// - StringValue, BoolValue, IntValue, DoubleValue, BytesValue: scalar values
 /// - JsonValue: JSON-serialized representation of arrays and maps
 #[inline]
+#[allow(dead_code)] // TODO: Remove when traces/metrics migrate to JSON-encoded strings
 pub(crate) fn append_any_value(
     builder: &mut StructBuilder,
     any_val: Option<&AnyValue>,
@@ -91,6 +93,7 @@ pub(crate) fn any_value_to_json_value(any_val: &AnyValue) -> JsonValue {
 }
 
 #[inline]
+#[allow(dead_code)] // TODO: Remove when traces/metrics migrate to JSON-encoded strings
 fn append_present_any_value(
     builder: &mut StructBuilder,
     inner: &any_value::Value,

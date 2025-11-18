@@ -1,26 +1,61 @@
 use std::convert::{TryFrom, TryInto};
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use arrow::array::{
-    Int64Builder, ListBuilder, MapBuilder, RecordBatch, StringBuilder, TimestampNanosecondBuilder,
+    Int64Builder, ListBuilder, RecordBatch, StringBuilder, TimestampNanosecondBuilder,
 };
 use arrow::datatypes::DataType;
 use otlp2parquet_proto::opentelemetry::proto::{
     collector::trace::v1::ExportTraceServiceRequest,
-    common::v1::{any_value, AnyValue, InstrumentationScope, KeyValue},
+    common::v1::{InstrumentationScope, KeyValue},
     resource::v1::Resource,
     trace::v1::{span, status, ResourceSpans, ScopeSpans, Span},
 };
 
-use crate::otlp::common::{
-    any_value_builder::{any_value_string, any_value_to_json_value},
-    builder_helpers::map_field_names,
-};
+use crate::otlp::common::any_value_builder::{any_value_string, any_value_to_json_value};
 use crate::otlp::field_names::semconv;
 use crate::schema::{otel_traces_schema_arc, EXTRACTED_RESOURCE_ATTRS};
 
 use super::format::TraceRequest;
+
+/// JSON-encode KeyValue attributes to string for S3 Tables compatibility
+fn keyvalue_attrs_to_json_string(attributes: &[KeyValue]) -> String {
+    if attributes.is_empty() {
+        return "{}".to_string();
+    }
+
+    let mut map = serde_json::Map::new();
+    for attr in attributes {
+        let json_value = attr
+            .value
+            .as_ref()
+            .map(any_value_to_json_value)
+            .unwrap_or(serde_json::Value::Null);
+        map.insert(attr.key.clone(), json_value);
+    }
+
+    serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// JSON-encode KeyValue reference attributes to string for S3 Tables compatibility
+fn keyvalue_ref_attrs_to_json_string(attributes: &[&KeyValue]) -> String {
+    if attributes.is_empty() {
+        return "{}".to_string();
+    }
+
+    let mut map = serde_json::Map::new();
+    for attr in attributes {
+        let json_value = attr
+            .value
+            .as_ref()
+            .map(any_value_to_json_value)
+            .unwrap_or(serde_json::Value::Null);
+        map.insert(attr.key.clone(), json_value);
+    }
+
+    serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
+}
 
 /// Metadata extracted from OTLP trace export requests during conversion.
 #[derive(Debug, Clone)]
@@ -67,20 +102,20 @@ struct TraceArrowBuilder {
     span_name_builder: StringBuilder,
     span_kind_builder: StringBuilder,
     service_name_builder: StringBuilder,
-    resource_attributes_builder: MapBuilder<StringBuilder, StringBuilder>,
+    resource_attributes_builder: StringBuilder,
     scope_name_builder: StringBuilder,
     scope_version_builder: StringBuilder,
-    span_attributes_builder: MapBuilder<StringBuilder, StringBuilder>,
+    span_attributes_builder: StringBuilder,
     duration_builder: Int64Builder,
     status_code_builder: StringBuilder,
     status_message_builder: StringBuilder,
     events_timestamp_builder: ListBuilder<TimestampNanosecondBuilder>,
     events_name_builder: ListBuilder<StringBuilder>,
-    events_attributes_builder: ListBuilder<MapBuilder<StringBuilder, StringBuilder>>,
+    events_attributes_builder: ListBuilder<StringBuilder>,
     links_trace_id_builder: ListBuilder<StringBuilder>,
     links_span_id_builder: ListBuilder<StringBuilder>,
     links_trace_state_builder: ListBuilder<StringBuilder>,
-    links_attributes_builder: ListBuilder<MapBuilder<StringBuilder, StringBuilder>>,
+    links_attributes_builder: ListBuilder<StringBuilder>,
     service_name: Arc<str>,
     first_timestamp: Option<i64>,
     span_count: usize,
@@ -141,12 +176,8 @@ impl TraceArrowBuilder {
             ListBuilder::with_capacity(events_timestamp_values, capacity)
                 .with_field(events_timestamp_field.clone());
 
-        let events_attributes_values = MapBuilder::new(
-            Some(map_field_names()),
-            StringBuilder::new(),
-            StringBuilder::new(),
-        );
-
+        // Events attributes: List<String> for S3 Tables compatibility (JSON-encoded strings)
+        let events_attributes_values = StringBuilder::with_capacity(capacity * 4, capacity * 128);
         let events_attributes_builder =
             ListBuilder::with_capacity(events_attributes_values, capacity)
                 .with_field(events_attributes_field.clone());
@@ -168,12 +199,8 @@ impl TraceArrowBuilder {
             ListBuilder::with_capacity(links_trace_state_values, capacity)
                 .with_field(links_trace_state_field.clone());
 
-        let links_attributes_values = MapBuilder::new(
-            Some(map_field_names()),
-            StringBuilder::new(),
-            StringBuilder::new(),
-        );
-
+        // Links attributes: List<String> for S3 Tables compatibility (JSON-encoded strings)
+        let links_attributes_values = StringBuilder::with_capacity(capacity * 2, capacity * 64);
         let links_attributes_builder =
             ListBuilder::with_capacity(links_attributes_values, capacity)
                 .with_field(links_attributes_field.clone());
@@ -187,18 +214,12 @@ impl TraceArrowBuilder {
             span_name_builder: StringBuilder::with_capacity(capacity, capacity * 32),
             span_kind_builder: StringBuilder::with_capacity(capacity, capacity * 24),
             service_name_builder: StringBuilder::with_capacity(capacity, capacity * 32),
-            resource_attributes_builder: MapBuilder::new(
-                Some(map_field_names()),
-                StringBuilder::with_capacity(capacity * 4, capacity * 64),
-                StringBuilder::with_capacity(capacity * 4, capacity * 128),
-            ),
+            // Resource attributes: JSON-encoded string for S3 Tables compatibility
+            resource_attributes_builder: StringBuilder::with_capacity(capacity, capacity * 256),
             scope_name_builder: StringBuilder::with_capacity(capacity, capacity * 24),
             scope_version_builder: StringBuilder::with_capacity(capacity, capacity * 24),
-            span_attributes_builder: MapBuilder::new(
-                Some(map_field_names()),
-                StringBuilder::with_capacity(capacity * 8, capacity * 64),
-                StringBuilder::with_capacity(capacity * 8, capacity * 128),
-            ),
+            // Span attributes: JSON-encoded string for S3 Tables compatibility
+            span_attributes_builder: StringBuilder::with_capacity(capacity, capacity * 256),
             duration_builder: Int64Builder::with_capacity(capacity),
             status_code_builder: StringBuilder::with_capacity(capacity, capacity * 24),
             status_message_builder: StringBuilder::with_capacity(capacity, capacity * 64),
@@ -366,17 +387,9 @@ impl TraceArrowBuilder {
     }
 
     fn append_resource_attributes(&mut self, resource_ctx: &ResourceContext<'_>) -> Result<()> {
-        for attr in &resource_ctx.attributes {
-            self.resource_attributes_builder
-                .keys()
-                .append_value(attr.key.as_str());
-            append_attribute_value(
-                self.resource_attributes_builder.values(),
-                attr.value.as_ref(),
-            )?;
-        }
-
-        self.resource_attributes_builder.append(true)?;
+        // Convert resource attributes to JSON string for S3 Tables compatibility
+        let json_string = keyvalue_ref_attrs_to_json_string(resource_ctx.attributes.as_slice());
+        self.resource_attributes_builder.append_value(json_string);
         Ok(())
     }
 
@@ -395,14 +408,9 @@ impl TraceArrowBuilder {
     }
 
     fn append_span_attributes(&mut self, span: &Span) -> Result<()> {
-        for attr in &span.attributes {
-            self.span_attributes_builder
-                .keys()
-                .append_value(attr.key.as_str());
-            append_attribute_value(self.span_attributes_builder.values(), attr.value.as_ref())?;
-        }
-
-        self.span_attributes_builder.append(true)?;
+        // Convert span attributes to JSON string for S3 Tables compatibility
+        let json_string = keyvalue_attrs_to_json_string(&span.attributes);
+        self.span_attributes_builder.append_value(json_string);
         Ok(())
     }
 
@@ -415,13 +423,9 @@ impl TraceArrowBuilder {
             for event in events {
                 timestamps.append_value(Self::clamp_nanos(event.time_unix_nano));
                 names.append_value(event.name.as_str());
-
-                for attr in &event.attributes {
-                    attributes.keys().append_value(attr.key.as_str());
-                    append_attribute_value(attributes.values(), attr.value.as_ref())?;
-                }
-
-                attributes.append(true)?;
+                // Convert event attributes to JSON string for S3 Tables compatibility
+                let json_string = keyvalue_attrs_to_json_string(&event.attributes);
+                attributes.append_value(json_string);
             }
         }
 
@@ -448,12 +452,9 @@ impl TraceArrowBuilder {
                     trace_states.append_value(link.trace_state.as_str());
                 }
 
-                for attr in &link.attributes {
-                    attributes.keys().append_value(attr.key.as_str());
-                    append_attribute_value(attributes.values(), attr.value.as_ref())?;
-                }
-
-                attributes.append(true)?;
+                // Convert link attributes to JSON string for S3 Tables compatibility
+                let json_string = keyvalue_attrs_to_json_string(&link.attributes);
+                attributes.append_value(json_string);
             }
         }
 
@@ -528,23 +529,6 @@ impl TraceArrowBuilder {
     }
 }
 
-fn append_attribute_value(builder: &mut StringBuilder, value: Option<&AnyValue>) -> Result<()> {
-    if let Some(any) = value {
-        match any.value.as_ref() {
-            Some(any_value::Value::StringValue(s)) => builder.append_value(s),
-            _ => {
-                let json = serde_json::to_string(&any_value_to_json_value(any))
-                    .context("Failed to encode OTLP AnyValue as JSON string")?;
-                builder.append_value(&json);
-            }
-        }
-    } else {
-        builder.append_null();
-    }
-
-    Ok(())
-}
-
 fn append_hex_value(builder: &mut StringBuilder, bytes: &[u8]) {
     let encoded = hex::encode(bytes);
     builder.append_value(&encoded);
@@ -555,7 +539,10 @@ mod tests {
     use super::*;
     use crate::otlp::{common::format::InputFormat, traces::parse_otlp_trace_request};
     use arrow::array::{Array, Int64Array, ListArray, StringArray};
-    use otlp2parquet_proto::opentelemetry::proto::trace::v1::Status;
+    use otlp2parquet_proto::opentelemetry::proto::{
+        common::v1::{any_value, AnyValue},
+        trace::v1::Status,
+    };
 
     #[test]
     fn converts_empty_request() {

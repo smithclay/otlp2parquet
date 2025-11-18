@@ -6,8 +6,7 @@
 use anyhow::{Context, Result};
 use arrow::array::{
     Array, BooleanBuilder, Float64Builder, GenericListArray, Int32Builder, Int64Builder,
-    ListBuilder, MapBuilder, OffsetSizeTrait, RecordBatch, StringBuilder,
-    TimestampNanosecondBuilder,
+    ListBuilder, OffsetSizeTrait, RecordBatch, StringBuilder, TimestampNanosecondBuilder,
 };
 use arrow::datatypes::{DataType, Field};
 use otlp2parquet_proto::opentelemetry::proto::{
@@ -21,9 +20,43 @@ use otlp2parquet_proto::opentelemetry::proto::{
 use std::sync::Arc;
 
 use crate::otlp::common::{
-    any_value_builder::any_value_string, builder_helpers::map_field_names, field_names::semconv,
+    any_value_builder::{any_value_string, any_value_to_json_value},
+    field_names::semconv,
 };
 use crate::schema::metrics::*;
+
+/// JSON-encode KeyValue attributes to string for S3 Tables compatibility
+fn keyvalue_attrs_to_json_string(attributes: &[KeyValue]) -> String {
+    if attributes.is_empty() {
+        return "{}".to_string();
+    }
+
+    let mut map = serde_json::Map::new();
+    for attr in attributes {
+        let json_value = attr
+            .value
+            .as_ref()
+            .map(any_value_to_json_value)
+            .unwrap_or(serde_json::Value::Null);
+        map.insert(attr.key.clone(), json_value);
+    }
+
+    serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// JSON-encode resource attributes (Vec of key-value pairs) to string
+fn resource_attrs_to_json_string(attributes: &[(String, String)]) -> String {
+    if attributes.is_empty() {
+        return "{}".to_string();
+    }
+
+    let mut map = serde_json::Map::new();
+    for (key, value) in attributes {
+        map.insert(key.clone(), serde_json::Value::String(value.clone()));
+    }
+
+    serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
+}
 
 /// Helper to convert a ListArray from a ListBuilder to have non-nullable items
 ///
@@ -307,10 +340,10 @@ struct BaseColumnsBuilder {
     metric_name_builder: StringBuilder,
     metric_description_builder: StringBuilder,
     metric_unit_builder: StringBuilder,
-    resource_attributes_builder: MapBuilder<StringBuilder, StringBuilder>,
+    resource_attributes_builder: StringBuilder,
     scope_name_builder: StringBuilder,
     scope_version_builder: StringBuilder,
-    attributes_builder: MapBuilder<StringBuilder, StringBuilder>,
+    attributes_builder: StringBuilder,
     count: usize,
 }
 
@@ -322,18 +355,10 @@ impl BaseColumnsBuilder {
             metric_name_builder: StringBuilder::new(),
             metric_description_builder: StringBuilder::new(),
             metric_unit_builder: StringBuilder::new(),
-            resource_attributes_builder: MapBuilder::new(
-                Some(map_field_names()),
-                StringBuilder::new(),
-                StringBuilder::new(),
-            ),
+            resource_attributes_builder: StringBuilder::new(),
             scope_name_builder: StringBuilder::new(),
             scope_version_builder: StringBuilder::new(),
-            attributes_builder: MapBuilder::new(
-                Some(map_field_names()),
-                StringBuilder::new(),
-                StringBuilder::new(),
-            ),
+            attributes_builder: StringBuilder::new(),
             count: 0,
         }
     }
@@ -367,14 +392,10 @@ impl BaseColumnsBuilder {
             self.metric_unit_builder.append_value(&metric.unit);
         }
 
-        // Resource attributes
-        for (key, value) in &resource_ctx.attributes {
-            self.resource_attributes_builder.keys().append_value(key);
-            self.resource_attributes_builder
-                .values()
-                .append_value(value);
-        }
-        self.resource_attributes_builder.append(true)?;
+        // Resource attributes - JSON-encoded string for S3 Tables compatibility
+        let resource_attrs_json = resource_attrs_to_json_string(&resource_ctx.attributes);
+        self.resource_attributes_builder
+            .append_value(resource_attrs_json);
 
         // Scope information
         if scope_ctx.name.is_empty() {
@@ -388,14 +409,9 @@ impl BaseColumnsBuilder {
             self.scope_version_builder.append_null();
         }
 
-        // Data point attributes
-        for attr in attributes {
-            self.attributes_builder.keys().append_value(&attr.key);
-            self.attributes_builder
-                .values()
-                .append_value(key_value_to_string(attr));
-        }
-        self.attributes_builder.append(true)?;
+        // Data point attributes - JSON-encoded string for S3 Tables compatibility
+        let attributes_json = keyvalue_attrs_to_json_string(attributes);
+        self.attributes_builder.append_value(attributes_json);
 
         self.count += 1;
         Ok(())

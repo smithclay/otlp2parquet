@@ -5,8 +5,8 @@
 
 use anyhow::{Context, Result};
 use arrow::array::{
-    FixedSizeBinaryBuilder, Int32Builder, MapBuilder, RecordBatch, StringBuilder, StructBuilder,
-    TimestampMicrosecondBuilder, TimestampNanosecondBuilder, UInt32Builder,
+    FixedSizeBinaryBuilder, Int32Builder, RecordBatch, StringBuilder, TimestampMicrosecondBuilder,
+    TimestampNanosecondBuilder, UInt32Builder,
 };
 use otlp2parquet_proto::opentelemetry::proto::{
     collector::logs::v1::ExportLogsServiceRequest,
@@ -17,25 +17,34 @@ use prost::Message;
 use std::sync::Arc;
 
 use crate::otlp::common::{
-    any_value_builder::{any_value_string, any_value_to_json_value, append_any_value},
-    builder_helpers::{map_field_names, new_any_value_struct_builder, SPAN_ID_SIZE, TRACE_ID_SIZE},
+    any_value_builder::{any_value_string, any_value_to_json_value},
+    builder_helpers::{SPAN_ID_SIZE, TRACE_ID_SIZE},
 };
 use crate::schema::{otel_logs_schema_arc, EXTRACTED_RESOURCE_ATTRS};
 
-/// Convert AnyValue to a string representation for Map<String, String> schema
-fn any_value_to_string(value: Option<&AnyValue>) -> String {
-    value
-        .and_then(any_value_string)
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| {
-            value
-                .map(|v| {
-                    // For non-string types, convert to JSON string representation
-                    let json = any_value_to_json_value(v);
-                    json.to_string()
-                })
-                .unwrap_or_default()
-        })
+/// JSON-encode attributes map to string for S3 Tables compatibility
+fn attributes_to_json_string(attributes: &[(&str, Option<&AnyValue>)]) -> String {
+    if attributes.is_empty() {
+        return "{}".to_string();
+    }
+
+    let mut map = serde_json::Map::new();
+    for &(key, value) in attributes {
+        let json_value = value
+            .map(any_value_to_json_value)
+            .unwrap_or(serde_json::Value::Null);
+        map.insert(key.to_string(), json_value);
+    }
+
+    serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// JSON-encode body (AnyValue) to string for S3 Tables compatibility
+fn body_to_json_string(body: Option<&AnyValue>) -> Option<String> {
+    body.map(|v| {
+        let json = any_value_to_json_value(v);
+        json.to_string()
+    })
 }
 
 /// Metadata extracted during OTLP parsing
@@ -57,17 +66,17 @@ pub struct ArrowConverter {
     trace_flags_builder: UInt32Builder,
     severity_text_builder: StringBuilder,
     severity_number_builder: Int32Builder,
-    body_builder: StructBuilder,
+    body_builder: StringBuilder,
     service_name_builder: StringBuilder,
     service_namespace_builder: StringBuilder,
     service_instance_id_builder: StringBuilder,
     resource_schema_url_builder: StringBuilder,
     scope_name_builder: StringBuilder,
     scope_version_builder: StringBuilder,
-    scope_attributes_builder: MapBuilder<StringBuilder, StringBuilder>,
+    scope_attributes_builder: StringBuilder,
     scope_schema_url_builder: StringBuilder,
-    resource_attributes_builder: MapBuilder<StringBuilder, StringBuilder>,
-    log_attributes_builder: MapBuilder<StringBuilder, StringBuilder>,
+    resource_attributes_builder: StringBuilder,
+    log_attributes_builder: StringBuilder,
 
     // Metadata tracking (not part of schema)
     service_name: Arc<str>,
@@ -103,29 +112,17 @@ impl ArrowConverter {
             trace_flags_builder: UInt32Builder::with_capacity(capacity),
             severity_text_builder: StringBuilder::with_capacity(capacity, capacity * 20),
             severity_number_builder: Int32Builder::with_capacity(capacity),
-            body_builder: new_any_value_struct_builder(),
+            body_builder: StringBuilder::with_capacity(capacity, capacity * 256), // JSON-encoded body
             service_name_builder: StringBuilder::with_capacity(capacity, capacity * 32),
             service_namespace_builder: StringBuilder::with_capacity(capacity, capacity * 32),
             service_instance_id_builder: StringBuilder::with_capacity(capacity, capacity * 32),
             resource_schema_url_builder: StringBuilder::with_capacity(capacity, capacity * 64),
             scope_name_builder: StringBuilder::with_capacity(capacity, capacity * 32),
             scope_version_builder: StringBuilder::with_capacity(capacity, capacity * 16),
-            scope_attributes_builder: MapBuilder::new(
-                Some(map_field_names()),
-                StringBuilder::with_capacity(capacity * 4, capacity * 64),
-                StringBuilder::with_capacity(capacity * 4, capacity * 128),
-            ),
+            scope_attributes_builder: StringBuilder::with_capacity(capacity, capacity * 256), // JSON-encoded attributes
             scope_schema_url_builder: StringBuilder::with_capacity(capacity, capacity * 64),
-            resource_attributes_builder: MapBuilder::new(
-                Some(map_field_names()),
-                StringBuilder::with_capacity(capacity * 8, capacity * 128),
-                StringBuilder::with_capacity(capacity * 8, capacity * 256),
-            ),
-            log_attributes_builder: MapBuilder::new(
-                Some(map_field_names()),
-                StringBuilder::with_capacity(capacity * 16, capacity * 256),
-                StringBuilder::with_capacity(capacity * 16, capacity * 512),
-            ),
+            resource_attributes_builder: StringBuilder::with_capacity(capacity, capacity * 512), // JSON-encoded attributes
+            log_attributes_builder: StringBuilder::with_capacity(capacity, capacity * 1024), // JSON-encoded attributes
             service_name: Arc::from(""),
             first_timestamp: None,
             current_row_count: 0,
@@ -426,7 +423,12 @@ impl ArrowConverter {
         self.severity_number_builder
             .append_value(log_record.severity_number);
 
-        append_any_value(&mut self.body_builder, log_record.body.as_ref())?;
+        // JSON-encode body as string for S3 Tables compatibility
+        if let Some(body_json) = body_to_json_string(log_record.body.as_ref()) {
+            self.body_builder.append_value(body_json);
+        } else {
+            self.body_builder.append_null();
+        }
 
         let fallback_name = if self.service_name.is_empty() {
             ""
@@ -461,14 +463,9 @@ impl ArrowConverter {
             self.scope_version_builder.append_null();
         }
 
-        for &(key, value) in &scope_ctx.attributes {
-            self.scope_attributes_builder.keys().append_value(key);
-            let value_str = any_value_to_string(value);
-            self.scope_attributes_builder
-                .values()
-                .append_value(value_str);
-        }
-        self.scope_attributes_builder.append(true)?;
+        // JSON-encode scope attributes as string for S3 Tables compatibility
+        let scope_attrs_json = attributes_to_json_string(&scope_ctx.attributes);
+        self.scope_attributes_builder.append_value(scope_attrs_json);
 
         if let Some(url) = scope_ctx.schema_url {
             self.scope_schema_url_builder.append_value(url);
@@ -476,21 +473,19 @@ impl ArrowConverter {
             self.scope_schema_url_builder.append_null();
         }
 
-        for &(key, value) in &resource_ctx.attributes {
-            self.resource_attributes_builder.keys().append_value(key);
-            let value_str = any_value_to_string(value);
-            self.resource_attributes_builder
-                .values()
-                .append_value(value_str);
-        }
-        self.resource_attributes_builder.append(true)?;
+        // JSON-encode resource attributes as string for S3 Tables compatibility
+        let resource_attrs_json = attributes_to_json_string(&resource_ctx.attributes);
+        self.resource_attributes_builder
+            .append_value(resource_attrs_json);
 
-        for attr in &log_record.attributes {
-            self.log_attributes_builder.keys().append_value(&attr.key);
-            let value_str = any_value_to_string(attr.value.as_ref());
-            self.log_attributes_builder.values().append_value(value_str);
-        }
-        self.log_attributes_builder.append(true)?;
+        // JSON-encode log attributes as string for S3 Tables compatibility
+        let log_attrs: Vec<(&str, Option<&AnyValue>)> = log_record
+            .attributes
+            .iter()
+            .map(|attr| (attr.key.as_str(), attr.value.as_ref()))
+            .collect();
+        let log_attrs_json = attributes_to_json_string(&log_attrs);
+        self.log_attributes_builder.append_value(log_attrs_json);
 
         self.current_row_count += 1;
 
