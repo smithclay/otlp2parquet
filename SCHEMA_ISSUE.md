@@ -151,29 +151,52 @@ let data_file = icepick::writer::write_with_stats(
 ).await?;
 ```
 
-## Next Steps
+## Path Forward
 
-**Option 1 (RECOMMENDED): Contribute Arrow-first API to icepick**
-- Add `write_with_stats()` that:
-  - Accepts `RecordBatch` (uses its Arrow schema)
-  - Optionally accepts Iceberg schema for field ID mapping
-  - Collects statistics during write
-  - Returns `DataFile` with stats populated
-- This is the right long-term architectural fix
-- Keeps Arrow as the contract, Iceberg as implementation detail
+**ISSUE:** icepick's `.with_iceberg_schema()` creates a `StatsCollector` that expects Arrow types to match what would be generated from the Iceberg schema. But our Arrow schemas are independently designed.
 
-**Option 2 (WORKAROUND): Use StatsCollector Directly**
-- Check if `icepick::writer::stats::StatsCollector` is publicly exported
-- If yes, instantiate it with our Arrow schema
-- Collect stats while writing with `arrow_to_parquet()`
-- Manually populate `DataFile` with collected stats
-- Temporary fix until Option 1 is implemented
+**Recommended Fix (modify icepick):**
 
-**Option 3 (AVOID): Schema Alignment**
-- Force our Arrow schema to match what icepick generates from Iceberg
-- Requires type conversions or schema adjustments
-- Wrong direction - makes Arrow depend on Iceberg
-- Defeats the purpose of having optimized Arrow schemas
+Change `StatsCollector` to work with the RecordBatch's actual Arrow schema, using the Iceberg schema only for field ID mapping:
+
+```rust
+// In icepick/src/writer/stats.rs
+impl StatsCollector {
+    // OLD: pub fn new(iceberg_schema: &Schema) -> Self
+    // Creates Arrow schema from Iceberg, expects RecordBatch to match
+
+    // NEW: Accept both schemas
+    pub fn new_with_mapping(
+        arrow_schema: &ArrowSchema,      // From RecordBatch - source of truth for types
+        iceberg_schema: Option<&Schema>  // For field ID mapping only
+    ) -> Self {
+        // Collect stats based on actual Arrow types
+        // Map to Iceberg field IDs if schema provided
+    }
+}
+```
+
+Then in `arrow_to_parquet.rs`:
+```rust
+pub fn with_iceberg_schema(mut self, schema: &Schema) -> Self {
+    // Use RecordBatch's schema for stats collection, Iceberg schema for field IDs
+    let arrow_schema = self.batch.schema();
+    self.stats_collector = Some(StatsCollector::new_with_mapping(&arrow_schema, Some(schema)));
+    self
+}
+```
+
+**Alternative (workaround in otlp2parquet):**
+
+If modifying icepick isn't feasible immediately:
+1. Don't use `.with_iceberg_schema().finish_data_file()`
+2. Manually build DataFile with statistics computed from our Arrow RecordBatch
+3. This works but duplicates stats collection logic
+
+**DO NOT:**
+- Try to force our Arrow schemas to match what icepick generates from Iceberg
+- This defeats the purpose of having optimized Arrow schemas for S3 Tables
+- Wrong architectural direction (Arrow should be the contract, not derived from Iceberg)
 
 ## Files to Review Tomorrow
 
@@ -190,23 +213,43 @@ Stack deployed: `otlp-nov17b` (us-west-2)
 - Lambda: `otlp-nov17b-ingest`
 - Current error: "Expected Int64Array" (from ParquetWriter schema mismatch)
 
-## Current Code State
+## Current Code State (Updated 2025-11-18)
 
-**Working (committed to git):**
+**Committed Changes:**
 - ✅ Field ID metadata added to all List element fields in traces/metrics schemas
 - ✅ Logs schema changed from FixedSizeBinary → Binary for TraceId/SpanId
-- ✅ All 64 unit tests passing
-- ✅ Clippy clean
+- ✅ All Cargo.toml files updated to icepick commit `ef55ba32110435e71c55c99f74f3d94c98def408`
+- ✅ Writer updated to use `.with_iceberg_schema().finish_data_file()` API
+- ✅ All 64 unit tests passing, clippy clean
 
-**In Progress (uncommitted):**
-- ⚠️ `crates/otlp2parquet-writer/src/writer.rs` - Modified to use `ParquetWriter` but causes "Expected Int64Array" error
-- 🔄 Need to either:
-  - Revert writer.rs changes and implement Option 2 (use StatsCollector directly)
-  - OR implement Option 1 (contribute Arrow-first API to icepick)
+**Current Issue:**
+- ❌ Lambda deployment fails with "Expected Int64Array" error
+- ❌ DuckDB cannot read tables (no data written due to Lambda failure)
+
+**Root Cause - Schema Architecture Mismatch:**
+
+The new icepick API works as follows:
+```rust
+icepick::arrow_to_parquet(batch, path, file_io)
+    .with_iceberg_schema(table.schema()?)  // <-- Passes Iceberg schema
+    .finish_data_file()                     // <-- Creates StatsCollector from Iceberg schema
+```
+
+The problem:
+1. `StatsCollector::new(iceberg_schema)` converts Iceberg schema → Arrow schema internally
+2. StatsCollector then expects the RecordBatch to have types matching this generated Arrow schema
+3. Our RecordBatch uses independently-designed Arrow schemas from `otlp2parquet_core::schema::*`
+4. Type mismatch causes "Expected Int64Array" (e.g., our UInt32 TraceFlags vs Iceberg's Int64)
+
+**Why This Happened:**
+- We designed our Arrow schemas independently, optimized for S3 Tables (Binary vs FixedSizeBinary, etc.)
+- Iceberg schemas were created later to match our Arrow schemas
+- But icepick's Arrow→Iceberg conversion uses different type mappings
+- Result: Two different Arrow schemas that don't align
 
 **Lambda Deployment:**
-- Stack `otlp-nov17b` has broken build (ParquetWriter approach)
-- Can redeploy with working code once fix is chosen
+- Stack `otlp-nov17b` deployed but failing at runtime
+- All test invocations return 500 "internal storage failure"
 
 ## References
 
