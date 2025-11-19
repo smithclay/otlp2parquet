@@ -11,9 +11,6 @@ use otlp2parquet_config::{RuntimeConfig, StorageBackend};
 use otlp2parquet_core::parquet::encoding::set_parquet_row_group_size;
 use std::sync::Arc;
 
-// Imports for REST catalog support
-use icepick::catalog::Catalog;
-
 mod handlers;
 mod response;
 
@@ -174,9 +171,6 @@ pub async fn run() -> Result<(), Error> {
             iceberg_cfg.namespace
         );
 
-        // Build REST catalog
-        let builder = icepick::RestCatalog::builder("otlp2parquet", &iceberg_cfg.rest_uri);
-
         // Create S3 operator for storage
         let s3_config = config.storage.s3.as_ref().ok_or_else(|| {
             Error::from("Lambda with REST catalog requires S3 storage configuration")
@@ -195,39 +189,21 @@ pub async fn run() -> Result<(), Error> {
             .map_err(|e| Error::from(format!("Failed to build S3 operator: {}", e)))?
             .finish();
 
-        let file_io = icepick::FileIO::new(operator);
-
-        // Build catalog with file_io
-        let catalog = builder
-            .with_file_io(file_io.clone())
-            .with_bearer_token("") // Anonymous/no auth for Nessie
-            .build()
-            .map_err(|e| Error::from(format!("Failed to create REST catalog: {}", e)))?;
-
-        // Get namespace from config
-        let namespace = iceberg_cfg
-            .namespace
-            .clone()
-            .unwrap_or_else(|| "otlp".to_string());
-
-        // Create namespace if it doesn't exist
-        let namespace_ident = icepick::NamespaceIdent::new(vec![namespace.clone()]);
-        match catalog
-            .create_namespace(&namespace_ident, Default::default())
-            .await
-        {
-            Ok(_) => tracing::info!("Created namespace: {}", namespace),
-            Err(e) => tracing::info!(
-                "Namespace creation result for '{}': {} (may already exist)",
-                namespace,
-                e
-            ),
+        // Build catalog config with namespace
+        let mut catalog_config = std::collections::HashMap::new();
+        if let Some(namespace) = &iceberg_cfg.namespace {
+            catalog_config.insert("namespace".to_string(), namespace.clone());
         }
 
-        // Use the catalog we created with the specified namespace
-        let _ = file_io; // FileIO not needed with AppendOnlyTableWriter
-        otlp2parquet_writer::IcepickWriter::new(Arc::new(catalog), namespace)
-            .map_err(|e| Error::from(format!("Failed to initialize writer: {}", e)))?
+        // Delegate to writer crate's REST catalog initialization
+        otlp2parquet_writer::initialize_server_writer(
+            &iceberg_cfg.rest_uri,
+            "", // warehouse not used for Lambda
+            operator,
+            Some(catalog_config),
+        )
+        .await
+        .map_err(|e| Error::from(format!("Failed to initialize writer: {}", e)))?
     } else if let Some(bucket_arn) = &iceberg_cfg.bucket_arn {
         // S3 Tables catalog (AWS managed)
         tracing::info!("Initializing Lambda with S3 Tables catalog: {}", bucket_arn);

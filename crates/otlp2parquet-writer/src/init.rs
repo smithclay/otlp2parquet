@@ -1,8 +1,10 @@
 //! Writer initialization and catalog setup
 
 use anyhow::Result;
+use icepick::catalog::Catalog;
+use otlp2parquet_config::Platform;
 
-use crate::{IcepickWriter, Platform};
+use crate::IcepickWriter;
 
 /// Initialize a writer for AWS Lambda with S3 Tables catalog
 ///
@@ -151,6 +153,20 @@ pub async fn initialize_server_writer(
         rest_uri,
         namespace
     );
+
+    // Create namespace if it doesn't exist
+    let namespace_ident = icepick::NamespaceIdent::new(vec![namespace.clone()]);
+    match catalog
+        .create_namespace(&namespace_ident, Default::default())
+        .await
+    {
+        Ok(_) => tracing::info!("Created namespace: {}", namespace),
+        Err(e) => tracing::debug!(
+            "Namespace creation result for '{}': {} (may already exist)",
+            namespace,
+            e
+        ),
+    }
 
     IcepickWriter::new(Arc::new(catalog), namespace)
 }

@@ -33,28 +33,6 @@ pub struct WriteResult {
     pub completed_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// Configuration for the writer
-#[allow(dead_code)]
-#[derive(Clone, Debug)]
-pub struct WriterConfig {
-    /// Base path for writing files
-    pub base_path: String,
-    /// Optional catalog configuration
-    pub catalog_config: Option<CatalogConfig>,
-    /// Whether to enable table caching
-    pub enable_table_cache: bool,
-}
-
-/// Catalog configuration
-#[allow(dead_code)]
-#[derive(Clone, Debug)]
-pub struct CatalogConfig {
-    /// Catalog type (S3Tables, R2Catalog, etc.)
-    pub catalog_type: String,
-    /// Catalog-specific settings
-    pub settings: std::collections::HashMap<String, String>,
-}
-
 /// Trait for writing OTLP data to Parquet files
 #[cfg_attr(not(target_family = "wasm"), async_trait)]
 #[cfg_attr(target_family = "wasm", async_trait(?Send))]
@@ -110,7 +88,7 @@ impl OtlpWriter for IcepickWriter {
 
         // Get table name based on signal type
         // e.g., "otel_logs", "otel_traces", "otel_metrics_gauge"
-        let table_name = table_name_for_signal(signal_type, metric_type);
+        let table_name = table_name_for_signal(signal_type, metric_type)?;
 
         tracing::debug!(
             "Writing {} rows to table '{}' (service: {}, signal: {:?})",
