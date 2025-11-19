@@ -66,8 +66,8 @@ async fn initialize_lambda_writer_impl(
 /// Initialize a writer for Server with configurable REST catalog
 ///
 /// # Arguments
-/// * `rest_uri` - REST catalog endpoint (e.g., "https://nessie.example.com/iceberg")
-/// * `warehouse` - Warehouse location (e.g., "s3://bucket/warehouse")
+/// * `rest_uri` - REST catalog endpoint (e.g., `https://nessie.example.com/iceberg`)
+/// * `warehouse` - Warehouse location (e.g., `s3://bucket/warehouse`)
 /// * `operator` - OpenDAL operator for accessing warehouse storage
 /// * `catalog_config` - Optional catalog-specific configuration (auth tokens, etc.)
 ///

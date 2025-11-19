@@ -4,7 +4,6 @@
 //! to Parquet files with optional Apache Iceberg catalog integration.
 
 mod init;
-mod partition;
 mod platform;
 mod table_mapping;
 mod writer;
