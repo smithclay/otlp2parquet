@@ -11,11 +11,11 @@ mod handlers;
 
 use once_cell::sync::OnceCell;
 use otlp2parquet_config::{EnvSource, Platform, RuntimeConfig, ENV_PREFIX};
-use otlp2parquet_writer::IcepickWriter;
 use std::sync::Arc;
 use worker::*;
 
-static WRITER: OnceCell<Arc<IcepickWriter>> = OnceCell::new();
+static CATALOG: OnceCell<Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>> = OnceCell::new();
+static NAMESPACE: OnceCell<String> = OnceCell::new();
 static CONFIG: OnceCell<RuntimeConfig> = OnceCell::new();
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -55,11 +55,8 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
     // Load config once (with platform detection and env var overrides)
     let config = CONFIG.get_or_try_init(|| load_worker_config(&env))?;
 
-    let writer = if let Some(existing) = WRITER.get() {
-        existing.clone()
-    } else {
-        // Generic S3-compatible storage configuration
-        // Supports R2 (production), MinIO (local dev), or any S3-compatible endpoint
+    // Initialize catalog if not already done
+    if CATALOG.get().is_none() {
         // Extract R2 Data Catalog configuration from environment variables
         let account_id = env
             .var("CLOUDFLARE_ACCOUNT_ID")
@@ -101,32 +98,49 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
             })?
             .to_string();
 
-        let namespace = env.var("OTLP_NAMESPACE").ok().map(|v| v.to_string());
+        let namespace = env
+            .var("OTLP_NAMESPACE")
+            .ok()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "otlp".to_string());
 
         console_log!(
-            "Initializing R2 Data Catalog: account={}, bucket={}, namespace={:?}",
+            "Initializing R2 Data Catalog: account={}, bucket={}, namespace={}",
             account_id,
             bucket_name,
-            namespace.as_deref().unwrap_or("otlp")
+            namespace
         );
 
-        let instance = Arc::new(
-            otlp2parquet_writer::initialize_cloudflare_writer(
-                &account_id,
-                &bucket_name,
-                &api_token,
-                namespace,
-            )
+        let catalog_config = otlp2parquet_writer::CatalogConfig {
+            namespace: namespace.clone(),
+            catalog_type: otlp2parquet_writer::CatalogType::R2DataCatalog {
+                account_id,
+                bucket_name,
+                api_token,
+            },
+        };
+
+        let catalog = otlp2parquet_writer::initialize_catalog(catalog_config)
             .await
             .map_err(|e| {
-                console_error!("Failed to initialize writer: {:?}", e);
-                worker::Error::RustError(format!("Writer initialization error: {}", e))
-            })?,
-        );
+                console_error!("Failed to initialize catalog: {:?}", e);
+                worker::Error::RustError(format!("Catalog initialization error: {}", e))
+            })?;
 
-        let _ = WRITER.set(instance.clone());
-        instance
-    };
+        // Ensure namespace exists
+        otlp2parquet_writer::ensure_namespace(catalog.as_ref(), &namespace)
+            .await
+            .map_err(|e| {
+                console_error!("Failed to ensure namespace: {:?}", e);
+                worker::Error::RustError(format!("Namespace creation error: {}", e))
+            })?;
+
+        let _ = CATALOG.set(catalog);
+        let _ = NAMESPACE.set(namespace);
+    }
+
+    let catalog = CATALOG.get().expect("catalog initialized above");
+    let namespace = NAMESPACE.get().expect("namespace initialized above");
 
     // Use configurable max payload size (default 10MB for CF Workers)
     // Can be overridden via OTLP2PARQUET_MAX_PAYLOAD_BYTES env var
@@ -175,13 +189,16 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
     // Route to appropriate handler based on signal type
     match signal {
         SignalKind::Logs => {
-            handlers::handle_logs_request(&body_bytes, format, content_type, &writer).await
+            handlers::handle_logs_request(&body_bytes, format, content_type, catalog, namespace)
+                .await
         }
         SignalKind::Traces => {
-            handlers::handle_traces_request(&body_bytes, format, content_type, &writer).await
+            handlers::handle_traces_request(&body_bytes, format, content_type, catalog, namespace)
+                .await
         }
         SignalKind::Metrics => {
-            handlers::handle_metrics_request(&body_bytes, format, content_type, &writer).await
+            handlers::handle_metrics_request(&body_bytes, format, content_type, catalog, namespace)
+                .await
         }
     }
 }

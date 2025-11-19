@@ -122,21 +122,21 @@ async fn process_logs(
 
     let mut uploaded_paths = Vec::new();
     for batch in uploads {
-        // Write logs via new OtlpWriter trait
+        // Write logs via write_batch function
         for record_batch in &batch.batches {
-            match state
-                .writer
-                .write_batch(
-                    record_batch,
-                    otlp2parquet_core::SignalType::Logs,
-                    None, // No metric type for logs
-                    &batch.metadata.service_name,
-                    batch.metadata.first_timestamp_nanos,
-                )
-                .await
+            match otlp2parquet_writer::write_batch(
+                state.catalog.as_ref(),
+                &state.namespace,
+                record_batch,
+                otlp2parquet_core::SignalType::Logs,
+                None, // No metric type for logs
+                &batch.metadata.service_name,
+                batch.metadata.first_timestamp_nanos,
+            )
+            .await
             {
-                Ok(result) => {
-                    uploaded_paths.push(result.path);
+                Ok(path) => {
+                    uploaded_paths.push(path);
                 }
                 Err(err) => {
                     tracing::error!("Failed to write logs: {}", err);
@@ -213,19 +213,19 @@ async fn process_metrics(
             let service_name = extract_service_name(&batch);
             let timestamp_nanos = extract_first_timestamp(&batch);
 
-            match state
-                .writer
-                .write_batch(
-                    &batch,
-                    otlp2parquet_core::SignalType::Metrics,
-                    Some(&metric_type),
-                    &service_name,
-                    timestamp_nanos,
-                )
-                .await
+            match otlp2parquet_writer::write_batch(
+                state.catalog.as_ref(),
+                &state.namespace,
+                &batch,
+                otlp2parquet_core::SignalType::Metrics,
+                Some(&metric_type),
+                &service_name,
+                timestamp_nanos,
+            )
+            .await
             {
-                Ok(result) => {
-                    uploaded_paths.push(result.path);
+                Ok(path) => {
+                    uploaded_paths.push(path);
                 }
                 Err(err) => {
                     tracing::error!("Failed to write {} metrics: {}", metric_type, err);
@@ -315,24 +315,24 @@ async fn process_traces(
 
     let mut uploaded_paths = Vec::new();
     for (batches, _metadata) in uploads {
-        // Write traces via Writer (handles both Iceberg and PlainS3 modes)
+        // Write traces via write_batch function
         for record_batch in &batches {
             let service_name = extract_service_name(record_batch);
             let timestamp_nanos = extract_first_timestamp(record_batch);
 
-            match state
-                .writer
-                .write_batch(
-                    record_batch,
-                    otlp2parquet_core::SignalType::Traces,
-                    None, // No metric type for traces
-                    &service_name,
-                    timestamp_nanos,
-                )
-                .await
+            match otlp2parquet_writer::write_batch(
+                state.catalog.as_ref(),
+                &state.namespace,
+                record_batch,
+                otlp2parquet_core::SignalType::Traces,
+                None, // No metric type for traces
+                &service_name,
+                timestamp_nanos,
+            )
+            .await
             {
-                Ok(result) => {
-                    uploaded_paths.push(result.path);
+                Ok(path) => {
+                    uploaded_paths.push(path);
                 }
                 Err(err) => {
                     tracing::error!("Failed to write traces: {}", err);

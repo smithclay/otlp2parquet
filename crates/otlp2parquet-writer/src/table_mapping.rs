@@ -1,12 +1,11 @@
 //! Table name mapping for OTLP signals
 
-use anyhow::Result;
+use crate::error::{Result, WriterError};
 use otlp2parquet_core::SignalType;
 
 /// Get the table name for a given signal type and optional metric type
 ///
 /// Returns the canonical table name used in Iceberg catalog
-/// TODO: Will be used by icepick when catalog support is added
 pub fn table_name_for_signal(signal: SignalType, metric_type: Option<&str>) -> Result<String> {
     match signal {
         SignalType::Logs => Ok("otel_logs".to_string()),
@@ -17,10 +16,10 @@ pub fn table_name_for_signal(signal: SignalType, metric_type: Option<&str>) -> R
             Some("histogram") => Ok("otel_metrics_histogram".to_string()),
             Some("exponential_histogram") => Ok("otel_metrics_exponential_histogram".to_string()),
             Some("summary") => Ok("otel_metrics_summary".to_string()),
-            _ => Err(anyhow::anyhow!(
-                "Unknown or missing metric type: {:?}",
-                metric_type
-            )),
+            _ => Err(WriterError::InvalidTableName {
+                signal,
+                metric_type: metric_type.map(String::from),
+            }),
         },
     }
 }

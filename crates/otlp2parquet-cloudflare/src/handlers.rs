@@ -3,7 +3,6 @@
 use arrow::array::{Array, RecordBatch, StringArray, TimestampNanosecondArray};
 use otlp2parquet_batch::{LogSignalProcessor, PassthroughBatcher};
 use otlp2parquet_core::{otlp, SignalType};
-use otlp2parquet_writer::{IcepickWriter, OtlpWriter};
 use serde_json::json;
 use std::sync::Arc;
 use worker::{console_error, Response, Result};
@@ -13,7 +12,8 @@ pub async fn handle_logs_request(
     body_bytes: &[u8],
     format: otlp2parquet_core::InputFormat,
     content_type: Option<&str>,
-    writer: &Arc<IcepickWriter>,
+    catalog: &Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>,
+    namespace: &str,
 ) -> Result<Response> {
     // Cloudflare Workers: Always use passthrough (no batching)
     // Batching requires time-based operations which aren't supported in WASM
@@ -45,23 +45,24 @@ pub async fn handle_logs_request(
 
     let mut uploaded_paths = Vec::new();
     for batch in uploads {
-        // Write using OtlpWriter trait
+        // Write via write_batch function
         for record_batch in &batch.batches {
-            let result = writer
-                .write_batch(
-                    record_batch,
-                    SignalType::Logs,
-                    None,
-                    &batch.metadata.service_name,
-                    batch.metadata.first_timestamp_nanos,
-                )
-                .await
-                .map_err(|e| {
-                    console_error!("Failed to write logs: {:?}", e);
-                    worker::Error::RustError(format!("Write error: {}", e))
-                })?;
+            let path = otlp2parquet_writer::write_batch(
+                catalog.as_ref(),
+                namespace,
+                record_batch,
+                SignalType::Logs,
+                None,
+                &batch.metadata.service_name,
+                batch.metadata.first_timestamp_nanos,
+            )
+            .await
+            .map_err(|e| {
+                console_error!("Failed to write logs: {:?}", e);
+                worker::Error::RustError(format!("Write error: {}", e))
+            })?;
 
-            uploaded_paths.push(result.path);
+            uploaded_paths.push(path);
         }
     }
 
@@ -80,7 +81,8 @@ pub async fn handle_traces_request(
     body_bytes: &[u8],
     format: otlp2parquet_core::InputFormat,
     content_type: Option<&str>,
-    writer: &Arc<IcepickWriter>,
+    catalog: &Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>,
+    namespace: &str,
 ) -> Result<Response> {
     // Parse OTLP traces request
     let request = otlp::traces::parse_otlp_trace_request(body_bytes, format).map_err(|e| {
@@ -110,23 +112,24 @@ pub async fn handle_traces_request(
 
         spans_processed += metadata.span_count;
 
-        // Write using OtlpWriter trait
+        // Write via write_batch function
         for batch in &batches {
-            let result = writer
-                .write_batch(
-                    batch,
-                    SignalType::Traces,
-                    None,
-                    metadata.service_name.as_ref(),
-                    metadata.first_timestamp_nanos,
-                )
-                .await
-                .map_err(|e| {
-                    console_error!("Failed to write traces: {:?}", e);
-                    worker::Error::RustError(format!("Write error: {}", e))
-                })?;
+            let path = otlp2parquet_writer::write_batch(
+                catalog.as_ref(),
+                namespace,
+                batch,
+                SignalType::Traces,
+                None,
+                metadata.service_name.as_ref(),
+                metadata.first_timestamp_nanos,
+            )
+            .await
+            .map_err(|e| {
+                console_error!("Failed to write traces: {:?}", e);
+                worker::Error::RustError(format!("Write error: {}", e))
+            })?;
 
-            uploaded_paths.push(result.path);
+            uploaded_paths.push(path);
         }
     }
 
@@ -152,7 +155,8 @@ pub async fn handle_metrics_request(
     body_bytes: &[u8],
     format: otlp2parquet_core::InputFormat,
     content_type: Option<&str>,
-    writer: &Arc<IcepickWriter>,
+    catalog: &Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>,
+    namespace: &str,
 ) -> Result<Response> {
     // Parse OTLP metrics request
     let request = otlp::metrics::parse_otlp_request(body_bytes, format).map_err(|e| {
@@ -188,22 +192,23 @@ pub async fn handle_metrics_request(
             let service_name = extract_service_name(&batch);
             let timestamp_nanos = extract_first_timestamp(&batch);
 
-            // Write using OtlpWriter trait
-            let result = writer
-                .write_batch(
-                    &batch,
-                    SignalType::Metrics,
-                    Some(&metric_type),
-                    &service_name,
-                    timestamp_nanos,
-                )
-                .await
-                .map_err(|e| {
-                    console_error!("Failed to write {} metrics: {:?}", metric_type, e);
-                    worker::Error::RustError(format!("Write error: {}", e))
-                })?;
+            // Write via write_batch function
+            let path = otlp2parquet_writer::write_batch(
+                catalog.as_ref(),
+                namespace,
+                &batch,
+                SignalType::Metrics,
+                Some(&metric_type),
+                &service_name,
+                timestamp_nanos,
+            )
+            .await
+            .map_err(|e| {
+                console_error!("Failed to write {} metrics: {:?}", metric_type, e);
+                worker::Error::RustError(format!("Write error: {}", e))
+            })?;
 
-            uploaded_paths.push(result.path);
+            uploaded_paths.push(path);
         }
     }
 

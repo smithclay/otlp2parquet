@@ -4,11 +4,16 @@
 
 use anyhow::Result;
 use otlp2parquet_config::{LogFormat, RuntimeConfig, StorageBackend};
-use otlp2parquet_writer::IcepickWriter;
+use std::sync::Arc;
 use tracing::info;
 
-/// Initialize writer from RuntimeConfig
-pub(crate) async fn init_writer(config: &RuntimeConfig) -> Result<IcepickWriter> {
+/// Initialize catalog from RuntimeConfig
+pub(crate) async fn init_writer(
+    config: &RuntimeConfig,
+) -> Result<(
+    Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>,
+    String,
+)> {
     info!(
         "Initializing writer with storage backend: {}",
         config.storage.backend
@@ -73,59 +78,69 @@ pub(crate) async fn init_writer(config: &RuntimeConfig) -> Result<IcepickWriter>
         }
     };
 
-    // Check if Iceberg catalog is configured and initialize writer
-    if let Some(iceberg_cfg) = &config.iceberg {
-        if let Some(bucket_arn) = &iceberg_cfg.bucket_arn {
-            // S3 Tables catalog (AWS managed catalog via ARN)
-            info!("Initializing with S3 Tables catalog: {}", bucket_arn);
-            return otlp2parquet_writer::initialize_lambda_writer(bucket_arn, String::new()).await;
-        } else if !iceberg_cfg.rest_uri.is_empty() {
-            // Generic REST catalog (Nessie, Glue REST, etc.)
-            info!(
-                "Initializing with REST catalog: endpoint={}, warehouse={:?}",
-                iceberg_cfg.rest_uri, iceberg_cfg.warehouse
-            );
+    // Check if Iceberg catalog is configured
+    let iceberg_cfg = config.iceberg.as_ref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Server requires Iceberg catalog configuration. \
+            Add [iceberg] section to config.toml with either:\n\
+            - bucket_arn = \"arn:aws:s3tables:...:bucket/name\" for S3 Tables\n\
+            - rest_uri = \"https://catalog.example.com\" and warehouse = \"s3://bucket/path\" for REST catalog"
+        )
+    })?;
 
-            // Build catalog config
-            let mut catalog_config = std::collections::HashMap::new();
+    let catalog_config = if let Some(bucket_arn) = &iceberg_cfg.bucket_arn {
+        // S3 Tables catalog (AWS managed catalog via ARN)
+        info!("Initializing with S3 Tables catalog: {}", bucket_arn);
 
-            // Add namespace if configured
-            if let Some(ref ns) = iceberg_cfg.namespace {
-                catalog_config.insert("namespace".to_string(), ns.clone());
-            }
+        otlp2parquet_writer::CatalogConfig {
+            namespace: "otlp".to_string(),
+            catalog_type: otlp2parquet_writer::CatalogType::S3Tables {
+                bucket_arn: bucket_arn.clone(),
+            },
+        }
+    } else if !iceberg_cfg.rest_uri.is_empty() {
+        // Generic REST catalog (Nessie, Glue REST, etc.)
+        info!(
+            "Initializing with REST catalog: endpoint={}, warehouse={:?}",
+            iceberg_cfg.rest_uri, iceberg_cfg.warehouse
+        );
 
-            // Add auth token if available from env
-            if let Ok(token) = std::env::var("ICEBERG_REST_TOKEN") {
-                catalog_config.insert("token".to_string(), token);
-            }
+        // Get warehouse location (required for REST catalog)
+        let warehouse = iceberg_cfg
+            .warehouse
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("warehouse is required for REST catalog"))?
+            .clone();
 
-            // Get warehouse location (required for REST catalog)
-            let warehouse = iceberg_cfg
-                .warehouse
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("warehouse is required for REST catalog"))?;
+        // Get namespace from config or use default
+        let namespace = iceberg_cfg
+            .namespace
+            .clone()
+            .unwrap_or_else(|| "otlp".to_string());
 
-            return otlp2parquet_writer::initialize_server_writer(
-                &iceberg_cfg.rest_uri,
+        // Get auth token if available from env
+        let token = std::env::var("ICEBERG_REST_TOKEN").ok();
+
+        otlp2parquet_writer::CatalogConfig {
+            namespace,
+            catalog_type: otlp2parquet_writer::CatalogType::Rest {
+                uri: iceberg_cfg.rest_uri.clone(),
                 warehouse,
                 operator,
-                Some(catalog_config),
-            )
-            .await;
-        } else {
-            info!("No bucket_arn or rest_uri configured - Iceberg catalog disabled");
+                token,
+            },
         }
     } else {
-        info!("No Iceberg configuration - catalog disabled");
-    }
+        anyhow::bail!("Server requires either bucket_arn or rest_uri in iceberg configuration")
+    };
 
-    // Without catalog, cannot use AppendOnlyTableWriter
-    anyhow::bail!(
-        "Server requires Iceberg catalog configuration (S3 Tables ARN or REST catalog endpoint). \
-        Add [iceberg] section to config.toml with either:\n\
-        - bucket_arn = \"arn:aws:s3tables:...:bucket/name\" for S3 Tables\n\
-        - rest_uri = \"https://catalog.example.com\" and warehouse = \"s3://bucket/path\" for REST catalog"
-    )
+    let namespace = catalog_config.namespace.clone();
+    let catalog = otlp2parquet_writer::initialize_catalog(catalog_config).await?;
+
+    // Ensure namespace exists
+    otlp2parquet_writer::ensure_namespace(catalog.as_ref(), &namespace).await?;
+
+    Ok((catalog, namespace))
 }
 
 /// Initialize tracing/logging from RuntimeConfig

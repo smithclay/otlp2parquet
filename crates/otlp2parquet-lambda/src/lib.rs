@@ -107,11 +107,10 @@ async fn handle_request(
     }
 }
 
-// Old Writer enum removed - now using otlp2parquet_writer::OtlpWriter trait
-
 #[derive(Clone)]
 pub(crate) struct LambdaState {
-    pub writer: Arc<dyn otlp2parquet_writer::OtlpWriter>,
+    pub catalog: Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>,
+    pub namespace: String,
     pub passthrough: PassthroughBatcher,
     pub max_payload_bytes: usize,
 }
@@ -158,12 +157,12 @@ pub async fn run() -> Result<(), Error> {
     let max_payload_bytes = config.request.max_payload_bytes;
     tracing::info!("Lambda payload cap set to {} bytes", max_payload_bytes);
 
-    // Initialize writer - support both REST catalog and S3 Tables
+    // Initialize catalog - support both REST catalog and S3 Tables
     let iceberg_cfg = config.iceberg.as_ref().ok_or_else(|| {
         Error::from("Lambda requires iceberg configuration (rest_uri or bucket_arn)")
     })?;
 
-    let writer = if !iceberg_cfg.rest_uri.is_empty() {
+    let catalog_config = if !iceberg_cfg.rest_uri.is_empty() {
         // REST catalog (Nessie, Glue REST, etc.)
         tracing::info!(
             "Initializing Lambda with REST catalog: endpoint={}, namespace={:?}",
@@ -189,35 +188,49 @@ pub async fn run() -> Result<(), Error> {
             .map_err(|e| Error::from(format!("Failed to build S3 operator: {}", e)))?
             .finish();
 
-        // Build catalog config with namespace
-        let mut catalog_config = std::collections::HashMap::new();
-        if let Some(namespace) = &iceberg_cfg.namespace {
-            catalog_config.insert("namespace".to_string(), namespace.clone());
-        }
+        let namespace = iceberg_cfg
+            .namespace
+            .clone()
+            .unwrap_or_else(|| "otlp".to_string());
 
-        // Delegate to writer crate's REST catalog initialization
-        otlp2parquet_writer::initialize_server_writer(
-            &iceberg_cfg.rest_uri,
-            "", // warehouse not used for Lambda
-            operator,
-            Some(catalog_config),
-        )
-        .await
-        .map_err(|e| Error::from(format!("Failed to initialize writer: {}", e)))?
+        otlp2parquet_writer::CatalogConfig {
+            namespace,
+            catalog_type: otlp2parquet_writer::CatalogType::Rest {
+                uri: iceberg_cfg.rest_uri.clone(),
+                warehouse: String::new(),
+                operator,
+                token: None,
+            },
+        }
     } else if let Some(bucket_arn) = &iceberg_cfg.bucket_arn {
         // S3 Tables catalog (AWS managed)
         tracing::info!("Initializing Lambda with S3 Tables catalog: {}", bucket_arn);
-        otlp2parquet_writer::initialize_lambda_writer(bucket_arn, String::new())
-            .await
-            .map_err(|e| Error::from(format!("Failed to initialize writer: {}", e)))?
+
+        otlp2parquet_writer::CatalogConfig {
+            namespace: "otlp".to_string(),
+            catalog_type: otlp2parquet_writer::CatalogType::S3Tables {
+                bucket_arn: bucket_arn.clone(),
+            },
+        }
     } else {
         return Err(Error::from(
             "Lambda requires either iceberg.rest_uri or iceberg.bucket_arn configuration",
         ));
     };
 
+    let namespace = catalog_config.namespace.clone();
+    let catalog = otlp2parquet_writer::initialize_catalog(catalog_config)
+        .await
+        .map_err(|e| Error::from(format!("Failed to initialize catalog: {}", e)))?;
+
+    // Ensure namespace exists
+    otlp2parquet_writer::ensure_namespace(catalog.as_ref(), &namespace)
+        .await
+        .map_err(|e| Error::from(format!("Failed to ensure namespace: {}", e)))?;
+
     let state = Arc::new(LambdaState {
-        writer: Arc::new(writer),
+        catalog,
+        namespace,
         passthrough: PassthroughBatcher::default(),
         max_payload_bytes,
     });

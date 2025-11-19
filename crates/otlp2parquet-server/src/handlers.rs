@@ -221,22 +221,24 @@ async fn process_traces(
 
         let service_name = metadata.service_name.as_ref();
 
-        // Write traces using new writer trait
+        // Write traces via write_batch function
         let mut partition_path = String::new();
         for batch in &batches {
-            let result = state
-                .writer
-                .write_batch(
-                    batch,
-                    otlp2parquet_core::SignalType::Traces,
-                    None, // No metric type for traces
-                    service_name,
-                    metadata.first_timestamp_nanos,
-                )
-                .await
-                .map_err(|e| AppError::internal(e.context("Failed to write traces to storage")))?;
+            let path = otlp2parquet_writer::write_batch(
+                state.catalog.as_ref(),
+                &state.namespace,
+                batch,
+                otlp2parquet_core::SignalType::Traces,
+                None, // No metric type for traces
+                service_name,
+                metadata.first_timestamp_nanos,
+            )
+            .await
+            .map_err(|e| {
+                AppError::internal(anyhow::anyhow!("Failed to write traces to storage: {}", e))
+            })?;
 
-            partition_path = result.path; // Track last path for logging
+            partition_path = path; // Track last path for logging
         }
 
         counter!("otlp.traces.flushes", 1);
@@ -314,23 +316,23 @@ async fn process_metrics(
             let service_name = extract_service_name(&batch);
             let timestamp_nanos = extract_first_timestamp(&batch);
 
-            let result = state
-                .writer
-                .write_batch(
-                    &batch,
-                    otlp2parquet_core::SignalType::Metrics,
-                    Some(&metric_type),
-                    &service_name,
-                    timestamp_nanos,
-                )
-                .await
-                .map_err(|e| {
-                    AppError::internal(
-                        e.context(format!("Failed to write {} metrics", metric_type)),
-                    )
-                })?;
-
-            let partition_path = result.path.clone();
+            let partition_path = otlp2parquet_writer::write_batch(
+                state.catalog.as_ref(),
+                &state.namespace,
+                &batch,
+                otlp2parquet_core::SignalType::Metrics,
+                Some(&metric_type),
+                &service_name,
+                timestamp_nanos,
+            )
+            .await
+            .map_err(|e| {
+                AppError::internal(anyhow::anyhow!(
+                    "Failed to write {} metrics: {}",
+                    metric_type,
+                    e
+                ))
+            })?;
 
             counter!("otlp.metrics.flushes", 1, "metric_type" => metric_type.clone());
             info!(
@@ -391,24 +393,22 @@ pub(crate) async fn persist_log_batch(
     let mut uploaded_paths = Vec::new();
 
     for batch in &completed.batches {
-        let result = state
-            .writer
-            .write_batch(
-                batch,
-                otlp2parquet_core::SignalType::Logs,
-                None, // No metric type for logs
-                &completed.metadata.service_name,
-                completed.metadata.first_timestamp_nanos,
-            )
-            .await
-            .context("Failed to write logs to storage")?;
+        let path = otlp2parquet_writer::write_batch(
+            state.catalog.as_ref(),
+            &state.namespace,
+            batch,
+            otlp2parquet_core::SignalType::Logs,
+            None, // No metric type for logs
+            &completed.metadata.service_name,
+            completed.metadata.first_timestamp_nanos,
+        )
+        .await
+        .context("Failed to write logs to storage")?;
 
-        uploaded_paths.push(result.path.clone());
+        uploaded_paths.push(path);
     }
 
-    // Return first write result for backward compatibility
-    // (caller expects single ParquetWriteResult)
-    // NOTE: Most fields are not populated since the new writer doesn't track them
+    // Return minimal ParquetWriteResult for backward compatibility
     let schema = completed
         .batches
         .first()

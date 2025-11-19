@@ -38,7 +38,8 @@ use init::{init_tracing, init_writer};
 /// Application state shared across all requests
 #[derive(Clone)]
 pub(crate) struct AppState {
-    pub writer: Arc<dyn otlp2parquet_writer::OtlpWriter>,
+    pub catalog: Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>,
+    pub namespace: String,
     pub batcher: Option<Arc<BatchManager>>,
     pub passthrough: PassthroughBatcher,
     pub max_payload_bytes: usize,
@@ -139,8 +140,8 @@ pub async fn run() -> Result<()> {
         .listen_addr
         .clone();
 
-    // Initialize writer (handles both storage and optional Iceberg catalog)
-    let writer = init_writer(&config).await?;
+    // Initialize catalog and namespace
+    let (catalog, namespace) = init_writer(&config).await?;
 
     // Configure batching
     let batch_config = BatchConfig {
@@ -167,7 +168,8 @@ pub async fn run() -> Result<()> {
 
     // Create app state
     let state = AppState {
-        writer: Arc::new(writer),
+        catalog,
+        namespace,
         batcher,
         passthrough: PassthroughBatcher::default(),
         max_payload_bytes,
