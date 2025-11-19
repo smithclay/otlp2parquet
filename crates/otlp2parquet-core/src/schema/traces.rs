@@ -35,13 +35,13 @@ pub fn otel_traces_schema_arc() -> Arc<Schema> {
 
 fn build_schema() -> Schema {
     // S3 Tables doesn't support complex types (Map, Struct) - use JSON-encoded strings instead
-    // This matches the Iceberg schema definition in iceberg_schemas::traces_schema()
-    let timestamp_ns = DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into()));
+    // Iceberg v1/v2 only supports microsecond precision timestamps
+    let timestamp_us = DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into()));
     let string_type = DataType::Utf8;
 
-    // List types with element field IDs matching iceberg_schemas::traces_schema()
+    // List types with element field IDs matching Iceberg schema
     let events_timestamp_list = DataType::List(Arc::new(list_element_field(
-        timestamp_ns.clone(),
+        timestamp_us.clone(),
         false,
         5001,
     )));
@@ -80,7 +80,7 @@ fn build_schema() -> Schema {
     let fields = vec![
         // ============ Common Fields (IDs 1-20) ============
         // Shared across all signal types for cross-signal queries and schema evolution
-        field_with_id(field::TIMESTAMP, timestamp_ns.clone(), false, 1),
+        field_with_id(field::TIMESTAMP, timestamp_us.clone(), false, 1),
         field_with_id(field::TRACE_ID, string_type.clone(), false, 2),
         field_with_id(field::SPAN_ID, string_type.clone(), false, 3),
         field_with_id(field::SERVICE_NAME, string_type.clone(), true, 4),
@@ -137,106 +137,5 @@ mod tests {
         assert_eq!(schema.field(7).name(), field::PARENT_SPAN_ID);
         assert_eq!(schema.field(11).name(), field::SPAN_ATTRIBUTES);
         assert_eq!(schema.field(21).name(), field::LINKS_ATTRIBUTES);
-    }
-
-    #[test]
-    fn test_arrow_iceberg_schema_compatibility() {
-        use crate::iceberg_schemas;
-        use icepick::spec::PrimitiveType;
-
-        // Get both schemas
-        let arrow_schema = otel_traces_schema();
-        let iceberg_schema = iceberg_schemas::traces_schema();
-
-        // Critical fields that MUST be String for S3 Tables compatibility
-        let critical_string_fields = vec![field::RESOURCE_ATTRIBUTES, field::SPAN_ATTRIBUTES];
-
-        // List fields that contain Maps must also use String encoding
-        let critical_list_fields = vec![field::EVENTS_ATTRIBUTES, field::LINKS_ATTRIBUTES];
-
-        // Check Map fields are String
-        for field_name in critical_string_fields {
-            let arrow_field = arrow_schema
-                .field_with_name(field_name)
-                .unwrap_or_else(|_| panic!("Arrow schema missing field: {}", field_name));
-
-            let iceberg_field = iceberg_schema
-                .fields()
-                .iter()
-                .find(|f| f.name() == field_name)
-                .unwrap_or_else(|| panic!("Iceberg schema missing field: {}", field_name));
-
-            assert_eq!(
-                arrow_field.data_type(),
-                &DataType::Utf8,
-                "Arrow schema field '{}' must be DataType::Utf8 (String) for S3 Tables compatibility. \
-                Found: {:?}. Attributes must be JSON-encoded strings.",
-                field_name,
-                arrow_field.data_type()
-            );
-
-            assert!(
-                matches!(iceberg_field.field_type(), icepick::spec::Type::Primitive(PrimitiveType::String)),
-                "Iceberg schema field '{}' must be PrimitiveType::String for S3 Tables compatibility. \
-                Found: {:?}",
-                field_name,
-                iceberg_field.field_type()
-            );
-        }
-
-        // Check List<String> fields (events/links attributes must be JSON-encoded string lists)
-        for field_name in critical_list_fields {
-            let arrow_field = arrow_schema
-                .field_with_name(field_name)
-                .unwrap_or_else(|_| panic!("Arrow schema missing field: {}", field_name));
-
-            let iceberg_field = iceberg_schema
-                .fields()
-                .iter()
-                .find(|f| f.name() == field_name)
-                .unwrap_or_else(|| panic!("Iceberg schema missing field: {}", field_name));
-
-            // Arrow: should be List<String> not List<Map<String,String>>
-            if let DataType::List(inner) = arrow_field.data_type() {
-                assert_eq!(
-                    inner.data_type(),
-                    &DataType::Utf8,
-                    "Arrow schema field '{}' must be List<String> for S3 Tables. \
-                    Found List<{:?}>. Each event/link attributes map must be JSON-encoded.",
-                    field_name,
-                    inner.data_type()
-                );
-            } else {
-                panic!("Arrow schema field '{}' must be a List type", field_name);
-            }
-
-            // Iceberg: should be List<String> - just check it's a List type
-            // We can't easily inspect the element type without more complex matching
-            assert!(
-                matches!(iceberg_field.field_type(), icepick::spec::Type::List(_)),
-                "Iceberg schema field '{}' must be a List type for S3 Tables. Found: {:?}",
-                field_name,
-                iceberg_field.field_type()
-            );
-        }
-
-        // Verify field count and ordering
-        assert_eq!(
-            arrow_schema.fields().len(),
-            iceberg_schema.fields().len(),
-            "Arrow and Iceberg schemas have different field counts"
-        );
-
-        for (arrow_field, iceberg_field) in
-            arrow_schema.fields().iter().zip(iceberg_schema.fields())
-        {
-            assert_eq!(
-                arrow_field.name(),
-                iceberg_field.name(),
-                "Field name mismatch - Arrow: '{}', Iceberg: '{}'",
-                arrow_field.name(),
-                iceberg_field.name()
-            );
-        }
     }
 }

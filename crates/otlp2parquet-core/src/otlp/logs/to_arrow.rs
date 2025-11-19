@@ -6,7 +6,7 @@
 use anyhow::{Context, Result};
 use arrow::array::{
     BinaryBuilder, Int32Builder, RecordBatch, StringBuilder, TimestampMicrosecondBuilder,
-    TimestampNanosecondBuilder, UInt32Builder,
+    UInt32Builder,
 };
 use otlp2parquet_proto::opentelemetry::proto::{
     collector::logs::v1::ExportLogsServiceRequest,
@@ -58,9 +58,9 @@ pub struct LogMetadata {
 /// Converts OTLP log records to Arrow RecordBatch
 pub struct ArrowConverter {
     // Column builders
-    timestamp_builder: TimestampNanosecondBuilder,
+    timestamp_builder: TimestampMicrosecondBuilder,
     timestamp_time_builder: TimestampMicrosecondBuilder,
-    observed_timestamp_builder: TimestampNanosecondBuilder,
+    observed_timestamp_builder: TimestampMicrosecondBuilder,
     trace_id_builder: BinaryBuilder,
     span_id_builder: BinaryBuilder,
     trace_flags_builder: UInt32Builder,
@@ -98,13 +98,13 @@ impl ArrowConverter {
         let schema = otel_logs_schema_arc();
 
         Self {
-            timestamp_builder: TimestampNanosecondBuilder::with_capacity(capacity)
+            timestamp_builder: TimestampMicrosecondBuilder::with_capacity(capacity)
                 .with_timezone("UTC")
                 .with_data_type(schema.field(0).data_type().clone()),
             timestamp_time_builder: TimestampMicrosecondBuilder::with_capacity(capacity)
                 .with_timezone("UTC")
                 .with_data_type(schema.field(12).data_type().clone()),
-            observed_timestamp_builder: TimestampNanosecondBuilder::with_capacity(capacity)
+            observed_timestamp_builder: TimestampMicrosecondBuilder::with_capacity(capacity)
                 .with_timezone("UTC")
                 .with_data_type(schema.field(13).data_type().clone()),
             trace_id_builder: BinaryBuilder::with_capacity(
@@ -150,9 +150,10 @@ impl ArrowConverter {
         self.add_from_request_with_flush(request, usize::MAX, &mut |_, _| Ok(()))
     }
 
+    /// Convert OTLP nanosecond timestamps to microseconds for Iceberg compatibility
     #[inline]
-    fn clamp_nanos(ns: u64) -> i64 {
-        (ns.min(i64::MAX as u64)) as i64
+    fn nanos_to_micros(ns: u64) -> i64 {
+        ((ns / 1_000).min(i64::MAX as u64)) as i64
     }
 
     pub fn add_from_request_with_flush<F>(
@@ -398,12 +399,11 @@ impl ArrowConverter {
     where
         F: FnMut(RecordBatch, LogMetadata) -> Result<()>,
     {
-        let timestamp = Self::clamp_nanos(log_record.time_unix_nano);
+        let timestamp = Self::nanos_to_micros(log_record.time_unix_nano);
         self.timestamp_builder.append_value(timestamp);
-        let timestamp_micros = timestamp / 1_000;
-        self.timestamp_time_builder.append_value(timestamp_micros);
+        self.timestamp_time_builder.append_value(timestamp);
         self.observed_timestamp_builder
-            .append_value(Self::clamp_nanos(log_record.observed_time_unix_nano));
+            .append_value(Self::nanos_to_micros(log_record.observed_time_unix_nano));
 
         if self.first_timestamp.is_none() {
             self.first_timestamp = Some(timestamp);

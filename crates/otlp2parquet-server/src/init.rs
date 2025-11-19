@@ -3,10 +3,8 @@
 // Storage backend and logging/tracing setup
 
 use anyhow::Result;
-use icepick::catalog::Catalog;
 use otlp2parquet_config::{LogFormat, RuntimeConfig, StorageBackend};
 use otlp2parquet_writer::IcepickWriter;
-use std::sync::Arc;
 use tracing::info;
 
 /// Initialize writer from RuntimeConfig
@@ -75,88 +73,59 @@ pub(crate) async fn init_writer(config: &RuntimeConfig) -> Result<IcepickWriter>
         }
     };
 
-    let file_io = icepick::FileIO::new(operator);
-
-    // Check if Iceberg catalog is configured
-    let catalog: Option<Arc<dyn Catalog>> = if let Some(iceberg_cfg) = &config.iceberg {
+    // Check if Iceberg catalog is configured and initialize writer
+    if let Some(iceberg_cfg) = &config.iceberg {
         if let Some(bucket_arn) = &iceberg_cfg.bucket_arn {
             // S3 Tables catalog (AWS managed catalog via ARN)
-            info!("Initializing S3 Tables catalog from ARN: {}", bucket_arn);
-            match icepick::S3TablesCatalog::from_arn("otlp2parquet", bucket_arn).await {
-                Ok(catalog) => Some(Arc::new(catalog)),
-                Err(e) => {
-                    info!(
-                        "Failed to create S3 Tables catalog: {} - continuing without catalog",
-                        e
-                    );
-                    None
-                }
-            }
+            info!("Initializing with S3 Tables catalog: {}", bucket_arn);
+            return otlp2parquet_writer::initialize_lambda_writer(bucket_arn, String::new()).await;
         } else if !iceberg_cfg.rest_uri.is_empty() {
             // Generic REST catalog (Nessie, Glue REST, etc.)
             info!(
-                "Initializing REST catalog: endpoint={}, warehouse={:?}, namespace={:?}",
-                iceberg_cfg.rest_uri, iceberg_cfg.warehouse, iceberg_cfg.namespace
+                "Initializing with REST catalog: endpoint={}, warehouse={:?}",
+                iceberg_cfg.rest_uri, iceberg_cfg.warehouse
             );
 
-            let mut builder = icepick::RestCatalog::builder("otlp2parquet", &iceberg_cfg.rest_uri);
+            // Build catalog config
+            let mut catalog_config = std::collections::HashMap::new();
 
-            // Nessie uses branch name as prefix (e.g., "main")
-            // Other catalogs may use warehouse or empty prefix
-            builder = builder.with_prefix("main");
-
-            // Build catalog with file_io
-            match builder
-                .with_file_io(file_io.clone())
-                .with_bearer_token("") // Anonymous/no auth for Nessie
-                .build()
-            {
-                Ok(catalog) => Some(Arc::new(catalog)),
-                Err(e) => {
-                    info!(
-                        "Failed to create REST catalog: {} - continuing without catalog",
-                        e
-                    );
-                    None
-                }
+            // Add namespace if configured
+            if let Some(ref ns) = iceberg_cfg.namespace {
+                catalog_config.insert("namespace".to_string(), ns.clone());
             }
+
+            // Add auth token if available from env
+            if let Ok(token) = std::env::var("ICEBERG_REST_TOKEN") {
+                catalog_config.insert("token".to_string(), token);
+            }
+
+            // Get warehouse location (required for REST catalog)
+            let warehouse = iceberg_cfg
+                .warehouse
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("warehouse is required for REST catalog"))?;
+
+            return otlp2parquet_writer::initialize_server_writer(
+                &iceberg_cfg.rest_uri,
+                warehouse,
+                operator,
+                Some(catalog_config),
+            )
+            .await;
         } else {
             info!("No bucket_arn or rest_uri configured - Iceberg catalog disabled");
-            None
         }
     } else {
         info!("No Iceberg configuration - catalog disabled");
-        None
-    };
-
-    // Get namespace from config (default to "otlp")
-    let namespace = config
-        .iceberg
-        .as_ref()
-        .and_then(|cfg| cfg.namespace.clone())
-        .unwrap_or_else(|| "otlp".to_string());
-
-    // Create namespace if catalog is configured
-    if let Some(ref catalog) = catalog {
-        let namespace_ident = icepick::NamespaceIdent::new(vec![namespace.clone()]);
-
-        // Try to create namespace (ignore error if it already exists)
-        match catalog
-            .create_namespace(&namespace_ident, Default::default())
-            .await
-        {
-            Ok(_) => info!("Created namespace: {}", namespace),
-            Err(e) => {
-                // Namespace might already exist, which is fine
-                info!(
-                    "Namespace creation result for '{}': {} (may already exist)",
-                    namespace, e
-                );
-            }
-        }
     }
 
-    IcepickWriter::new_with_namespace(file_io, catalog, String::new(), namespace)
+    // Without catalog, cannot use AppendOnlyTableWriter
+    anyhow::bail!(
+        "Server requires Iceberg catalog configuration (S3 Tables ARN or REST catalog endpoint). \
+        Add [iceberg] section to config.toml with either:\n\
+        - bucket_arn = \"arn:aws:s3tables:...:bucket/name\" for S3 Tables\n\
+        - rest_uri = \"https://catalog.example.com\" and warehouse = \"s3://bucket/path\" for REST catalog"
+    )
 }
 
 /// Initialize tracing/logging from RuntimeConfig

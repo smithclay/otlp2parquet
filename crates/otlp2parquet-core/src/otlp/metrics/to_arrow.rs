@@ -6,7 +6,7 @@
 use anyhow::{Context, Result};
 use arrow::array::{
     Array, BooleanBuilder, Float64Builder, GenericListArray, Int32Builder, Int64Builder,
-    ListBuilder, OffsetSizeTrait, RecordBatch, StringBuilder, TimestampNanosecondBuilder,
+    ListBuilder, OffsetSizeTrait, RecordBatch, StringBuilder, TimestampMicrosecondBuilder,
 };
 use arrow::datatypes::{DataType, Field};
 use otlp2parquet_proto::opentelemetry::proto::{
@@ -332,7 +332,7 @@ fn key_value_to_string(kv: &KeyValue) -> String {
 
 // Base columns builder for common fields across all metric types
 struct BaseColumnsBuilder {
-    timestamp_builder: TimestampNanosecondBuilder,
+    timestamp_builder: TimestampMicrosecondBuilder,
     service_name_builder: StringBuilder,
     metric_name_builder: StringBuilder,
     metric_description_builder: StringBuilder,
@@ -347,7 +347,7 @@ struct BaseColumnsBuilder {
 impl BaseColumnsBuilder {
     fn new() -> Self {
         Self {
-            timestamp_builder: TimestampNanosecondBuilder::new().with_timezone("UTC"),
+            timestamp_builder: TimestampMicrosecondBuilder::new().with_timezone("UTC"),
             service_name_builder: StringBuilder::new(),
             metric_name_builder: StringBuilder::new(),
             metric_description_builder: StringBuilder::new(),
@@ -440,7 +440,7 @@ impl GaugeBuilder {
         resource_ctx: &ResourceContext,
         scope_ctx: &ScopeContext,
     ) -> Result<()> {
-        let timestamp = clamp_nanos(point.time_unix_nano);
+        let timestamp = nanos_to_micros(point.time_unix_nano);
         self.base.add_common_fields(
             metric,
             timestamp,
@@ -510,7 +510,7 @@ impl SumBuilder {
         resource_ctx: &ResourceContext,
         scope_ctx: &ScopeContext,
     ) -> Result<()> {
-        let timestamp = clamp_nanos(point.time_unix_nano);
+        let timestamp = nanos_to_micros(point.time_unix_nano);
         self.base.add_common_fields(
             metric,
             timestamp,
@@ -603,7 +603,7 @@ impl HistogramBuilder {
         resource_ctx: &ResourceContext,
         scope_ctx: &ScopeContext,
     ) -> Result<()> {
-        let timestamp = clamp_nanos(point.time_unix_nano);
+        let timestamp = nanos_to_micros(point.time_unix_nano);
         self.base.add_common_fields(
             metric,
             timestamp,
@@ -750,7 +750,7 @@ impl ExponentialHistogramBuilder {
         resource_ctx: &ResourceContext,
         scope_ctx: &ScopeContext,
     ) -> Result<()> {
-        let timestamp = clamp_nanos(point.time_unix_nano);
+        let timestamp = nanos_to_micros(point.time_unix_nano);
         self.base.add_common_fields(
             metric,
             timestamp,
@@ -908,7 +908,7 @@ impl SummaryBuilder {
         resource_ctx: &ResourceContext,
         scope_ctx: &ScopeContext,
     ) -> Result<()> {
-        let timestamp = clamp_nanos(point.time_unix_nano);
+        let timestamp = nanos_to_micros(point.time_unix_nano);
         self.base.add_common_fields(
             metric,
             timestamp,
@@ -987,9 +987,10 @@ impl SummaryBuilder {
 
 // Helper functions
 
+/// Convert OTLP nanosecond timestamps to microseconds for Iceberg compatibility
 #[inline]
-fn clamp_nanos(ns: u64) -> i64 {
-    (ns.min(i64::MAX as u64)) as i64
+fn nanos_to_micros(ns: u64) -> i64 {
+    ((ns / 1_000).min(i64::MAX as u64)) as i64
 }
 
 fn extract_number_value(point: &NumberDataPoint) -> Result<f64> {
@@ -1035,10 +1036,11 @@ mod tests {
     }
 
     #[test]
-    fn test_clamp_nanos() {
-        assert_eq!(clamp_nanos(1000), 1000);
-        assert_eq!(clamp_nanos(i64::MAX as u64), i64::MAX);
-        assert_eq!(clamp_nanos(u64::MAX), i64::MAX);
+    fn test_nanos_to_micros() {
+        assert_eq!(nanos_to_micros(1_000_000), 1_000); // 1ms in nanos -> 1ms in micros
+        assert_eq!(nanos_to_micros(1_000), 1); // 1us in nanos -> 1us in micros
+        assert_eq!(nanos_to_micros(i64::MAX as u64), i64::MAX / 1_000);
+        assert_eq!(nanos_to_micros(u64::MAX), (u64::MAX / 1_000) as i64);
     }
 
     #[test]

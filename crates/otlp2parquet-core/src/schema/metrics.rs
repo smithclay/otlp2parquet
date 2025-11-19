@@ -36,9 +36,10 @@ fn base_fields() -> Vec<Field> {
     vec![
         // ============ Common Fields (IDs 1-20) ============
         // Shared across all signal types for cross-signal queries and schema evolution
+        // Iceberg v1/v2 only supports microsecond precision timestamps
         field_with_id(
             field::TIMESTAMP,
-            DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())),
+            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
             false,
             1,
         ),
@@ -372,110 +373,5 @@ mod tests {
                 .unwrap(),
             "sum"
         );
-    }
-
-    #[test]
-    fn test_arrow_iceberg_schema_compatibility() {
-        use crate::iceberg_schemas;
-        use icepick::spec::PrimitiveType;
-
-        // Test all metric types
-        let metric_types = vec![
-            (
-                "gauge",
-                otel_metrics_gauge_schema(),
-                iceberg_schemas::metrics_gauge_schema(),
-            ),
-            (
-                "sum",
-                otel_metrics_sum_schema(),
-                iceberg_schemas::metrics_sum_schema(),
-            ),
-            (
-                "histogram",
-                otel_metrics_histogram_schema(),
-                iceberg_schemas::metrics_histogram_schema(),
-            ),
-            (
-                "exponential_histogram",
-                otel_metrics_exponential_histogram_schema(),
-                iceberg_schemas::metrics_exponential_histogram_schema(),
-            ),
-            (
-                "summary",
-                otel_metrics_summary_schema(),
-                iceberg_schemas::metrics_summary_schema(),
-            ),
-        ];
-
-        for (metric_type, arrow_schema, iceberg_schema) in metric_types {
-            // Critical Map fields that MUST be String for S3 Tables
-            let critical_string_fields = vec![
-                field::RESOURCE_ATTRIBUTES,
-                field::ATTRIBUTES, // Metric-level attributes
-            ];
-
-            for field_name in critical_string_fields {
-                let arrow_field = arrow_schema
-                    .field_with_name(field_name)
-                    .unwrap_or_else(|_| {
-                        panic!("{} schema missing field: {}", metric_type, field_name)
-                    });
-
-                let iceberg_field = iceberg_schema
-                    .fields()
-                    .iter()
-                    .find(|f| f.name() == field_name)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "{} Iceberg schema missing field: {}",
-                            metric_type, field_name
-                        )
-                    });
-
-                assert_eq!(
-                    arrow_field.data_type(),
-                    &DataType::Utf8,
-                    "{} Arrow schema field '{}' must be DataType::Utf8 (String) for S3 Tables. \
-                    Found: {:?}. Attributes must be JSON-encoded strings.",
-                    metric_type,
-                    field_name,
-                    arrow_field.data_type()
-                );
-
-                assert!(
-                    matches!(
-                        iceberg_field.field_type(),
-                        icepick::spec::Type::Primitive(PrimitiveType::String)
-                    ),
-                    "{} Iceberg schema field '{}' must be PrimitiveType::String for S3 Tables. \
-                    Found: {:?}",
-                    metric_type,
-                    field_name,
-                    iceberg_field.field_type()
-                );
-            }
-
-            // Verify field count and ordering
-            assert_eq!(
-                arrow_schema.fields().len(),
-                iceberg_schema.fields().len(),
-                "{} schemas have different field counts",
-                metric_type
-            );
-
-            for (arrow_field, iceberg_field) in
-                arrow_schema.fields().iter().zip(iceberg_schema.fields())
-            {
-                assert_eq!(
-                    arrow_field.name(),
-                    iceberg_field.name(),
-                    "{} field name mismatch - Arrow: '{}', Iceberg: '{}'",
-                    metric_type,
-                    arrow_field.name(),
-                    iceberg_field.name()
-                );
-            }
-        }
     }
 }

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use arrow::array::{
-    Int64Builder, ListBuilder, RecordBatch, StringBuilder, TimestampNanosecondBuilder,
+    Int64Builder, ListBuilder, RecordBatch, StringBuilder, TimestampMicrosecondBuilder,
 };
 use arrow::datatypes::DataType;
 use otlp2parquet_proto::opentelemetry::proto::{
@@ -94,7 +94,7 @@ fn estimate_span_count(request: &ExportTraceServiceRequest) -> usize {
 }
 
 struct TraceArrowBuilder {
-    timestamp_builder: TimestampNanosecondBuilder,
+    timestamp_builder: TimestampMicrosecondBuilder,
     trace_id_builder: StringBuilder,
     span_id_builder: StringBuilder,
     parent_span_id_builder: StringBuilder,
@@ -109,7 +109,7 @@ struct TraceArrowBuilder {
     duration_builder: Int64Builder,
     status_code_builder: StringBuilder,
     status_message_builder: StringBuilder,
-    events_timestamp_builder: ListBuilder<TimestampNanosecondBuilder>,
+    events_timestamp_builder: ListBuilder<TimestampMicrosecondBuilder>,
     events_name_builder: ListBuilder<StringBuilder>,
     events_attributes_builder: ListBuilder<StringBuilder>,
     links_trace_id_builder: ListBuilder<StringBuilder>,
@@ -135,7 +135,7 @@ impl TraceArrowBuilder {
     fn with_capacity(capacity: usize) -> Self {
         let schema = otel_traces_schema_arc();
 
-        let timestamp_builder = TimestampNanosecondBuilder::with_capacity(capacity)
+        let timestamp_builder = TimestampMicrosecondBuilder::with_capacity(capacity)
             .with_timezone("UTC")
             .with_data_type(schema.field(0).data_type().clone());
 
@@ -168,7 +168,7 @@ impl TraceArrowBuilder {
             _ => unreachable!("unexpected data type for links attributes list"),
         };
 
-        let events_timestamp_values = TimestampNanosecondBuilder::with_capacity(capacity * 4)
+        let events_timestamp_values = TimestampMicrosecondBuilder::with_capacity(capacity * 4)
             .with_timezone("UTC")
             .with_data_type(events_timestamp_field.data_type().clone());
 
@@ -323,7 +323,7 @@ impl TraceArrowBuilder {
         resource_ctx: &ResourceContext<'_>,
         scope_ctx: &ScopeContext<'_>,
     ) -> Result<()> {
-        let timestamp = Self::clamp_nanos(span.start_time_unix_nano);
+        let timestamp = Self::nanos_to_micros(span.start_time_unix_nano);
         self.timestamp_builder.append_value(timestamp);
         self.update_first_timestamp(timestamp);
 
@@ -421,7 +421,7 @@ impl TraceArrowBuilder {
             let attributes = self.events_attributes_builder.values();
 
             for event in events {
-                timestamps.append_value(Self::clamp_nanos(event.time_unix_nano));
+                timestamps.append_value(Self::nanos_to_micros(event.time_unix_nano));
                 names.append_value(event.name.as_str());
                 // Convert event attributes to JSON string for S3 Tables compatibility
                 let json_string = keyvalue_attrs_to_json_string(&event.attributes);
@@ -513,8 +513,9 @@ impl TraceArrowBuilder {
         }
     }
 
-    fn clamp_nanos(ns: u64) -> i64 {
-        (ns.min(i64::MAX as u64)) as i64
+    /// Convert OTLP nanosecond timestamps to microseconds for Iceberg compatibility
+    fn nanos_to_micros(ns: u64) -> i64 {
+        ((ns / 1_000).min(i64::MAX as u64)) as i64
     }
 
     fn compute_duration(start: u64, end: u64) -> i64 {
@@ -630,7 +631,7 @@ mod tests {
         assert_eq!(batch.num_rows(), 1);
 
         assert_eq!(metadata.span_count, 1);
-        assert_eq!(metadata.first_timestamp_nanos, 1_000);
+        assert_eq!(metadata.first_timestamp_nanos, 1); // 1000 nanos / 1000 = 1 micros
         assert_eq!(metadata.service_name.as_ref(), "svc");
 
         let trace_ids = batch
@@ -659,7 +660,7 @@ mod tests {
         let (batches, metadata) = TraceArrowConverter::convert(&request).unwrap();
 
         assert_eq!(metadata.service_name.as_ref(), "frontend-proxy");
-        assert_eq!(metadata.first_timestamp_nanos, 1_760_738_064_624_180_000);
+        assert_eq!(metadata.first_timestamp_nanos, 1_760_738_064_624_180); // Stored as microseconds
         assert_eq!(metadata.span_count, 2);
 
         assert_eq!(batches.len(), 1);
@@ -703,7 +704,7 @@ mod tests {
         let (batches, metadata) = TraceArrowConverter::convert(&request).unwrap();
 
         assert_eq!(metadata.service_name.as_ref(), "frontend-proxy");
-        assert_eq!(metadata.first_timestamp_nanos, 1_760_738_064_624_180_000);
+        assert_eq!(metadata.first_timestamp_nanos, 1_760_738_064_624_180); // Stored as microseconds
         assert_eq!(metadata.span_count, 2);
 
         assert_eq!(batches.len(), 1);
@@ -721,7 +722,7 @@ mod tests {
         let (batches, metadata) = TraceArrowConverter::convert(&request).unwrap();
 
         assert_eq!(metadata.span_count, 19);
-        assert_eq!(metadata.first_timestamp_nanos, 1_760_738_064_624_180_000);
+        assert_eq!(metadata.first_timestamp_nanos, 1_760_738_064_624_180); // Stored as microseconds
         assert_eq!(metadata.service_name.as_ref(), "product-catalog");
 
         let batch = &batches[0];
@@ -769,7 +770,7 @@ mod tests {
         let (batches, metadata) = TraceArrowConverter::convert(&request).unwrap();
 
         assert_eq!(metadata.span_count, 19);
-        assert_eq!(metadata.first_timestamp_nanos, 1_760_738_064_624_180_000);
+        assert_eq!(metadata.first_timestamp_nanos, 1_760_738_064_624_180); // Stored as microseconds
         assert_eq!(metadata.service_name.as_ref(), "product-catalog");
 
         let batch = &batches[0];

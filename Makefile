@@ -335,7 +335,7 @@ test-e2e: ## Run core e2e tests with Docker (MinIO, otlp2parquet). Override TEST
 
 .PHONY: test-e2e-iceberg
 test-e2e-iceberg: TEST_ICEBERG=1
-test-e2e-iceberg: test-e2e ## Run e2e tests including Iceberg catalog validation
+test-e2e-iceberg: test-e2e ## Run e2e tests including Iceberg catalog validation and DuckDB verification
 
 .PHONY: test-e2e-debug
 test-e2e-debug: KEEP_CONTAINERS=1

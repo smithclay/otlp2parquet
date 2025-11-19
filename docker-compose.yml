@@ -14,6 +14,10 @@ services:
     volumes:
       - minio-data:/data
     command: server /data --console-address ":9001"
+    networks:
+      iceberg_net:
+        aliases:
+          - otlp.minio
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
@@ -27,58 +31,34 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+    networks:
+      iceberg_net:
     entrypoint: >
       /bin/sh -c "
       /usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin};
-      /usr/bin/mc mb myminio/${S3_BUCKET:-otlp-logs} --ignore-existing;
-      /usr/bin/mc anonymous set download myminio/${S3_BUCKET:-otlp-logs};
+      /usr/bin/mc mb myminio/${S3_BUCKET:-otlp} --ignore-existing;
+      /usr/bin/mc anonymous set download myminio/${S3_BUCKET:-otlp};
       echo 'MinIO bucket ready';
       "
 
   # Iceberg REST catalog
-  nessie:
-    image: ghcr.io/projectnessie/nessie:latest
-    ports:
-      - "19120:19120"  # API port
-      - "9002:9000"    # Management port (health checks) - mapped to 9002 to avoid MinIO conflict
+  rest:
+    image: apache/iceberg-rest-fixture
     depends_on:
       minio:
         condition: service_healthy
+    container_name: iceberg-rest
+    ports:
+      - 8181:8181
     environment:
-      # Use property names directly (Quarkus MicroProfile Config style)
-      nessie.version.store.type: "IN_MEMORY"
-      quarkus.http.port: "19120"
-      quarkus.profile: "iceberg-rest"
-      # Warehouse configuration
-      nessie.catalog.default-warehouse: "warehouse"
-      nessie.catalog.warehouses.warehouse.location: "s3://otlp-logs/warehouse"
-      # S3 default options
-      nessie.catalog.service.s3.default-options.region: "us-east-1"
-      nessie.catalog.service.s3.default-options.path-style-access: "true"
-      nessie.catalog.service.s3.default-options.endpoint: "http://minio:9000/"
-      # Credential configuration using URN pattern (Nessie's secret management)
-      nessie.catalog.service.s3.default-options.access-key: "urn:nessie-secret:quarkus:nessie.catalog.secrets.access-key"
-      nessie.catalog.secrets.access-key.name: "${AWS_ACCESS_KEY_ID:-minioadmin}"
-      nessie.catalog.secrets.access-key.secret: "${AWS_SECRET_ACCESS_KEY:-minioadmin}"
-    healthcheck:
-      test: "exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /q/health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'"
-      interval: 5s
-      timeout: 2s
-      retries: 15
-
-  # Create Iceberg namespace automatically
-  nessie-init:
-    image: curlimages/curl:latest
-    depends_on:
-      nessie:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      curl -X POST http://nessie:19120/iceberg/v1/main/namespaces \
-        -H 'Content-Type: application/json' \
-        -d '{\"namespace\": [\"otlp\"], \"properties\": {}}' || true;
-      echo 'Nessie namespace ready';
-      "
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - AWS_REGION=us-east-1
+      - CATALOG_WAREHOUSE=s3://${S3_BUCKET:-otlp}/
+      - CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO
+      - CATALOG_S3_ENDPOINT=http://minio:9000
+    networks:
+      iceberg_net:
 
   # otlp2parquet
   otlp2parquet:
@@ -90,16 +70,14 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
-      nessie:
-        condition: service_healthy
-      nessie-init:
-        condition: service_completed_successfully
+    networks:
+      iceberg_net:
     ports:
       - "${HTTP_PORT:-4318}:4318"
     environment:
       # Storage (override for cloud: OTLP2PARQUET_STORAGE_BACKEND=s3 OTLP2PARQUET_S3_ENDPOINT= OTLP2PARQUET_S3_REGION=us-east-1)
       OTLP2PARQUET_STORAGE_BACKEND: ${STORAGE_BACKEND:-s3}
-      OTLP2PARQUET_S3_BUCKET: ${S3_BUCKET:-otlp-logs}
+      OTLP2PARQUET_S3_BUCKET: ${S3_BUCKET:-otlp}
       OTLP2PARQUET_S3_REGION: ${S3_REGION:-us-east-1}
       OTLP2PARQUET_S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
 
@@ -115,9 +93,9 @@ services:
       # Batching (disable for tests to get immediate writes)
       OTLP2PARQUET_BATCHING_ENABLED: ${BATCHING_ENABLED:-false}
 
-      # Iceberg catalog (optional - enables Nessie integration)
+      # Iceberg catalog (optional - enables Rest integration)
       OTLP2PARQUET_ICEBERG_ENABLED: ${ICEBERG_ENABLED:-true}
-      OTLP2PARQUET_ICEBERG_REST_URI: ${ICEBERG_REST_URI:-http://nessie:19120/iceberg}
+      OTLP2PARQUET_ICEBERG_REST_URI: ${ICEBERG_REST_URI:-http://rest:8181/}
       OTLP2PARQUET_ICEBERG_WAREHOUSE: ${ICEBERG_WAREHOUSE:-s3://otlp-logs/warehouse}
       OTLP2PARQUET_ICEBERG_NAMESPACE: ${ICEBERG_NAMESPACE:-otlp}
 
@@ -128,6 +106,8 @@ services:
   # Telemetrygen - Generate sample OTLP logs, metrics, and traces
   telemetrygen-traces:
     image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
+    networks:
+      iceberg_net:
     depends_on:
       - otlp2parquet
     command:
@@ -145,6 +125,8 @@ services:
     image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
     depends_on:
       - otlp2parquet
+    networks:
+      iceberg_net:
     command:
       - metrics
       - --otlp-endpoint=otlp2parquet:4318
@@ -159,6 +141,8 @@ services:
     image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
     depends_on:
       - otlp2parquet
+    networks:
+      iceberg_net:
     command:
       - logs
       - --otlp-endpoint=otlp2parquet:4318
@@ -171,7 +155,8 @@ services:
 
 volumes:
   minio-data:
-
+networks:
+  iceberg_net:
 # Usage:
 #
 # Local (MinIO):

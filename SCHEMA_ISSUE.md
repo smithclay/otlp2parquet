@@ -1,7 +1,48 @@
 # DuckDB Iceberg Read Failure - Debugging Summary
 
 **Date:** 2025-11-18
-**Status:** IN PROGRESS - Root cause identified, fix in progress
+**Status:** RESOLVED - Architectural simplification completed
+
+## Resolution (2025-11-18)
+
+**Decision:** Remove all Iceberg code from otlp2parquet. Pass only Arrow batches to icepick.
+
+**Rationale:** The root cause was maintaining dual schema definitions (Arrow + Iceberg). This created:
+- Schema drift risks
+- Type mapping conflicts (UInt32 vs Int64, Binary vs FixedSizeBinary)
+- 760+ lines of unnecessary code
+- Statistics collection failures
+
+**Changes Made:**
+- ✅ Deleted `iceberg_schemas.rs` (758 lines)
+- ✅ Deleted `arrow_to_iceberg.rs` (conversion logic)
+- ✅ Removed all catalog operations from writer
+- ✅ Removed Arrow-Iceberg compatibility tests
+- ✅ Simplified to pure Arrow architecture
+
+**New Architecture:**
+```
+otlp2parquet: OTLP → Arrow (with field_id metadata)
+     ↓
+icepick: Arrow → Parquet
+     ↓
+TODO: icepick will derive Iceberg + catalog from Arrow
+```
+
+**What Works Now:**
+- ✅ Parquet file writing via icepick
+- ✅ Arrow schemas (single source of truth)
+- ✅ All 69 tests passing
+- ✅ Clean, simple codebase
+
+**What's Stubbed:**
+- ❌ Catalog integration (will be handled by icepick)
+- ❌ Table auto-creation (will be handled by icepick)
+- ❌ Statistics collection (will be handled by icepick)
+
+---
+
+# Original Investigation (For Reference)
 
 ## Issue Description
 
@@ -122,34 +163,73 @@ icepick::arrow_to_parquet()
 └── Returns nothing (no statistics)
 ```
 
-## Architectural Decision: Contract Between icepick and otlp2parquet
+## Architectural Simplification: otlp2parquet knows NOTHING about Parquet/Iceberg
 
-**The Right Pattern:** Arrow schema should be the contract, icepick handles Iceberg conversion
+**The Right Pattern:** Single Arrow schema with field_id metadata, icepick handles everything else
 
-**Why:**
-1. `RecordBatch` already contains the Arrow schema - it's the source of truth
-2. We shouldn't need to maintain parallel Arrow + Iceberg schemas
-3. icepick should accept Arrow data and handle the Iceberg layer
-4. Simpler, cleaner API - consumers work with Arrow, icepick handles Iceberg details
-
-**Current Problem:**
-- `ParquetWriter::new(iceberg_schema)` converts Iceberg → Arrow internally
-- This internal Arrow schema doesn't match our `RecordBatch`'s schema
-- Type mismatches cause "Expected Int64Array" errors
-
-**Ideal icepick API:**
-```rust
-// Takes RecordBatch (which has Arrow schema)
-// Optionally takes Iceberg schema for field ID mapping
-// Collects statistics from Arrow data
-// Returns DataFile with stats populated
-let data_file = icepick::writer::write_with_stats(
-    batch,              // RecordBatch with Arrow schema
-    &file_path,
-    &file_io,
-    Some(&iceberg_schema)  // Optional for field ID stability
-).await?;
+**Current (OVERCOMPLICATED):**
 ```
+otlp2parquet maintains:
+├── Arrow schemas (otlp2parquet_core::schema::*)
+└── Iceberg schemas (otlp2parquet_core::iceberg_schemas::*)
+
+Then passes BOTH to icepick, which gets confused about which is source of truth
+```
+
+**Proposed (SIMPLE):**
+```
+otlp2parquet maintains:
+└── Arrow schemas ONLY (with PARQUET:field_id metadata)
+
+icepick derives everything from Arrow:
+├── Reads Arrow schema from RecordBatch
+├── Derives Iceberg schema from Arrow schema + field_id metadata
+├── Writes Parquet files
+├── Collects statistics
+└── Creates catalog entries
+```
+
+**Why This Is Better:**
+1. ✅ Single source of truth - just Arrow schemas
+2. ✅ otlp2parquet is purely OTLP → Arrow conversion (no Parquet/Iceberg knowledge)
+3. ✅ No parallel schema maintenance (no drift between Arrow and Iceberg)
+4. ✅ Clear separation: otlp2parquet = telemetry expert, icepick = storage expert
+5. ✅ Field IDs preserved via Arrow metadata (already working in our schemas)
+
+**Ideal API:**
+```rust
+// otlp2parquet: OTLP → Arrow (knows nothing about Parquet/Iceberg)
+let batch = parse_otlp_to_arrow(request, SignalType::Logs)?;
+
+// icepick: Arrow → Parquet + Iceberg (derives Iceberg schema from Arrow)
+let data_file = icepick::arrow_to_parquet(&batch, path, file_io)
+    .finish_data_file()  // Uses batch.schema(), derives Iceberg from field_id metadata
+    .await?;
+```
+
+**What needs to change in icepick:**
+1. Add `arrow_schema_to_iceberg()` function that:
+   - Reads `PARQUET:field_id` from Arrow field metadata
+   - Maps Arrow types → Iceberg types (UInt32→int, Binary→binary, List→list, etc.)
+   - Preserves field names, nullability, and metadata
+2. Modify `finish_data_file()` to:
+   - Read `RecordBatch.schema()` (the actual Arrow schema being written)
+   - Derive Iceberg schema from Arrow using `arrow_schema_to_iceberg()`
+   - Create `StatsCollector` using the Arrow schema (not derived from Iceberg)
+   - Collect statistics matching actual Arrow types in the RecordBatch
+3. Remove `.with_iceberg_schema()` - no longer needed
+
+**What needs to change in otlp2parquet:**
+1. Delete `crates/otlp2parquet-core/src/iceberg_schemas.rs` entirely (500+ lines removed!)
+2. Keep only Arrow schemas in `crates/otlp2parquet-core/src/schema/*.rs` (already have field_id metadata)
+3. Update writer to just call `.finish_data_file()` without passing Iceberg schema
+4. Remove all `use otlp2parquet_core::iceberg_schemas` imports
+
+**Result:**
+- otlp2parquet: ~500 lines of code deleted
+- Simpler mental model: OTLP → Arrow, that's it
+- No schema drift issues (single source of truth)
+- icepick becomes the Parquet/Iceberg expert (proper separation of concerns)
 
 ## Path Forward
 

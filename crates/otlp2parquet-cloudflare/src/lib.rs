@@ -60,56 +60,62 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
     } else {
         // Generic S3-compatible storage configuration
         // Supports R2 (production), MinIO (local dev), or any S3-compatible endpoint
-        let bucket = env
-            .var("OTLP2PARQUET_S3_BUCKET")
+        // Extract R2 Data Catalog configuration from environment variables
+        let account_id = env
+            .var("CLOUDFLARE_ACCOUNT_ID")
             .map_err(|e| {
                 console_error!(
-                    "OTLP2PARQUET_S3_BUCKET environment variable not set: {:?}",
+                    "CLOUDFLARE_ACCOUNT_ID environment variable not set: {:?}",
                     e
                 );
-                e
+                worker::Error::RustError(
+                    "CLOUDFLARE_ACCOUNT_ID environment variable required".to_string(),
+                )
             })?
             .to_string();
 
-        let region = env
-            .var("OTLP2PARQUET_S3_REGION")
-            .ok()
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "auto".to_string());
+        let bucket_name = env
+            .var("CLOUDFLARE_BUCKET_NAME")
+            .map_err(|e| {
+                console_error!(
+                    "CLOUDFLARE_BUCKET_NAME environment variable not set: {:?}",
+                    e
+                );
+                worker::Error::RustError(
+                    "CLOUDFLARE_BUCKET_NAME environment variable required".to_string(),
+                )
+            })?
+            .to_string();
 
-        // Optional: custom S3 endpoint (for MinIO, R2, etc.)
-        // If not set, OpenDAL uses AWS S3 defaults
-        let endpoint = env
-            .var("OTLP2PARQUET_S3_ENDPOINT")
-            .ok()
-            .map(|v| v.to_string());
+        let api_token = env
+            .secret("CLOUDFLARE_API_TOKEN")
+            .or_else(|_| env.var("CLOUDFLARE_API_TOKEN"))
+            .map_err(|e| {
+                console_error!(
+                    "CLOUDFLARE_API_TOKEN environment variable/secret not set: {:?}",
+                    e
+                );
+                worker::Error::RustError(
+                    "CLOUDFLARE_API_TOKEN environment variable required".to_string(),
+                )
+            })?
+            .to_string();
 
-        let access_key_id = env
-            .var("OTLP2PARQUET_S3_ACCESS_KEY_ID")
-            .ok()
-            .map(|v| v.to_string());
-
-        let secret_access_key = env
-            .secret("OTLP2PARQUET_S3_SECRET_ACCESS_KEY")
-            .or_else(|_| env.var("OTLP2PARQUET_S3_SECRET_ACCESS_KEY"))
-            .ok()
-            .map(|v| v.to_string());
+        let namespace = env.var("OTLP_NAMESPACE").ok().map(|v| v.to_string());
 
         console_log!(
-            "Initializing S3-compatible storage: bucket={}, region={}, endpoint={:?}",
-            bucket,
-            region,
-            endpoint.as_deref().unwrap_or("default")
+            "Initializing R2 Data Catalog: account={}, bucket={}, namespace={:?}",
+            account_id,
+            bucket_name,
+            namespace.as_deref().unwrap_or("otlp")
         );
 
         let instance = Arc::new(
             otlp2parquet_writer::initialize_cloudflare_writer(
-                &bucket,
-                &region,
-                endpoint.as_deref(),
-                access_key_id.as_deref(),
-                secret_access_key.as_deref(),
-                String::new(), // No base path prefix
+                &account_id,
+                &bucket_name,
+                &api_token,
+                namespace,
             )
             .await
             .map_err(|e| {

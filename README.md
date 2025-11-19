@@ -191,17 +191,6 @@ Other projects with OTLP to Parquet support:
 
 ---
 
-## Contributing
-
-Contributions are welcome! Please see [AGENTS.md](AGENTS.md) for:
-
-- Development setup
-- Architecture overview
-- Coding standards
-- Testing guidelines
-
----
-
 ## License
 
 Apache-2.0

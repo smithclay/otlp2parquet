@@ -11,7 +11,7 @@ otlp2parquet-batch = { path = "../otlp2parquet-batch" }
 otlp2parquet-config = { path = "../otlp2parquet-config" }
 otlp2parquet-writer = { path = "../otlp2parquet-writer" }
 arrow = { workspace = true }
-icepick = { git = "https://github.com/smithclay/icepick.git", rev = "ef55ba32110435e71c55c99f74f3d94c98def408", default-features = false }
+icepick = { git = "https://github.com/smithclay/icepick.git", rev = "5cad5a99b56fee03ad80dc3725ce4259760ed03d", default-features = false }
 opendal = { version = "0.54", default-features = false, features = ["services-s3"] }
 
 # AWS Lambda runtime (provides tokio runtime)

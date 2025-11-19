@@ -13,7 +13,6 @@
 use anyhow::Result;
 use arrow::array::RecordBatch;
 
-pub mod iceberg_schemas;
 pub mod otlp;
 pub mod parquet;
 pub mod schema;

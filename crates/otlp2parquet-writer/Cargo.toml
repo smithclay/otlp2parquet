@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icepick = { git = "https://github.com/smithclay/icepick.git", rev = "ef55ba32110435e71c55c99f74f3d94c98def408", default-features = false }
+icepick = { git = "https://github.com/smithclay/icepick.git", rev = "5cad5a99b56fee03ad80dc3725ce4259760ed03d", default-features = false }
 otlp2parquet-core = { path = "../otlp2parquet-core" }
 arrow = { version = "56.2", default-features = false }
 anyhow = "1"

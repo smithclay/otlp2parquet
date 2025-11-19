@@ -175,8 +175,7 @@ pub async fn run() -> Result<(), Error> {
         );
 
         // Build REST catalog
-        let mut builder = icepick::RestCatalog::builder("otlp2parquet", &iceberg_cfg.rest_uri);
-        builder = builder.with_prefix("main"); // Nessie branch
+        let builder = icepick::RestCatalog::builder("otlp2parquet", &iceberg_cfg.rest_uri);
 
         // Create S3 operator for storage
         let s3_config = config.storage.s3.as_ref().ok_or_else(|| {
@@ -225,13 +224,10 @@ pub async fn run() -> Result<(), Error> {
             ),
         }
 
-        otlp2parquet_writer::IcepickWriter::new_with_namespace(
-            file_io,
-            Some(Arc::new(catalog)),
-            String::new(),
-            namespace,
-        )
-        .map_err(|e| Error::from(format!("Failed to initialize writer: {}", e)))?
+        // Use the catalog we created with the specified namespace
+        let _ = file_io; // FileIO not needed with AppendOnlyTableWriter
+        otlp2parquet_writer::IcepickWriter::new(Arc::new(catalog), namespace)
+            .map_err(|e| Error::from(format!("Failed to initialize writer: {}", e)))?
     } else if let Some(bucket_arn) = &iceberg_cfg.bucket_arn {
         // S3 Tables catalog (AWS managed)
         tracing::info!("Initializing Lambda with S3 Tables catalog: {}", bucket_arn);

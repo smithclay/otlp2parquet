@@ -38,9 +38,10 @@ fn build_schema() -> Schema {
     let fields = vec![
         // ============ Common Fields (IDs 1-20) ============
         // Shared across all signal types for cross-signal queries and schema evolution
+        // Iceberg v1/v2 only supports microsecond precision timestamps
         field_with_id(
             field::TIMESTAMP,
-            DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())),
+            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
             false,
             1,
         ),
@@ -67,7 +68,7 @@ fn build_schema() -> Schema {
         ),
         field_with_id(
             field::OBSERVED_TIMESTAMP,
-            DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())),
+            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
             false,
             22,
         ),
@@ -126,78 +127,5 @@ mod tests {
         assert_eq!(schema.field(12).name(), field::TIMESTAMP_TIME);
         assert_eq!(schema.field(13).name(), field::OBSERVED_TIMESTAMP);
         assert_eq!(schema.field(18).name(), field::LOG_ATTRIBUTES);
-    }
-
-    #[test]
-    fn test_arrow_iceberg_schema_compatibility() {
-        use crate::iceberg_schemas;
-        use icepick::spec::PrimitiveType;
-
-        // Get both schemas
-        let arrow_schema = otel_logs_schema();
-        let iceberg_schema = iceberg_schemas::logs_schema();
-
-        // Critical fields that MUST match between Arrow and Iceberg for S3 Tables compatibility
-        // These fields use complex types in traditional deployments but MUST be String for S3 Tables
-        let critical_string_fields = vec![
-            field::RESOURCE_ATTRIBUTES,
-            field::SCOPE_ATTRIBUTES,
-            field::BODY,
-            field::LOG_ATTRIBUTES,
-        ];
-
-        for field_name in critical_string_fields {
-            // Find field in Arrow schema
-            let arrow_field = arrow_schema
-                .field_with_name(field_name)
-                .unwrap_or_else(|_| panic!("Arrow schema missing field: {}", field_name));
-
-            // Find field in Iceberg schema
-            let iceberg_field = iceberg_schema
-                .fields()
-                .iter()
-                .find(|f| f.name() == field_name)
-                .unwrap_or_else(|| panic!("Iceberg schema missing field: {}", field_name));
-
-            // Arrow field MUST be String (Utf8)
-            assert_eq!(
-                arrow_field.data_type(),
-                &DataType::Utf8,
-                "Arrow schema field '{}' must be DataType::Utf8 (String) for S3 Tables compatibility. \
-                Found: {:?}. This indicates incomplete S3 Tables migration - attributes must be JSON-encoded strings.",
-                field_name,
-                arrow_field.data_type()
-            );
-
-            // Iceberg field MUST be PrimitiveType::String
-            assert!(
-                matches!(iceberg_field.field_type(), icepick::spec::Type::Primitive(PrimitiveType::String)),
-                "Iceberg schema field '{}' must be PrimitiveType::String for S3 Tables compatibility. \
-                Found: {:?}. This indicates schema drift between Arrow and Iceberg definitions.",
-                field_name,
-                iceberg_field.field_type()
-            );
-        }
-
-        // Verify field count matches (basic sanity check)
-        assert_eq!(
-            arrow_schema.fields().len(),
-            iceberg_schema.fields().len(),
-            "Arrow and Iceberg schemas have different field counts - indicates schema drift"
-        );
-
-        // Verify all field names match in order
-        for (arrow_field, iceberg_field) in
-            arrow_schema.fields().iter().zip(iceberg_schema.fields())
-        {
-            assert_eq!(
-                arrow_field.name(),
-                iceberg_field.name(),
-                "Field name mismatch at position - Arrow: '{}', Iceberg: '{}'. \
-                This indicates field ordering drift between schemas.",
-                arrow_field.name(),
-                iceberg_field.name()
-            );
-        }
     }
 }
