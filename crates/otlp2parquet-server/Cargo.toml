@@ -13,7 +13,7 @@ otlp2parquet-writer = { path = "../otlp2parquet-writer" }
 arrow = { workspace = true }
 parquet = { workspace = true }
 prost = { workspace = true }
-icepick = { git = "https://github.com/smithclay/icepick.git", rev = "5cad5a99b56fee03ad80dc3725ce4259760ed03d", default-features = false }
+icepick = { git = "https://github.com/smithclay/icepick.git", rev = "97ce98873b931e96ec2850e0c966cbe805207d6a", default-features = false }
 opendal = { version = "0.54", default-features = false, features = ["services-fs", "services-s3"] }
 chrono = { workspace = true }
 

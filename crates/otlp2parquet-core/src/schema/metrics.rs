@@ -34,7 +34,7 @@ fn base_fields() -> Vec<Field> {
     let string_type = DataType::Utf8;
 
     vec![
-        // ============ Common Fields (IDs 1-20) ============
+        // ============ Common Fields (IDs 1-5) ============
         // Shared across all signal types for cross-signal queries and schema evolution
         // Iceberg v1/v2 only supports microsecond precision timestamps
         field_with_id(
@@ -43,17 +43,17 @@ fn base_fields() -> Vec<Field> {
             false,
             1,
         ),
-        field_with_id(field::SERVICE_NAME, DataType::Utf8, false, 4),
+        field_with_id(field::SERVICE_NAME, DataType::Utf8, false, 2),
         // ResourceAttributes: JSON-encoded string for S3 Tables compatibility
-        field_with_id(field::RESOURCE_ATTRIBUTES, string_type.clone(), false, 7),
-        field_with_id(field::SCOPE_NAME, DataType::Utf8, true, 9),
-        field_with_id(field::SCOPE_VERSION, DataType::Utf8, true, 10),
-        // ============ Metrics-Specific Base Fields (IDs 101-109) ============
-        field_with_id(field::METRIC_NAME, DataType::Utf8, false, 101),
-        field_with_id(field::METRIC_DESCRIPTION, DataType::Utf8, true, 102),
-        field_with_id(field::METRIC_UNIT, DataType::Utf8, true, 103),
+        field_with_id(field::RESOURCE_ATTRIBUTES, string_type.clone(), false, 3),
+        field_with_id(field::SCOPE_NAME, DataType::Utf8, true, 4),
+        field_with_id(field::SCOPE_VERSION, DataType::Utf8, true, 5),
+        // ============ Metrics-Specific Base Fields (IDs 6-9) ============
+        field_with_id(field::METRIC_NAME, DataType::Utf8, false, 6),
+        field_with_id(field::METRIC_DESCRIPTION, DataType::Utf8, true, 7),
+        field_with_id(field::METRIC_UNIT, DataType::Utf8, true, 8),
         // Attributes: JSON-encoded string for S3 Tables compatibility
-        field_with_id(field::ATTRIBUTES, string_type, false, 104),
+        field_with_id(field::ATTRIBUTES, string_type, false, 9),
     ]
 }
 
@@ -70,12 +70,12 @@ pub fn otel_metrics_gauge_schema_arc() -> Arc<Schema> {
 
 fn build_gauge_schema() -> Schema {
     let mut fields = base_fields();
-    // ============ Gauge-Specific Fields (IDs 110+) ============
+    // ============ Gauge-Specific Fields (IDs 10+) ============
     fields.push(field_with_id(
         field::VALUE_COL,
         DataType::Float64,
         false,
-        110,
+        10,
     ));
 
     let mut metadata = HashMap::new();
@@ -101,24 +101,24 @@ pub fn otel_metrics_sum_schema_arc() -> Arc<Schema> {
 
 fn build_sum_schema() -> Schema {
     let mut fields = base_fields();
-    // ============ Sum-Specific Fields (IDs 110+) ============
+    // ============ Sum-Specific Fields (IDs 10-12) ============
     fields.push(field_with_id(
         field::VALUE_COL,
         DataType::Float64,
         false,
-        110,
+        10,
     ));
     fields.push(field_with_id(
         field::AGGREGATION_TEMPORALITY,
         DataType::Int32,
         false,
-        111,
+        11,
     ));
     fields.push(field_with_id(
         field::IS_MONOTONIC,
         DataType::Boolean,
         false,
-        112,
+        12,
     ));
 
     let mut metadata = HashMap::new();
@@ -144,23 +144,23 @@ pub fn otel_metrics_histogram_schema_arc() -> Arc<Schema> {
 
 fn build_histogram_schema() -> Schema {
     let mut fields = base_fields();
-    // ============ Histogram-Specific Fields (IDs 110+) ============
-    fields.push(field_with_id(field::COUNT, DataType::Int64, false, 110));
-    fields.push(field_with_id(field::SUM, DataType::Float64, false, 111));
+    // ============ Histogram-Specific Fields (IDs 10-15) ============
+    fields.push(field_with_id(field::COUNT, DataType::Int64, false, 10));
+    fields.push(field_with_id(field::SUM, DataType::Float64, false, 11));
     fields.push(field_with_id(
         field::BUCKET_COUNTS,
-        DataType::List(Arc::new(list_element_field(DataType::Int64, false, 8003))),
+        DataType::List(Arc::new(list_element_field(DataType::Int64, false, 16))),
         false,
-        112,
+        12,
     ));
     fields.push(field_with_id(
         field::EXPLICIT_BOUNDS,
-        DataType::List(Arc::new(list_element_field(DataType::Float64, false, 8004))),
+        DataType::List(Arc::new(list_element_field(DataType::Float64, false, 17))),
         false,
-        113,
+        13,
     ));
-    fields.push(field_with_id(field::MIN, DataType::Float64, true, 114));
-    fields.push(field_with_id(field::MAX, DataType::Float64, true, 115));
+    fields.push(field_with_id(field::MIN, DataType::Float64, true, 14));
+    fields.push(field_with_id(field::MAX, DataType::Float64, true, 15));
 
     let mut metadata = HashMap::new();
     metadata.insert(
@@ -190,42 +190,37 @@ pub fn otel_metrics_exponential_histogram_schema_arc() -> Arc<Schema> {
 
 fn build_exponential_histogram_schema() -> Schema {
     let mut fields = base_fields();
-    // ============ ExponentialHistogram-Specific Fields (IDs 110+) ============
-    fields.push(field_with_id(field::COUNT, DataType::Int64, false, 110));
-    fields.push(field_with_id(field::SUM, DataType::Float64, false, 111));
-    fields.push(field_with_id(field::SCALE, DataType::Int32, false, 112));
-    fields.push(field_with_id(
-        field::ZERO_COUNT,
-        DataType::Int64,
-        false,
-        113,
-    ));
+    // ============ ExponentialHistogram-Specific Fields (IDs 10-19) ============
+    fields.push(field_with_id(field::COUNT, DataType::Int64, false, 10));
+    fields.push(field_with_id(field::SUM, DataType::Float64, false, 11));
+    fields.push(field_with_id(field::SCALE, DataType::Int32, false, 12));
+    fields.push(field_with_id(field::ZERO_COUNT, DataType::Int64, false, 13));
     fields.push(field_with_id(
         field::POSITIVE_OFFSET,
         DataType::Int32,
         false,
-        114,
+        14,
     ));
     fields.push(field_with_id(
         field::POSITIVE_BUCKET_COUNTS,
-        DataType::List(Arc::new(list_element_field(DataType::Int64, false, 9003))),
+        DataType::List(Arc::new(list_element_field(DataType::Int64, false, 20))),
         false,
-        115,
+        15,
     ));
     fields.push(field_with_id(
         field::NEGATIVE_OFFSET,
         DataType::Int32,
         false,
-        116,
+        16,
     ));
     fields.push(field_with_id(
         field::NEGATIVE_BUCKET_COUNTS,
-        DataType::List(Arc::new(list_element_field(DataType::Int64, false, 9004))),
+        DataType::List(Arc::new(list_element_field(DataType::Int64, false, 21))),
         false,
-        117,
+        17,
     ));
-    fields.push(field_with_id(field::MIN, DataType::Float64, true, 118));
-    fields.push(field_with_id(field::MAX, DataType::Float64, true, 119));
+    fields.push(field_with_id(field::MIN, DataType::Float64, true, 18));
+    fields.push(field_with_id(field::MAX, DataType::Float64, true, 19));
 
     let mut metadata = HashMap::new();
     metadata.insert(
@@ -253,28 +248,20 @@ pub fn otel_metrics_summary_schema_arc() -> Arc<Schema> {
 
 fn build_summary_schema() -> Schema {
     let mut fields = base_fields();
-    // ============ Summary-Specific Fields (IDs 110+) ============
-    fields.push(field_with_id(field::COUNT, DataType::Int64, false, 110));
-    fields.push(field_with_id(field::SUM, DataType::Float64, false, 111));
+    // ============ Summary-Specific Fields (IDs 10-13) ============
+    fields.push(field_with_id(field::COUNT, DataType::Int64, false, 10));
+    fields.push(field_with_id(field::SUM, DataType::Float64, false, 11));
     fields.push(field_with_id(
         field::QUANTILE_VALUES,
-        DataType::List(Arc::new(list_element_field(
-            DataType::Float64,
-            false,
-            10003,
-        ))),
+        DataType::List(Arc::new(list_element_field(DataType::Float64, false, 14))),
         false,
-        112,
+        12,
     ));
     fields.push(field_with_id(
         field::QUANTILE_QUANTILES,
-        DataType::List(Arc::new(list_element_field(
-            DataType::Float64,
-            false,
-            10004,
-        ))),
+        DataType::List(Arc::new(list_element_field(DataType::Float64, false, 15))),
         false,
-        113,
+        13,
     ));
 
     let mut metadata = HashMap::new();

@@ -8,17 +8,17 @@ set -euo pipefail
 #
 # Requirements:
 # - DuckDB CLI installed (v1.1.0+)
-# - Nessie catalog running (for Iceberg metadata)
+# - Apache Iceberg REST catalog running (for Iceberg metadata)
 # - MinIO running (for Parquet data)
 #
 # Usage:
 #   ./scripts/verify-duckdb.sh                    # Verify all tables
-#   NESSIE_URI=http://localhost:19120 ./scripts/verify-duckdb.sh
+#   REST_CATALOG_URI=http://localhost:8181 ./scripts/verify-duckdb.sh
 #
 
-NESSIE_URI="${NESSIE_URI:-http://localhost:19120}"
-CATALOG_ENDPOINT="${NESSIE_URI}/iceberg"
-NAMESPACE="${ICEBERG_NAMESPACE:-otlp}"
+REST_CATALOG_URI="${REST_CATALOG_URI:-http://localhost:8181}"
+CATALOG_ENDPOINT="${REST_CATALOG_URI}"
+NAMESPACE="${ICEBERG_NAMESPACE:-otel}"
 
 # Check if duckdb is available
 if ! command -v duckdb &> /dev/null; then
@@ -34,12 +34,11 @@ fi
 echo "========================================="
 echo "DuckDB Iceberg Verification"
 echo "========================================="
-echo "Nessie base endpoint: http://localhost:19120/iceberg"
-echo "Warehouse: warehouse"
+echo "REST catalog endpoint: ${CATALOG_ENDPOINT}"
+echo "Warehouse: s3://otlp/"
 echo "Namespace: ${NAMESPACE}"
 echo ""
-echo "DuckDB will query: http://localhost:19120/iceberg/v1/config?warehouse=warehouse"
-echo "Nessie will return prefix for branch/warehouse routing"
+echo "DuckDB will query: ${CATALOG_ENDPOINT}/v1/config"
 echo ""
 
 # Expected tables based on schema definitions
@@ -61,9 +60,9 @@ cat > "$VERIFY_SQL" <<'EOF'
 --
 -- DuckDB Iceberg Verification for otlp2parquet
 --
--- This script uses DuckDB's ATTACH to connect to the Nessie REST catalog
+-- This script uses DuckDB's ATTACH to connect to the Apache Iceberg REST catalog
 -- and verifies that:
--- 1. The Nessie REST catalog is accessible
+-- 1. The REST catalog is accessible
 -- 2. All expected OTLP tables were created
 -- 3. Each table contains data
 --
@@ -85,14 +84,13 @@ CREATE SECRET minio_secret (
   USE_SSL false
 );
 
--- Attach Nessie REST catalog
--- DuckDB will call: http://localhost:19120/iceberg/v1/config?warehouse=warehouse
--- Nessie returns prefix: "main%7Cwarehouse" which DuckDB uses for subsequent calls
--- The warehouse name 'warehouse' matches nessie.catalog.default-warehouse in docker-compose.yml
--- AUTHORIZATION_TYPE 'none' since our test Nessie doesn't require auth
-ATTACH 'warehouse' AS nessie_catalog (
+-- Attach Apache Iceberg REST catalog
+-- DuckDB will call: http://localhost:8181/v1/config
+-- The warehouse is configured as 's3://otlp/' in the REST catalog
+-- AUTHORIZATION_TYPE 'none' since our test REST catalog doesn't require auth
+ATTACH 's3://otlp/' AS rest_catalog (
   TYPE ICEBERG,
-  ENDPOINT 'http://localhost:19120/iceberg',
+  ENDPOINT 'http://localhost:8181',
   AUTHORIZATION_TYPE 'none'
 );
 
@@ -107,7 +105,7 @@ SELECT 'Namespace: NAMESPACE_PLACEHOLDER' AS info;
 SELECT '' AS status;
 
 -- Show all tables in the catalog
-SELECT '=== Tables in Nessie Catalog ===' AS status;
+SELECT '=== Tables in REST Catalog ===' AS status;
 SHOW ALL TABLES;
 SELECT '' AS status;
 
@@ -119,7 +117,7 @@ EOF
 for table in "${EXPECTED_TABLES[@]}"; do
   cat >> "$VERIFY_SQL" <<EOF
 SELECT '${table}' AS table_name, COUNT(*) AS row_count
-FROM nessie_catalog.${NAMESPACE}.${table}
+FROM rest_catalog.${NAMESPACE}.${table}
 UNION ALL
 EOF
 done
@@ -136,15 +134,15 @@ cat >> "$VERIFY_SQL" <<EOF
 -- Sample data from each table type
 SELECT '' AS status;
 SELECT '=== Sample from otel_logs (first 3 rows) ===' AS status;
-SELECT * FROM nessie_catalog.${NAMESPACE}.otel_logs LIMIT 3;
+SELECT * FROM rest_catalog.${NAMESPACE}.otel_logs LIMIT 3;
 
 SELECT '' AS status;
 SELECT '=== Sample from otel_traces (first 3 rows) ===' AS status;
-SELECT * FROM nessie_catalog.${NAMESPACE}.otel_traces LIMIT 3;
+SELECT * FROM rest_catalog.${NAMESPACE}.otel_traces LIMIT 3;
 
 SELECT '' AS status;
 SELECT '=== Sample from otel_metrics_gauge (first 3 rows) ===' AS status;
-SELECT * FROM nessie_catalog.${NAMESPACE}.otel_metrics_gauge LIMIT 3;
+SELECT * FROM rest_catalog.${NAMESPACE}.otel_metrics_gauge LIMIT 3;
 EOF
 
 # Replace placeholders
@@ -178,20 +176,18 @@ else
   echo "  Namespace: ${NAMESPACE}"
   echo ""
   echo "  Test connection manually:"
-  echo "    duckdb -c \"INSTALL httpfs; INSTALL iceberg; LOAD httpfs; LOAD iceberg; CREATE SECRET minio_secret (TYPE S3, KEY_ID 'minioadmin', SECRET 'minioadmin', REGION 'us-east-1', ENDPOINT 'localhost:9000', URL_STYLE 'path', USE_SSL false); ATTACH 'warehouse' AS nessie_catalog (TYPE ICEBERG, ENDPOINT 'http://localhost:19120/iceberg', AUTHORIZATION_TYPE 'none'); SHOW ALL TABLES;\""
+  echo "    duckdb -c \"INSTALL httpfs; INSTALL iceberg; LOAD httpfs; LOAD iceberg; CREATE SECRET minio_secret (TYPE S3, KEY_ID 'minioadmin', SECRET 'minioadmin', REGION 'us-east-1', ENDPOINT 'localhost:9000', URL_STYLE 'path', USE_SSL false); ATTACH 's3://otlp/' AS rest_catalog (TYPE ICEBERG, ENDPOINT 'http://localhost:8181', AUTHORIZATION_TYPE 'none'); SHOW ALL TABLES;\""
   echo ""
-  echo "  Check Nessie catalog health:"
-  echo "    curl http://localhost:19120/api/v2/config"
+  echo "  Check REST catalog health:"
   echo "    curl ${CATALOG_ENDPOINT}/v1/config"
   echo ""
   echo "  List tables via REST API:"
-  echo "    curl ${CATALOG_ENDPOINT}/v1/main/namespaces/${NAMESPACE}/tables"
+  echo "    curl ${CATALOG_ENDPOINT}/v1/namespaces/${NAMESPACE}/tables"
   echo ""
   echo "Possible causes:"
   echo "  - Tables don't exist yet (no data was written by otlp2parquet)"
-  echo "  - Nessie catalog is unreachable (check: docker compose logs nessie)"
+  echo "  - REST catalog is unreachable (check: docker compose logs rest)"
   echo "  - MinIO/S3 credentials incorrect (check docker-compose.yml)"
-  echo "  - Wrong Nessie branch (should be 'main')"
-  echo "  - Iceberg metadata files missing in MinIO s3://otlp-logs/warehouse/"
+  echo "  - Iceberg metadata files missing in MinIO s3://otlp/"
   exit $EXIT_CODE
 fi

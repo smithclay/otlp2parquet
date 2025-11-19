@@ -2,7 +2,7 @@
 //!
 //! These tests require Docker and docker-compose to be running.
 //! They validate the full pipeline from OTLP ingestion to Parquet storage
-//! with real MinIO and Nessie services.
+//! with real MinIO and Apache Iceberg REST catalog services.
 //!
 //! Enable with: cargo test --test e2e_docker --features docker-tests
 
@@ -17,8 +17,8 @@ use std::time::Duration;
 // Service endpoints (must match docker-compose.yml)
 const OTLP_ENDPOINT: &str = "http://localhost:4318";
 const MINIO_ENDPOINT: &str = "http://localhost:9000";
-const NESSIE_ENDPOINT: &str = "http://localhost:19120";
-const S3_BUCKET: &str = "otlp-logs";
+const REST_CATALOG_ENDPOINT: &str = "http://localhost:8181";
+const S3_BUCKET: &str = "otlp";
 
 /// Send OTLP data to the otlp2parquet service
 async fn send_otlp(path: &str, data: &[u8], content_type: &str) -> anyhow::Result<()> {
@@ -154,12 +154,11 @@ async fn verify_parquet_magic(key: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Check if an Iceberg table exists in Nessie catalog
+/// Check if an Iceberg table exists in REST catalog
 async fn verify_iceberg_table(namespace: &str, table: &str) -> anyhow::Result<bool> {
-    // Nessie uses branch name as prefix (default: "main")
     let url = format!(
-        "{}/iceberg/v1/main/namespaces/{}/tables/{}",
-        NESSIE_ENDPOINT, namespace, table
+        "{}/v1/namespaces/{}/tables/{}",
+        REST_CATALOG_ENDPOINT, namespace, table
     );
     eprintln!("[verify_iceberg_table] Checking: {}", url);
 
@@ -205,9 +204,9 @@ async fn test_logs_pipeline() -> anyhow::Result<()> {
     tokio::time::sleep(Duration::from_secs(2)).await;
     eprintln!("[test_logs_pipeline] Done waiting");
 
-    // Verify Parquet files exist in MinIO
+    // Verify Parquet files exist in MinIO (Iceberg structure: otel/otel_logs/data/)
     eprintln!("[test_logs_pipeline] Checking for log files in S3");
-    let files = verify_s3_files("logs/").await?;
+    let files = verify_s3_files("otel/otel_logs/data/").await?;
 
     // If no files found, check all files in bucket for debugging
     if files.is_empty() {
@@ -261,9 +260,9 @@ async fn test_metrics_pipeline() -> anyhow::Result<()> {
         eprintln!("[test_metrics_pipeline] Waiting 2 seconds for processing...");
         tokio::time::sleep(Duration::from_secs(2)).await;
 
-        // Verify files exist for this metric type
+        // Verify files exist for this metric type (Iceberg structure: otel/otel_metrics_{type}/data/)
         eprintln!("[test_metrics_pipeline] Checking for {} files", metric_type);
-        let files = verify_s3_files(&format!("metrics/{}/", metric_type)).await?;
+        let files = verify_s3_files(&format!("otel/otel_metrics_{}/data/", metric_type)).await?;
         assert!(
             !files.is_empty(),
             "Expected at least one {} file",
@@ -299,9 +298,9 @@ async fn test_traces_pipeline() -> anyhow::Result<()> {
     eprintln!("[test_traces_pipeline] Waiting 2 seconds for processing...");
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    // Verify Parquet files exist in MinIO
+    // Verify Parquet files exist in MinIO (Iceberg structure: otel/otel_traces/data/)
     eprintln!("[test_traces_pipeline] Checking for trace files in S3");
-    let files = verify_s3_files("traces/").await?;
+    let files = verify_s3_files("otel/otel_traces/data/").await?;
     assert!(!files.is_empty(), "Expected at least one trace file");
 
     // Verify first file is valid Parquet
@@ -332,10 +331,10 @@ async fn test_iceberg_logs_commit() -> anyhow::Result<()> {
     eprintln!("[test_iceberg_logs_commit] Waiting 3 seconds for catalog commit...");
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    // Verify Nessie catalog has the table
-    eprintln!("[test_iceberg_logs_commit] Verifying otlp.otel_logs table exists");
-    let exists = verify_iceberg_table("otlp", "otel_logs").await?;
-    assert!(exists, "Expected otlp.otel_logs table in Nessie catalog");
+    // Verify REST catalog has the table
+    eprintln!("[test_iceberg_logs_commit] Verifying otel.otel_logs table exists");
+    let exists = verify_iceberg_table("otel", "otel_logs").await?;
+    assert!(exists, "Expected otel.otel_logs table in REST catalog");
 
     eprintln!("[test_iceberg_logs_commit] ✓ Test passed\n");
     Ok(())
@@ -357,12 +356,12 @@ async fn test_iceberg_metrics_commit() -> anyhow::Result<()> {
     eprintln!("[test_iceberg_metrics_commit] Waiting 3 seconds for catalog commit...");
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    // Verify Nessie catalog has the metrics_gauge table
-    eprintln!("[test_iceberg_metrics_commit] Verifying otlp.otel_metrics_gauge table exists");
-    let exists = verify_iceberg_table("otlp", "otel_metrics_gauge").await?;
+    // Verify REST catalog has the metrics_gauge table
+    eprintln!("[test_iceberg_metrics_commit] Verifying otel.otel_metrics_gauge table exists");
+    let exists = verify_iceberg_table("otel", "otel_metrics_gauge").await?;
     assert!(
         exists,
-        "Expected otlp.otel_metrics_gauge table in Nessie catalog"
+        "Expected otel.otel_metrics_gauge table in REST catalog"
     );
 
     eprintln!("[test_iceberg_metrics_commit] ✓ Test passed\n");
@@ -385,10 +384,10 @@ async fn test_iceberg_traces_commit() -> anyhow::Result<()> {
     eprintln!("[test_iceberg_traces_commit] Waiting 3 seconds for catalog commit...");
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    // Verify Nessie catalog has the table
-    eprintln!("[test_iceberg_traces_commit] Verifying otlp.otel_traces table exists");
-    let exists = verify_iceberg_table("otlp", "otel_traces").await?;
-    assert!(exists, "Expected otlp.otel_traces table in Nessie catalog");
+    // Verify REST catalog has the table
+    eprintln!("[test_iceberg_traces_commit] Verifying otel.otel_traces table exists");
+    let exists = verify_iceberg_table("otel", "otel_traces").await?;
+    assert!(exists, "Expected otel.otel_traces table in REST catalog");
 
     eprintln!("[test_iceberg_traces_commit] ✓ Test passed\n");
     Ok(())

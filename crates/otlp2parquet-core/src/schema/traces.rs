@@ -39,72 +39,54 @@ fn build_schema() -> Schema {
     let timestamp_us = DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into()));
     let string_type = DataType::Utf8;
 
-    // List types with element field IDs matching Iceberg schema
+    // List types with element field IDs - consecutive starting after main fields (23-29)
     let events_timestamp_list = DataType::List(Arc::new(list_element_field(
         timestamp_us.clone(),
         false,
-        5001,
+        23,
     )));
-    let events_name_list = DataType::List(Arc::new(list_element_field(
-        string_type.clone(),
-        false,
-        5002,
-    )));
+    let events_name_list =
+        DataType::List(Arc::new(list_element_field(string_type.clone(), false, 24)));
     // Events/Links attributes: List<String> for S3 Tables compatibility (JSON-encoded strings)
-    let events_attributes_list = DataType::List(Arc::new(list_element_field(
-        string_type.clone(),
-        false,
-        5003,
-    )));
-    let links_trace_id_list = DataType::List(Arc::new(list_element_field(
-        string_type.clone(),
-        false,
-        5004,
-    )));
-    let links_span_id_list = DataType::List(Arc::new(list_element_field(
-        string_type.clone(),
-        false,
-        5005,
-    )));
-    let links_trace_state_list = DataType::List(Arc::new(list_element_field(
-        string_type.clone(),
-        true,
-        5006,
-    )));
-    let links_attributes_list = DataType::List(Arc::new(list_element_field(
-        string_type.clone(),
-        false,
-        5007,
-    )));
+    let events_attributes_list =
+        DataType::List(Arc::new(list_element_field(string_type.clone(), false, 25)));
+    let links_trace_id_list =
+        DataType::List(Arc::new(list_element_field(string_type.clone(), false, 26)));
+    let links_span_id_list =
+        DataType::List(Arc::new(list_element_field(string_type.clone(), false, 27)));
+    let links_trace_state_list =
+        DataType::List(Arc::new(list_element_field(string_type.clone(), true, 28)));
+    let links_attributes_list =
+        DataType::List(Arc::new(list_element_field(string_type.clone(), false, 29)));
 
     let fields = vec![
-        // ============ Common Fields (IDs 1-20) ============
+        // ============ Common Fields (IDs 1-7) ============
         // Shared across all signal types for cross-signal queries and schema evolution
         field_with_id(field::TIMESTAMP, timestamp_us.clone(), false, 1),
         field_with_id(field::TRACE_ID, string_type.clone(), false, 2),
         field_with_id(field::SPAN_ID, string_type.clone(), false, 3),
         field_with_id(field::SERVICE_NAME, string_type.clone(), true, 4),
         // ResourceAttributes: JSON-encoded string for S3 Tables compatibility
-        field_with_id(field::RESOURCE_ATTRIBUTES, string_type.clone(), false, 7),
-        field_with_id(field::SCOPE_NAME, string_type.clone(), true, 9),
-        field_with_id(field::SCOPE_VERSION, string_type.clone(), true, 10),
-        // ============ Traces-Specific Fields (IDs 51+) ============
-        field_with_id(field::PARENT_SPAN_ID, string_type.clone(), true, 51),
-        field_with_id(field::TRACE_STATE, string_type.clone(), true, 52),
-        field_with_id(field::SPAN_NAME, string_type.clone(), false, 53),
-        field_with_id(field::SPAN_KIND, string_type.clone(), false, 54),
+        field_with_id(field::RESOURCE_ATTRIBUTES, string_type.clone(), false, 5),
+        field_with_id(field::SCOPE_NAME, string_type.clone(), true, 6),
+        field_with_id(field::SCOPE_VERSION, string_type.clone(), true, 7),
+        // ============ Traces-Specific Fields (IDs 8-22) ============
+        field_with_id(field::PARENT_SPAN_ID, string_type.clone(), true, 8),
+        field_with_id(field::TRACE_STATE, string_type.clone(), true, 9),
+        field_with_id(field::SPAN_NAME, string_type.clone(), false, 10),
+        field_with_id(field::SPAN_KIND, string_type.clone(), false, 11),
         // SpanAttributes: JSON-encoded string for S3 Tables compatibility
-        field_with_id(field::SPAN_ATTRIBUTES, string_type, false, 55),
-        field_with_id(field::DURATION, DataType::Int64, false, 56),
-        field_with_id(field::STATUS_CODE, DataType::Utf8, true, 57),
-        field_with_id(field::STATUS_MESSAGE, DataType::Utf8, true, 58),
-        field_with_id(field::EVENTS_TIMESTAMP, events_timestamp_list, false, 59),
-        field_with_id(field::EVENTS_NAME, events_name_list, false, 60),
-        field_with_id(field::EVENTS_ATTRIBUTES, events_attributes_list, false, 61),
-        field_with_id(field::LINKS_TRACE_ID, links_trace_id_list, false, 62),
-        field_with_id(field::LINKS_SPAN_ID, links_span_id_list, false, 63),
-        field_with_id(field::LINKS_TRACE_STATE, links_trace_state_list, false, 64),
-        field_with_id(field::LINKS_ATTRIBUTES, links_attributes_list, false, 65),
+        field_with_id(field::SPAN_ATTRIBUTES, string_type, false, 12),
+        field_with_id(field::DURATION, DataType::Int64, false, 13),
+        field_with_id(field::STATUS_CODE, DataType::Utf8, true, 14),
+        field_with_id(field::STATUS_MESSAGE, DataType::Utf8, true, 15),
+        field_with_id(field::EVENTS_TIMESTAMP, events_timestamp_list, false, 16),
+        field_with_id(field::EVENTS_NAME, events_name_list, false, 17),
+        field_with_id(field::EVENTS_ATTRIBUTES, events_attributes_list, false, 18),
+        field_with_id(field::LINKS_TRACE_ID, links_trace_id_list, false, 19),
+        field_with_id(field::LINKS_SPAN_ID, links_span_id_list, false, 20),
+        field_with_id(field::LINKS_TRACE_STATE, links_trace_state_list, false, 21),
+        field_with_id(field::LINKS_ATTRIBUTES, links_attributes_list, false, 22),
     ];
 
     let mut metadata = HashMap::new();

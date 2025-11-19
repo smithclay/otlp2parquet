@@ -1914,7 +1914,7 @@ dependencies = [
 [[package]]
 name = "icepick"
 version = "0.1.0"
-source = "git+https://github.com/smithclay/icepick.git?rev=5cad5a99b56fee03ad80dc3725ce4259760ed03d#5cad5a99b56fee03ad80dc3725ce4259760ed03d"
+source = "git+https://github.com/smithclay/icepick.git?rev=97ce98873b931e96ec2850e0c966cbe805207d6a#97ce98873b931e96ec2850e0c966cbe805207d6a"
 dependencies = [
  "apache-avro",
  "arrow",
@@ -2664,7 +2664,6 @@ dependencies = [
  "blake3",
  "chrono",
  "hex",
- "icepick",
  "otlp2parquet-proto",
  "parquet",
  "prost",

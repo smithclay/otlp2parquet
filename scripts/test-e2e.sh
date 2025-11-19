@@ -26,7 +26,7 @@ cleanup() {
   if [ "${KEEP_CONTAINERS:-0}" = "1" ]; then
     echo "ℹ️  Containers preserved for debugging (KEEP_CONTAINERS=1)"
     echo "    View logs:     docker compose logs"
-    echo "    Inspect MinIO: docker compose exec minio mc ls minio/otlp-logs"
+    echo "    Inspect MinIO: docker compose exec minio mc ls minio/otlp"
     echo "    Cleanup:       docker compose down -v"
   else
     echo "Cleaning up containers..."

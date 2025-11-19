@@ -10,9 +10,6 @@ license.workspace = true
 arrow = { workspace = true }
 parquet = { workspace = true, features = ["arrow"] }
 
-# Iceberg schemas
-icepick = { git = "https://github.com/smithclay/icepick.git", rev = "5cad5a99b56fee03ad80dc3725ce4259760ed03d", default-features = false }
-
 # OTLP Protocol
 otlp2parquet-proto = { path = "../otlp2parquet-proto" }
 prost = { workspace = true }

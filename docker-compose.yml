@@ -57,6 +57,7 @@ services:
       - CATALOG_WAREHOUSE=s3://${S3_BUCKET:-otlp}/
       - CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO
       - CATALOG_S3_ENDPOINT=http://minio:9000
+      - CATALOG_S3_PATH__STYLE__ACCESS=true
     networks:
       iceberg_net:
 
@@ -88,7 +89,7 @@ services:
       # Server (OTLP HTTP port)
       OTLP2PARQUET_HTTP_PORT: 4318
       OTLP2PARQUET_HTTP_HOST: 0.0.0.0
-      RUST_LOG: ${RUST_LOG:-info}
+      RUST_LOG: ${RUST_LOG:-debug}
 
       # Batching (disable for tests to get immediate writes)
       OTLP2PARQUET_BATCHING_ENABLED: ${BATCHING_ENABLED:-false}
@@ -96,8 +97,8 @@ services:
       # Iceberg catalog (optional - enables Rest integration)
       OTLP2PARQUET_ICEBERG_ENABLED: ${ICEBERG_ENABLED:-true}
       OTLP2PARQUET_ICEBERG_REST_URI: ${ICEBERG_REST_URI:-http://rest:8181/}
-      OTLP2PARQUET_ICEBERG_WAREHOUSE: ${ICEBERG_WAREHOUSE:-s3://otlp-logs/warehouse}
-      OTLP2PARQUET_ICEBERG_NAMESPACE: ${ICEBERG_NAMESPACE:-otlp}
+      OTLP2PARQUET_ICEBERG_WAREHOUSE: ${ICEBERG_WAREHOUSE:-s3://otlp/}
+      OTLP2PARQUET_ICEBERG_NAMESPACE: ${ICEBERG_NAMESPACE:-otel}
 
     restart: unless-stopped
     # Note: healthcheck removed because distroless image has no wget/curl
@@ -174,4 +175,4 @@ networks:
 #   duckdb -c "INSTALL httpfs; LOAD httpfs;
 #   SET s3_endpoint='localhost:9000'; SET s3_url_style='path'; SET s3_use_ssl=false;
 #   SET s3_access_key_id='minioadmin'; SET s3_secret_access_key='minioadmin';
-#   SELECT * FROM read_parquet('s3://otlp-logs/logs/**/*.parquet') LIMIT 10;"
+#   SELECT * FROM read_parquet('s3://otlp/otel/otel_logs/data/*.parquet') LIMIT 10;"

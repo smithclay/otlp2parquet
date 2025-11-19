@@ -59,26 +59,26 @@ fn build_schema() -> Schema {
         // ScopeAttributes: JSON-encoded string for S3 Tables compatibility
         field_with_id(field::SCOPE_ATTRIBUTES, string_type.clone(), false, 11),
         field_with_id(field::SCOPE_SCHEMA_URL, DataType::Utf8, true, 12),
-        // ============ Logs-Specific Fields (IDs 21+) ============
+        // ============ Logs-Specific Fields (IDs 13-19) ============
         field_with_id(
             field::TIMESTAMP_TIME,
             DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
             false,
-            21,
+            13,
         ),
         field_with_id(
             field::OBSERVED_TIMESTAMP,
             DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
             false,
-            22,
+            14,
         ),
-        field_with_id(field::TRACE_FLAGS, DataType::UInt32, false, 23),
-        field_with_id(field::SEVERITY_TEXT, DataType::Utf8, false, 24),
-        field_with_id(field::SEVERITY_NUMBER, DataType::Int32, false, 25),
+        field_with_id(field::TRACE_FLAGS, DataType::UInt32, false, 15),
+        field_with_id(field::SEVERITY_TEXT, DataType::Utf8, false, 16),
+        field_with_id(field::SEVERITY_NUMBER, DataType::Int32, false, 17),
         // Body: JSON-encoded string for S3 Tables compatibility
-        field_with_id(field::BODY, string_type.clone(), true, 26),
+        field_with_id(field::BODY, string_type.clone(), true, 18),
         // LogAttributes: JSON-encoded string for S3 Tables compatibility
-        field_with_id(field::LOG_ATTRIBUTES, string_type, false, 27),
+        field_with_id(field::LOG_ATTRIBUTES, string_type, false, 19),
     ];
 
     let mut metadata = HashMap::new();
