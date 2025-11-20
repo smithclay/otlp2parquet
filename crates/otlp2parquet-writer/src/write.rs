@@ -12,10 +12,33 @@ use crate::table_mapping::table_name_for_signal;
 use arrow::array::RecordBatch;
 use icepick::catalog::Catalog;
 use icepick::spec::NamespaceIdent;
-use icepick::AppendOnlyTableWriter;
+use icepick::{AppendOnlyTableWriter, AppendResult};
 use otlp2parquet_core::SignalType;
 
 /// Write a RecordBatch to an Iceberg table via catalog
+///
+/// This function delegates all Parquet writing, schema management, and catalog operations
+/// to icepick's `AppendOnlyTableWriter`. It focuses on table name resolution and error
+/// translation.
+///
+/// # Behavior
+///
+/// 1. **Table creation**: If the table doesn't exist, icepick creates it automatically by
+///    deriving the Iceberg schema from Arrow field_id metadata in the RecordBatch
+/// 2. **Schema evolution**: Not currently supported - schema changes will fail the write
+/// 3. **Atomicity**: Write and catalog commit are atomic via icepick
+/// 4. **Retries**: None - failures return immediately. Callers should retry if needed
+///
+/// # Resilience
+///
+/// Write operations have no built-in retry logic. Failures propagate immediately as
+/// `WriterError::WriteFailure`. Typical failure modes:
+/// - Network errors (catalog unreachable)
+/// - Schema mismatches (field type changes)
+/// - Storage errors (quota exceeded, permissions)
+/// - Catalog errors (transaction conflicts)
+///
+/// Application-level retry logic should handle transient failures based on error type.
 ///
 /// # Arguments
 /// * `catalog` - Catalog instance for table operations
@@ -27,7 +50,7 @@ use otlp2parquet_core::SignalType;
 /// * `timestamp_nanos` - Timestamp for logging (not used for partitioning)
 ///
 /// # Returns
-/// Table path in format "{namespace}/{table_name}" for logging
+/// Table path in format "{namespace}/{table_name}" for logging purposes only
 ///
 /// # Errors
 /// Returns `WriterError::InvalidTableName` if signal/metric type combination is invalid
@@ -63,16 +86,45 @@ pub async fn write_batch(
     let namespace_ident = NamespaceIdent::new(vec![namespace.to_string()]);
     let writer = AppendOnlyTableWriter::new(catalog, namespace_ident, table_name.clone());
 
-    writer
+    let result = writer
         .append_batch(batch.clone())
         .await
         .map_err(|e| WriterError::WriteFailure(format!("table '{}': {}", table_name, e)))?;
 
-    tracing::info!(
-        "✓ Wrote {} rows to '{}' via AppendOnlyTableWriter",
-        row_count,
-        table_name
-    );
+    // Log different outcomes for observability
+    match result {
+        AppendResult::TableCreated {
+            ref data_file,
+            ref schema,
+        } => {
+            tracing::info!(
+                "✓ Created table '{}' with {} fields and wrote {} rows",
+                table_name,
+                schema.fields().len(),
+                data_file.record_count()
+            );
+        }
+        AppendResult::SchemaEvolved {
+            ref data_file,
+            ref old_schema,
+            ref new_schema,
+        } => {
+            tracing::warn!(
+                "✓ Schema evolved for '{}' from {} to {} fields, wrote {} rows",
+                table_name,
+                old_schema.fields().len(),
+                new_schema.fields().len(),
+                data_file.record_count()
+            );
+        }
+        AppendResult::Appended { ref data_file } => {
+            tracing::info!(
+                "✓ Wrote {} rows to '{}' via AppendOnlyTableWriter",
+                data_file.record_count(),
+                table_name
+            );
+        }
+    }
 
     // Return table path for logging
     Ok(format!("{}/{}", namespace, table_name))

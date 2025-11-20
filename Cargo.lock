@@ -1914,7 +1914,7 @@ dependencies = [
 [[package]]
 name = "icepick"
 version = "0.1.0"
-source = "git+https://github.com/smithclay/icepick.git?rev=388286c31ebd8d9d8707dfb18fe0991541457ebd#388286c31ebd8d9d8707dfb18fe0991541457ebd"
+source = "git+https://github.com/smithclay/icepick.git?rev=93178ee27da8f6d8952b8abbe8bb8c308f1c52a7#93178ee27da8f6d8952b8abbe8bb8c308f1c52a7"
 dependencies = [
  "apache-avro",
  "arrow",
@@ -1924,6 +1924,7 @@ dependencies = [
  "aws-sdk-sts",
  "aws-sigv4",
  "bytes",
+ "chrono",
  "flate2",
  "futures",
  "gloo-timers",

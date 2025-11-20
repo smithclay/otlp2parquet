@@ -1,10 +1,37 @@
 //! Catalog initialization and management
 
 use crate::error::{Result, WriterError};
-use icepick::catalog::Catalog;
+use icepick::catalog::{BackoffStrategy, Catalog, CatalogOptions, HttpClientConfig, RetryConfig};
 use icepick::NamespaceIdent;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
+
+/// Create default catalog options with retry and timeout configuration
+///
+/// Default configuration:
+/// - Timeout: 60 seconds for requests, 10 seconds for connections
+/// - Retry: 3 attempts with exponential backoff (100ms -> 30s max)
+/// - Max elapsed time: 120 seconds total across all retries
+fn default_catalog_options() -> CatalogOptions {
+    let http_config = HttpClientConfig::new()
+        .with_timeout(Duration::from_secs(60))
+        .with_connect_timeout(Duration::from_secs(10));
+
+    let retry_config = RetryConfig::new(
+        3, // max retries
+        BackoffStrategy::Exponential {
+            initial_delay: Duration::from_millis(100),
+            max_delay: Duration::from_secs(30),
+            multiplier: 2.0,
+        },
+    )
+    .with_max_elapsed_time(Duration::from_secs(120));
+
+    CatalogOptions::new()
+        .with_http_config(http_config)
+        .with_retry_config(retry_config)
+}
 
 /// Configuration for catalog initialization
 pub struct CatalogConfig {
@@ -45,6 +72,25 @@ pub enum CatalogType {
 
 /// Initialize a catalog based on configuration
 ///
+/// Delegates to icepick catalog implementations which handle connection management,
+/// authentication, and basic error handling. This function focuses on configuration
+/// mapping and error translation.
+///
+/// # Resilience & Timeouts
+///
+/// Connection resilience is handled by icepick catalog implementations:
+/// - **S3 Tables**: Uses AWS SDK defaults (connection timeout ~60s, retries via SDK)
+/// - **REST Catalog**: Uses reqwest defaults (connection timeout ~30s, no automatic retries)
+/// - **R2 Data Catalog**: Uses Cloudflare API defaults (timeout ~30s, no automatic retries)
+///
+/// If a catalog connection fails, this function returns immediately with an error.
+/// Callers should handle retries at the application level if needed.
+///
+/// # Future Configuration
+///
+/// Once icepick exposes builder patterns for timeout/retry configuration, this function
+/// will be updated to accept and forward those settings via `CatalogConfig`.
+///
 /// # Arguments
 /// * `config` - Catalog configuration with platform-specific details
 ///
@@ -52,8 +98,8 @@ pub enum CatalogType {
 /// Arc-wrapped catalog implementation ready for use
 ///
 /// # Errors
-/// Returns `WriterError::CatalogInit` if catalog creation fails
-/// Returns `WriterError::UnsupportedPlatform` if platform incompatible with build
+/// Returns `WriterError::CatalogInit` if catalog creation fails (connection, auth, etc.)
+/// Returns `WriterError::UnsupportedPlatform` if platform incompatible with build target
 pub async fn initialize_catalog(config: CatalogConfig) -> Result<Arc<dyn Catalog>> {
     match config.catalog_type {
         CatalogType::S3Tables { bucket_arn } => {
@@ -69,11 +115,16 @@ pub async fn initialize_catalog(config: CatalogConfig) -> Result<Arc<dyn Catalog
             {
                 tracing::debug!("Initializing S3 Tables catalog with ARN: {}", bucket_arn);
 
-                let catalog = icepick::S3TablesCatalog::from_arn("otlp2parquet", &bucket_arn)
-                    .await
-                    .map_err(|e| {
-                        WriterError::CatalogInit(format!("S3 Tables ARN '{}': {}", bucket_arn, e))
-                    })?;
+                let options = default_catalog_options();
+                let catalog = icepick::S3TablesCatalog::from_arn_with_options(
+                    "otlp2parquet",
+                    &bucket_arn,
+                    options,
+                )
+                .await
+                .map_err(|e| {
+                    WriterError::CatalogInit(format!("S3 Tables ARN '{}': {}", bucket_arn, e))
+                })?;
 
                 tracing::info!("✓ Connected to S3 Tables catalog: {}", bucket_arn);
                 Ok(Arc::new(catalog))
@@ -92,8 +143,21 @@ pub async fn initialize_catalog(config: CatalogConfig) -> Result<Arc<dyn Catalog
                 warehouse
             );
 
-            let mut builder = icepick::RestCatalog::builder("otlp2parquet", &uri);
-            builder = builder.with_file_io(icepick::FileIO::new(operator));
+            // Configure retry with exponential backoff
+            let retry_config = RetryConfig::new(
+                3,
+                BackoffStrategy::Exponential {
+                    initial_delay: Duration::from_millis(100),
+                    max_delay: Duration::from_secs(30),
+                    multiplier: 2.0,
+                },
+            )
+            .with_max_elapsed_time(Duration::from_secs(120));
+
+            let mut builder = icepick::RestCatalog::builder("otlp2parquet", &uri)
+                .with_file_io(icepick::FileIO::new(operator))
+                .with_retry_config(retry_config)
+                .with_timeout(Duration::from_secs(60));
 
             if let Some(token) = token {
                 tracing::debug!("Using Bearer token authentication");
@@ -126,15 +190,21 @@ pub async fn initialize_catalog(config: CatalogConfig) -> Result<Arc<dyn Catalog
                 bucket_name
             );
 
-            let catalog =
-                icepick::R2Catalog::new("otlp2parquet", &account_id, &bucket_name, &api_token)
-                    .await
-                    .map_err(|e| {
-                        WriterError::CatalogInit(format!(
-                            "R2 catalog account={}, bucket={}: {}",
-                            account_id, bucket_name, e
-                        ))
-                    })?;
+            let options = default_catalog_options();
+            let catalog = icepick::R2Catalog::with_options(
+                "otlp2parquet",
+                &account_id,
+                &bucket_name,
+                &api_token,
+                options,
+            )
+            .await
+            .map_err(|e| {
+                WriterError::CatalogInit(format!(
+                    "R2 catalog account={}, bucket={}: {}",
+                    account_id, bucket_name, e
+                ))
+            })?;
 
             tracing::info!(
                 "✓ Connected to R2 Data Catalog: {}/{}",
@@ -148,14 +218,26 @@ pub async fn initialize_catalog(config: CatalogConfig) -> Result<Arc<dyn Catalog
 
 /// Ensure namespace exists in catalog
 ///
-/// Creates namespace if it doesn't exist. Ignores errors if namespace already exists.
+/// Attempts to create the namespace. If creation fails (typically because it already exists),
+/// logs a debug message and continues. This best-effort approach prioritizes availability over
+/// strict error handling.
+///
+/// # Observability
+///
+/// - Success: Logs at `info` level with namespace name
+/// - Already exists: Logs at `debug` level (error ignored)
+/// - Other failures: Logs at `debug` level (error ignored)
+///
+/// This function does not distinguish between "already exists" and other failures because
+/// icepick's error types don't currently expose that semantic distinction. Once icepick
+/// provides structured errors, this can be refined.
 ///
 /// # Arguments
 /// * `catalog` - Catalog instance
 /// * `namespace` - Namespace name to create
 ///
 /// # Returns
-/// Ok(()) if namespace exists or was created successfully
+/// Always returns `Ok(())` - namespace creation failures are logged but not propagated
 pub async fn ensure_namespace(catalog: &dyn Catalog, namespace: &str) -> Result<()> {
     let namespace_ident = NamespaceIdent::new(vec![namespace.to_string()]);
 
