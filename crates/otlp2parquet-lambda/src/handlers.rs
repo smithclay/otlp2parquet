@@ -125,7 +125,7 @@ async fn process_logs(
         // Write logs via write_batch function
         for record_batch in &batch.batches {
             match otlp2parquet_writer::write_batch(
-                Some(state.catalog.as_ref()),
+                state.catalog.as_deref(),
                 &state.namespace,
                 record_batch,
                 otlp2parquet_core::SignalType::Logs,
@@ -214,7 +214,7 @@ async fn process_metrics(
             let timestamp_nanos = extract_first_timestamp(&batch);
 
             match otlp2parquet_writer::write_batch(
-                Some(state.catalog.as_ref()),
+                state.catalog.as_deref(),
                 &state.namespace,
                 &batch,
                 otlp2parquet_core::SignalType::Metrics,
@@ -321,7 +321,7 @@ async fn process_traces(
             let timestamp_nanos = extract_first_timestamp(record_batch);
 
             match otlp2parquet_writer::write_batch(
-                Some(state.catalog.as_ref()),
+                state.catalog.as_deref(),
                 &state.namespace,
                 record_batch,
                 otlp2parquet_core::SignalType::Traces,

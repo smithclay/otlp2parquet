@@ -26,8 +26,14 @@ export OTLP2PARQUET_STORAGE_BACKEND=s3
 export OTLP2PARQUET_S3_BUCKET=my-data-bucket
 export OTLP2PARQUET_S3_REGION=us-west-2
 
-# Example: Configure S3 Tables catalog (Lambda)
+# Example: Configure S3 Tables catalog (Lambda - Iceberg mode)
+export OTLP2PARQUET_CATALOG_MODE=iceberg
 export OTLP2PARQUET_ICEBERG_BUCKET_ARN=arn:aws:s3tables:us-west-2:123456789012:bucket/my-bucket
+
+# Example: Configure plain Parquet mode (Lambda - no catalog)
+export OTLP2PARQUET_CATALOG_MODE=none
+export OTLP2PARQUET_STORAGE_S3_BUCKET=my-data-bucket
+export OTLP2PARQUET_STORAGE_S3_REGION=us-west-2
 
 # Example: Configure R2 Data Catalog (Cloudflare Workers)
 export OTLP2PARQUET_CATALOG_TYPE=r2
@@ -115,7 +121,9 @@ Each platform is optimized for its constraints.
 *   **Batching**: Disabled (per-request processing)
 *   **Max Payload**: 6 MiB (Lambda constraint)
 *   **Storage**: S3 only (event-driven constraint)
-*   **Catalog**: S3 Tables (ARN-based), simplified configuration
+*   **Catalog**: Supports both modes via `OTLP2PARQUET_CATALOG_MODE` environment variable:
+    *   `iceberg` (default): S3 Tables (ARN-based) or REST catalog (Glue, Nessie)
+    *   `none`: Plain Parquet files without catalog integration
 
 ### Cloudflare Workers
 

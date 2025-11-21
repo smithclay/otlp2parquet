@@ -119,6 +119,97 @@ The Lambda execution role requires these permissions for S3 Tables operations:
 
 The CloudFormation template automatically creates a role with these permissions scoped to the S3 Tables bucket.
 
+## Running Without Iceberg Catalog
+
+Lambda also supports plain Parquet mode for simpler deployments without Apache Iceberg catalog integration.
+
+### When to Use Plain Parquet Mode
+
+**Choose plain Parquet (`CatalogMode=none`) if you:**
+- Want simpler deployment without S3 Tables or catalog service
+- Have lower cost requirements (no catalog API calls)
+- Plan to query data with tools that read Parquet directly (DuckDB, Athena, Spark)
+- Don't need ACID transactions, schema evolution, or time travel features
+
+**Choose Iceberg mode (`CatalogMode=iceberg`) if you:**
+- Need ACID guarantees for writes
+- Want schema evolution and versioning
+- Require time travel queries
+- Plan to use tools optimized for Iceberg (Snowflake, Databricks, Trino)
+
+### Configuration
+
+Deploy with plain Parquet mode by setting the `CatalogMode` parameter:
+
+```bash
+aws cloudformation deploy \
+  --template-file template.yaml \
+  --stack-name otlp2parquet \
+  --region us-west-2 \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameter-overrides CatalogMode=none BucketName=my-otlp-logs
+```
+
+This configuration:
+- Creates a standard S3 bucket (not S3 Tables)
+- Writes Parquet files with Hive-style partitioning: `s3://bucket/logs/{service}/year={year}/month={month}/day={day}/hour={hour}/file.parquet`
+- Requires no catalog service or special permissions
+
+### Querying Plain Parquet Files
+
+**With DuckDB:**
+```bash
+duckdb -c "
+  CREATE SECRET (TYPE S3, REGION 'us-west-2');
+
+  -- Query all logs
+  SELECT Timestamp, ServiceName, Body
+  FROM read_parquet('s3://my-otlp-logs/logs/**/*.parquet')
+  WHERE Timestamp > current_timestamp - interval '1 hour'
+  LIMIT 100;
+"
+```
+
+**With AWS Athena:**
+```sql
+CREATE EXTERNAL TABLE otlp_logs (
+  Timestamp TIMESTAMP,
+  ServiceName STRING,
+  Body STRING,
+  SeverityText STRING
+  -- Add other columns as needed
+)
+PARTITIONED BY (
+  service STRING,
+  year INT,
+  month INT,
+  day INT,
+  hour INT
+)
+STORED AS PARQUET
+LOCATION 's3://my-otlp-logs/logs/';
+
+-- Add partitions
+MSCK REPAIR TABLE otlp_logs;
+
+-- Query data
+SELECT * FROM otlp_logs
+WHERE year=2025 AND month=11 AND day=21
+LIMIT 100;
+```
+
+### Trade-offs
+
+| Feature | Plain Parquet | Iceberg (S3 Tables) |
+|---------|--------------|---------------------|
+| **Setup Complexity** | Simple (just S3) | Moderate (S3 Tables setup) |
+| **Query Performance** | Good with partition pruning | Excellent with metadata pruning |
+| **ACID Transactions** | ❌ No | ✅ Yes |
+| **Schema Evolution** | ❌ Manual | ✅ Automatic |
+| **Time Travel** | ❌ No | ✅ Yes |
+| **Cost** | Lower (S3 only) | Higher (S3 + catalog API) |
+| **Tool Support** | Universal (any Parquet reader) | Growing (Iceberg-aware tools) |
+
 ## Common Tasks
 
 *   **Viewing Logs**: `aws logs tail /aws/lambda/otlp2parquet-ingest --follow --region us-west-2`

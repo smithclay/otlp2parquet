@@ -76,25 +76,33 @@ Build a Rust workspace that ingests OpenTelemetry logs, metrics, and traces via 
 
 **Optional layer on top of Parquet files** - Provides ACID transactions, schema evolution, and faster queries via `icepick` library
 - **Implementation**: Uses [icepick](https://crates.io/crates/icepick) for unified Parquet writing and catalog operations
-- **Platforms**:
-  - Lambda: S3 Tables catalog (ARN-based configuration)
-  - Server: Nessie, Glue, or plain Parquet (REST catalog API)
-  - Cloudflare Workers: R2 Data Catalog (WASM-compatible)
-- **Configuration**: Via `config.toml` `[iceberg]` section or `OTLP2PARQUET_ICEBERG_*` env vars
+- **Catalog Modes**: All platforms support both `iceberg` (with catalog) and `none` (plain Parquet) modes via `OTLP2PARQUET_CATALOG_MODE`
+- **Platform Catalog Options**:
+  - Lambda: S3 Tables (ARN-based), REST catalog (Glue/Nessie), or plain Parquet
+  - Server: Nessie, Glue (REST catalog API), or plain Parquet
+  - Cloudflare Workers: R2 Data Catalog (WASM-compatible) or plain Parquet
+- **Configuration**: Via `config.toml` `[iceberg]` section or `OTLP2PARQUET_CATALOG_MODE` + `OTLP2PARQUET_ICEBERG_*` env vars
 - **Behavior**: Atomic write-and-commit via icepick (Parquet file + catalog metadata)
 - **Resilience**: Warn-and-succeed pattern - catalog failures log warnings but Parquet files are still written
 - **Tables**: One per schema (logs, traces, 5 metric types)
 
-### AWS S3 Tables (Lambda - Recommended)
+### AWS S3 Tables (Lambda - Iceberg Mode)
 
-AWS S3 Tables provides a fully-managed Iceberg catalog service with simplified ARN-based configuration:
+AWS S3 Tables provides a fully-managed Iceberg catalog service with simplified ARN-based configuration when using `catalog_mode=iceberg`:
 
 **Configuration:**
+- `OTLP2PARQUET_CATALOG_MODE=iceberg` (default for Lambda)
 - `OTLP2PARQUET_ICEBERG_BUCKET_ARN`: S3 Tables bucket ARN
   - Format: `arn:aws:s3tables:region:account-id:bucket/bucket-name`
   - Example: `arn:aws:s3tables:us-west-2:123456789012:bucket/my-otlp-bucket`
 - Auto-detected when ARN is provided
 - No REST endpoint configuration needed
+
+**Plain Parquet Alternative:**
+- `OTLP2PARQUET_CATALOG_MODE=none` - No catalog, writes plain Parquet to S3
+- `OTLP2PARQUET_STORAGE_S3_BUCKET` - S3 bucket for Parquet files
+- `OTLP2PARQUET_STORAGE_S3_REGION` - S3 region
+- Simpler deployment, lower cost, no ACID/schema evolution
 
 **IAM Permissions Required:**
 - `s3tables:GetTable`, `s3tables:GetTableMetadataLocation`
@@ -195,9 +203,11 @@ The `otlp2parquet-writer` crate provides a unified `OtlpWriter` trait implemente
 - Warn-and-succeed pattern for catalog failures
 
 **Platform-Specific Initialization:**
-- **Lambda**: S3 Tables catalog detected via `OTLP2PARQUET_ICEBERG_BUCKET_ARN` environment variable
-- **Cloudflare Workers**: R2 Data Catalog when `OTLP2PARQUET_CATALOG_TYPE="r2"` is set
-- **Server**: Configurable catalog (Nessie REST, Glue, or plain Parquet)
+- **Lambda**:
+  - `catalog_mode=iceberg`: S3 Tables (via `OTLP2PARQUET_ICEBERG_BUCKET_ARN`) or REST catalog
+  - `catalog_mode=none`: Plain Parquet to S3 (via `OTLP2PARQUET_STORAGE_S3_BUCKET`)
+- **Cloudflare Workers**: R2 Data Catalog when `OTLP2PARQUET_CATALOG_TYPE="r2"` or plain Parquet
+- **Server**: Configurable catalog (Nessie REST, Glue) or plain Parquet via `catalog_mode`
 
 **Error Handling Pattern:**
 - Catalog operations are non-blocking (warn-and-succeed)
