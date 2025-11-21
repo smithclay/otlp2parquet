@@ -92,8 +92,13 @@ pub(crate) async fn init_writer(
         // S3 Tables catalog (AWS managed catalog via ARN)
         info!("Initializing with S3 Tables catalog: {}", bucket_arn);
 
+        let namespace = iceberg_cfg
+            .namespace
+            .clone()
+            .unwrap_or_else(|| "otlp".to_string());
+
         otlp2parquet_writer::CatalogConfig {
-            namespace: "otlp".to_string(),
+            namespace,
             catalog_type: otlp2parquet_writer::CatalogType::S3Tables {
                 bucket_arn: bucket_arn.clone(),
             },

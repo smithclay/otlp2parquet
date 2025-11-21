@@ -342,4 +342,29 @@ test-e2e-debug: KEEP_CONTAINERS=1
 test-e2e-debug: test-e2e ## Run e2e tests and preserve containers for debugging
 
 .PHONY: test-all
-test-all: test test-e2e ## Run unit tests + core e2e tests
+test-all: test test-e2e ## Run unit tests + core e2e tests (legacy alias for test-full)
+
+#
+# Platform Smoke Tests (requires cloud credentials)
+#
+
+.PHONY: smoke-lambda
+smoke-lambda: build-lambda ## Run Lambda + S3 Tables smoke tests (requires AWS credentials)
+	@echo "==> Running Lambda smoke tests..."
+	@echo "Prerequisites: AWS credentials (deployment bucket auto-created)"
+	@cargo test --test smoke_tests --features smoke-lambda -- lambda --test-threads=1
+
+.PHONY: smoke-workers
+smoke-workers: wasm-compress ## Run Workers + R2 Catalog smoke tests (requires Cloudflare credentials)
+	@echo "==> Running Workers smoke tests..."
+	@echo "Prerequisites: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID env vars"
+	@cargo test --test smoke_tests --features smoke-workers -- workers --test-threads=1
+
+.PHONY: smoke-all
+smoke-all: smoke-lambda smoke-workers ## Run all platform smoke tests (requires all cloud credentials)
+
+.PHONY: test-full
+test-full: test test-e2e-iceberg ## Run unit tests + Docker integration tests (no cloud required)
+
+.PHONY: test-ci
+test-ci: test-full smoke-all ## Run complete test suite including cloud smoke tests
