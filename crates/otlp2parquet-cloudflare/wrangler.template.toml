@@ -1,7 +1,7 @@
 # Cloudflare Workers configuration template for smoke tests
 # Placeholders will be replaced by test harness at runtime
 
-name = "clay-manual-worker-smoketest"
+name = "{{WORKER_NAME}}"
 main = "build/index.js"
 compatibility_date = "2025-01-15"
 
@@ -15,20 +15,20 @@ cpu_ms = 2000
 
 [[r2_buckets]]
 binding = "LOGS_BUCKET"
-bucket_name = "otlp2parquet-smoketest-storage"
+bucket_name = "{{BUCKET_NAME}}"
 
 [vars]
 # R2 Storage configuration (required)
 OTLP2PARQUET_STORAGE_BACKEND = "r2"
-OTLP2PARQUET_R2_BUCKET = "otlp2parquet-smoketest-storage"
-OTLP2PARQUET_R2_ACCOUNT_ID = "e458468cdac9bcb674f1e25cda158320"
+OTLP2PARQUET_R2_BUCKET = "{{BUCKET_NAME}}"
+OTLP2PARQUET_R2_ACCOUNT_ID = "auto"
 
 # AWS standard credential variables (no prefix for AWS compatibility)
-AWS_ACCESS_KEY_ID = "9176cf04b5e264937c8eb7240ac32a98"
-AWS_SECRET_ACCESS_KEY = "a2bcb2c45f0132fbf8dd2221edc4ec2c7816afb59affc961d24d85184d125655"
-AWS_ENDPOINT_URL = "https://e458468cdac9bcb674f1e25cda158320.r2.cloudflarestorage.com"
+AWS_ACCESS_KEY_ID = "{{R2_ACCESS_KEY_ID}}"
+AWS_SECRET_ACCESS_KEY = "{{R2_SECRET_ACCESS_KEY}}"
+AWS_ENDPOINT_URL = "https://{{CLOUDFLARE_ACCOUNT_ID}}.r2.cloudflarestorage.com"
 
-# Catalog mode: "iceberg" or "none" (plain Parquet)
+# Catalog mode: "iceberg" (default) or "none" (plain Parquet)
 OTLP2PARQUET_CATALOG_MODE = "none"
 
 [observability]

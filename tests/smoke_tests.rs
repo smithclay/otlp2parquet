@@ -158,29 +158,81 @@ mod lambda_tests {
 
 #[cfg(feature = "smoke-workers")]
 mod workers_tests {
-    use super::smoke::{workers::WorkersHarness, SmokeTestHarness};
+    use super::smoke::{
+        workers::{CatalogMode, WorkersHarness},
+        SmokeTestHarness,
+    };
     use anyhow::Result;
 
     #[tokio::test]
-    async fn workers_r2_catalog_full_pipeline() -> Result<()> {
-        let harness = WorkersHarness::from_env()?;
+    async fn workers_plain_r2_full_pipeline() -> Result<()> {
+        let harness = WorkersHarness::from_env(CatalogMode::Disabled)?;
 
-        // Deploy Workers script
+        // Deploy Workers script (plain R2, no catalog)
         let deployment = harness.deploy().await?;
 
+        // Collect test results without panicking
+        let mut test_errors = Vec::new();
+
         // Send OTLP signals
-        harness.send_signals(&deployment.endpoint).await?;
+        if let Err(e) = harness.send_signals(&deployment.endpoint).await {
+            test_errors.push(format!("Failed to send signals: {}", e));
+        }
 
         // Verify no errors in Workers logs
-        let status = harness.verify_execution().await?;
-        assert!(
-            status.is_healthy(),
-            "Workers execution had errors: {:?}",
-            status
-        );
+        if test_errors.is_empty() {
+            match harness.verify_execution().await {
+                Ok(status) => {
+                    if !status.is_healthy() {
+                        test_errors.push(format!("Workers execution had errors: {:?}", status));
+                    }
+                }
+                Err(e) => test_errors.push(format!("Failed to verify execution: {}", e)),
+            }
+        }
+
+        // ALWAYS cleanup, regardless of test results
+        if let Err(e) = harness.cleanup().await {
+            eprintln!("Warning: Cleanup failed: {}", e);
+        }
+
+        // Now check test results after cleanup
+        if !test_errors.is_empty() {
+            anyhow::bail!("Test failed:\n{}", test_errors.join("\n"));
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn workers_r2_catalog_full_pipeline() -> Result<()> {
+        let harness = WorkersHarness::from_env(CatalogMode::Enabled)?;
+
+        // Deploy Workers script (with R2 Data Catalog)
+        let deployment = harness.deploy().await?;
+
+        // Collect test results without panicking
+        let mut test_errors = Vec::new();
+
+        // Send OTLP signals
+        if let Err(e) = harness.send_signals(&deployment.endpoint).await {
+            test_errors.push(format!("Failed to send signals: {}", e));
+        }
+
+        // Verify no errors in Workers logs
+        if test_errors.is_empty() {
+            match harness.verify_execution().await {
+                Ok(status) => {
+                    if !status.is_healthy() {
+                        test_errors.push(format!("Workers execution had errors: {:?}", status));
+                    }
+                }
+                Err(e) => test_errors.push(format!("Failed to verify execution: {}", e)),
+            }
+        }
 
         // Verify data in R2 catalog via DuckDB (if catalog configured)
-        if deployment.catalog_endpoint != "r2-catalog-not-configured" {
+        if test_errors.is_empty() && deployment.catalog_endpoint != "r2-catalog-not-configured" {
             let mut verifier = harness.duckdb_verifier();
             verifier.catalog_endpoint = deployment.catalog_endpoint.clone();
             if let super::smoke::StorageBackend::R2 { bucket, .. } =
@@ -189,21 +241,35 @@ mod workers_tests {
                 *bucket = deployment.bucket.clone();
             }
 
-            let report = verifier.verify("otel").await?;
-
-            assert!(report.tables.contains(&"otel_logs".to_string()));
-            assert!(*report.row_counts.get("otel_logs").unwrap_or(&0) > 0);
+            match verifier.verify("otel").await {
+                Ok(report) => {
+                    if !report.tables.contains(&"otel_logs".to_string()) {
+                        test_errors.push("Missing table: otel_logs".to_string());
+                    }
+                    if *report.row_counts.get("otel_logs").unwrap_or(&0) == 0 {
+                        test_errors.push("No rows in otel_logs".to_string());
+                    }
+                }
+                Err(e) => test_errors.push(format!("Failed to verify catalog: {}", e)),
+            }
         }
 
-        // Cleanup
-        harness.cleanup().await?;
+        // ALWAYS cleanup, regardless of test results
+        if let Err(e) = harness.cleanup().await {
+            eprintln!("Warning: Cleanup failed: {}", e);
+        }
+
+        // Now check test results after cleanup
+        if !test_errors.is_empty() {
+            anyhow::bail!("Test failed:\n{}", test_errors.join("\n"));
+        }
 
         Ok(())
     }
 
     #[tokio::test]
     async fn workers_metrics_only() -> Result<()> {
-        let harness = WorkersHarness::from_env()?;
+        let harness = WorkersHarness::from_env(CatalogMode::Disabled)?;
         let deployment = harness.deploy().await?;
 
         // Send only metrics

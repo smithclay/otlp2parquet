@@ -62,6 +62,10 @@ impl EnvSource for StdEnvSource {
     fn get(&self, key: &str) -> Option<String> {
         env::var(format!("{}{}", ENV_PREFIX, key)).ok()
     }
+
+    fn get_raw(&self, key: &str) -> Option<String> {
+        env::var(key).ok()
+    }
 }
 
 #[cfg(test)]

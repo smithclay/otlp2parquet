@@ -17,7 +17,11 @@ async-trait = "0.1"
 parquet = { version = "56.2", default-features = false }
 blake3 = "1.5"
 serde_json = "1"
-opendal = { version = "0.54", default-features = false }
+opendal = { version = "0.54", default-features = false, features = ["services-s3"] }
+once_cell = "1.19"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+opendal = { version = "0.54", default-features = false, features = ["services-fs", "services-s3"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

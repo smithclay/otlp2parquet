@@ -358,7 +358,13 @@ smoke-lambda: build-lambda ## Run Lambda + S3 Tables smoke tests (requires AWS c
 smoke-workers: wasm-compress ## Run Workers + R2 Catalog smoke tests (requires Cloudflare credentials)
 	@echo "==> Running Workers smoke tests..."
 	@echo "Prerequisites: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID env vars"
-	@cargo test --test smoke_tests --features smoke-workers -- workers --test-threads=1
+	@if [ -f crates/otlp2parquet-cloudflare/.env ]; then \
+		echo "Loading environment from crates/otlp2parquet-cloudflare/.env"; \
+		set -a && . crates/otlp2parquet-cloudflare/.env && set +a && \
+		PATH="$$PATH" cargo test --test smoke_tests --features smoke-workers -- workers --test-threads=1; \
+	else \
+		PATH="$$PATH" cargo test --test smoke_tests --features smoke-workers -- workers --test-threads=1; \
+	fi
 
 .PHONY: smoke-all
 smoke-all: smoke-lambda smoke-workers ## Run all platform smoke tests (requires all cloud credentials)

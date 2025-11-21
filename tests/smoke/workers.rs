@@ -1,24 +1,27 @@
-//! Cloudflare Workers + R2 Data Catalog smoke test harness
+//! Cloudflare Workers + R2 smoke test harness
 //!
-//! Tests otlp2parquet Cloudflare Workers with R2 Data Catalog for Iceberg.
+//! Tests otlp2parquet Cloudflare Workers with both R2 plain Parquet and R2 Data Catalog (Iceberg).
 //!
 //! ## Architecture
-//! - Deploy: Wrangler deploy WASM Workers script with R2 binding
+//! - Setup: Create unique R2 bucket per test (e.g., "smoke-workers-{uuid}")
+//! - Optional: Enable R2 Data Catalog for Iceberg tests
+//! - Deploy: Wrangler deploy WASM Workers script using generated config
 //! - Send signals: POST to Workers URL with OTLP payloads
 //! - Verify execution: Query Workers logs via Cloudflare API
-//! - Verify data: DuckDB queries R2 Data Catalog + R2 Parquet files
-//! - Cleanup: Delete Workers script and R2 objects
+//! - Verify data: DuckDB queries R2 Parquet files (with or without catalog)
+//! - Cleanup: Delete Workers script, all R2 objects, and R2 bucket
 //!
 //! ## Prerequisites
 //! - Cloudflare API token with Workers and R2 permissions
 //! - WASM binary built (make wasm-compress)
-//! - R2 bucket created
+//! - R2 API credentials for S3-compatible access
 //!
 //! ## Environment Variables
 //! - `CLOUDFLARE_API_TOKEN`: Cloudflare API token
 //! - `CLOUDFLARE_ACCOUNT_ID`: Cloudflare account ID
+//! - `AWS_ACCESS_KEY_ID`: R2 S3 API access key
+//! - `AWS_SECRET_ACCESS_KEY`: R2 S3 API secret key
 //! - `SMOKE_TEST_WORKER_PREFIX`: Worker name prefix (default: "smoke-workers")
-//! - `SMOKE_TEST_R2_BUCKET`: R2 bucket name (default: "otlp-smoke")
 
 use super::{
     CatalogType, DeploymentInfo, DuckDBVerifier, ExecutionStatus, R2Credentials, SmokeTestHarness,
@@ -26,83 +29,246 @@ use super::{
 };
 use anyhow::{Context, Result};
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
+/// Catalog mode for Workers tests
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum CatalogMode {
+    /// Enable R2 Data Catalog (Iceberg)
+    Enabled,
+    /// Disable catalog (plain Parquet to R2)
+    Disabled,
+}
+
 /// Cloudflare Workers smoke test harness
 pub struct WorkersHarness {
-    /// Workers script name
+    /// Workers script name (unique per test)
     worker_name: String,
+    /// R2 bucket name (pre-created, shared across tests)
+    bucket_name: String,
+    /// Unique test prefix within bucket (e.g., "smoke-abc123/")
+    test_prefix: String,
     /// Cloudflare account ID
     account_id: String,
-    /// R2 bucket name
-    r2_bucket: String,
-    /// R2 Data Catalog endpoint (if available)
-    r2_catalog_endpoint: Option<String>,
     /// Cloudflare API token
     api_token: String,
-    /// WASM binary path
-    wasm_path: PathBuf,
+    /// R2 S3 API credentials (from .env)
+    r2_access_key_id: String,
+    r2_secret_access_key: String,
+    /// Catalog mode
+    catalog_mode: CatalogMode,
 }
 
 impl WorkersHarness {
+    /// Get wrangler command with proper environment setup
+    fn wrangler_command(&self) -> Command {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c")
+            .env("CLOUDFLARE_API_TOKEN", &self.api_token)
+            .env("CLOUDFLARE_ACCOUNT_ID", &self.account_id);
+
+        // Add catalog env vars if enabled
+        if self.catalog_mode == CatalogMode::Enabled {
+            cmd.env("CLOUDFLARE_BUCKET_NAME", &self.bucket_name);
+        }
+
+        cmd
+    }
+
     /// Create harness from environment variables
-    pub fn from_env() -> Result<Self> {
+    pub fn from_env(catalog_mode: CatalogMode) -> Result<Self> {
         let worker_prefix = std::env::var("SMOKE_TEST_WORKER_PREFIX")
             .unwrap_or_else(|_| "smoke-workers".to_string());
         let account_id =
             std::env::var("CLOUDFLARE_ACCOUNT_ID").context("CLOUDFLARE_ACCOUNT_ID not set")?;
         let api_token =
             std::env::var("CLOUDFLARE_API_TOKEN").context("CLOUDFLARE_API_TOKEN not set")?;
-        let r2_bucket =
-            std::env::var("SMOKE_TEST_R2_BUCKET").unwrap_or_else(|_| "otlp-smoke".to_string());
 
-        // Generate unique worker name for test isolation
+        // R2 bucket (pre-created, shared across tests)
+        let bucket_name = std::env::var("CLOUDFLARE_BUCKET_NAME")
+            .unwrap_or_else(|_| "otlp2parquet-smoke".to_string());
+
+        // R2 S3 API credentials
+        let r2_access_key_id =
+            std::env::var("AWS_ACCESS_KEY_ID").context("AWS_ACCESS_KEY_ID not set")?;
+        let r2_secret_access_key =
+            std::env::var("AWS_SECRET_ACCESS_KEY").context("AWS_SECRET_ACCESS_KEY not set")?;
+
+        // Generate unique test ID for isolation
         let test_id = uuid::Uuid::new_v4()
             .to_string()
             .split('-')
             .next()
             .unwrap()
             .to_string();
+
         let worker_name = format!("{}-{}", worker_prefix, test_id);
-
-        // R2 Data Catalog endpoint (if configured)
-        let r2_catalog_endpoint = std::env::var("SMOKE_TEST_R2_CATALOG_ENDPOINT").ok();
-
-        let wasm_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../crates/otlp2parquet-cloudflare/build/index_bg_optimized.wasm.gz");
+        let test_prefix = format!("smoke-{}/", test_id); // Unique prefix within shared bucket
 
         Ok(Self {
             worker_name,
+            bucket_name,
+            test_prefix,
             account_id,
-            r2_bucket,
-            r2_catalog_endpoint,
             api_token,
-            wasm_path,
+            r2_access_key_id,
+            r2_secret_access_key,
+            catalog_mode,
         })
+    }
+
+    /// Generate wrangler config from template
+    fn generate_config(&self) -> Result<PathBuf> {
+        let wrangler_dir =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/otlp2parquet-cloudflare");
+        let template_path = wrangler_dir.join("wrangler.template.toml");
+        let template =
+            fs::read_to_string(&template_path).context("Failed to read wrangler.template.toml")?;
+
+        // Replace placeholders
+        let mut config_content = template
+            .replace("{{WORKER_NAME}}", &self.worker_name)
+            .replace("{{BUCKET_NAME}}", &self.bucket_name)
+            .replace("{{CLOUDFLARE_ACCOUNT_ID}}", &self.account_id)
+            .replace("{{R2_ACCESS_KEY_ID}}", &self.r2_access_key_id)
+            .replace("{{R2_SECRET_ACCESS_KEY}}", &self.r2_secret_access_key);
+
+        // Add catalog configuration if enabled
+        if self.catalog_mode == CatalogMode::Enabled {
+            let catalog_vars = format!(
+                "CLOUDFLARE_BUCKET_NAME = \"{}\"\nCLOUDFLARE_ACCOUNT_ID = \"{}\"\nCLOUDFLARE_API_TOKEN = \"{}\"",
+                self.bucket_name, self.account_id, self.api_token
+            );
+            config_content = config_content.replace("# {{CATALOG_VARS}}", &catalog_vars);
+        } else {
+            config_content = config_content.replace("# {{CATALOG_VARS}}", "");
+        }
+
+        // Write to wrangler directory (so paths in config resolve correctly)
+        let config_path = wrangler_dir.join(format!("wrangler-{}.toml", self.worker_name));
+        fs::write(&config_path, config_content)
+            .context("Failed to write generated wrangler config")?;
+
+        tracing::info!("Generated wrangler config: {}", config_path.display());
+        Ok(config_path)
+    }
+
+    /// List all objects in R2 bucket with test prefix
+    fn list_r2_objects(&self) -> Result<Vec<String>> {
+        let list_cmd = format!(
+            "npx wrangler r2 object list {} --prefix {} --json",
+            self.bucket_name, self.test_prefix
+        );
+        let output = self
+            .wrangler_command()
+            .arg(&list_cmd)
+            .output()
+            .context("Failed to list R2 objects")?;
+
+        if !output.status.success() {
+            // If bucket doesn't exist or is empty, return empty list
+            return Ok(Vec::new());
+        }
+
+        let output_str = String::from_utf8_lossy(&output.stdout);
+
+        // Parse JSON output to extract object keys
+        // wrangler outputs: [{"key": "...", ...}, ...]
+        let mut keys = Vec::new();
+        for line in output_str.lines() {
+            if line.contains("\"key\"") {
+                // Simple extraction: find "key": "value"
+                if let Some(start) = line.find("\"key\":") {
+                    let rest = &line[start + 6..].trim_start();
+                    if let Some(stripped) = rest.strip_prefix('\"') {
+                        if let Some(end) = stripped.find('\"') {
+                            let key = &stripped[..end];
+                            keys.push(key.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(keys)
+    }
+
+    /// Delete a single object from R2 bucket
+    fn delete_r2_object(&self, key: &str) -> Result<()> {
+        let delete_cmd = format!("npx wrangler r2 object delete {}/{}", self.bucket_name, key);
+        let _ = self.wrangler_command().arg(&delete_cmd).output();
+        Ok(()) // Ignore errors - best effort
+    }
+
+    /// Extract Workers URL from wrangler deploy output
+    fn extract_workers_url(&self, output: &str) -> Result<String> {
+        // wrangler outputs: "Published {worker_name} (1.23 sec)"
+        // "  https://{worker_name}.{account_subdomain}.workers.dev"
+        for line in output.lines() {
+            if line.contains("https://") && line.contains(".workers.dev") {
+                let url = line.trim();
+                if url.starts_with("https://") {
+                    return Ok(url.to_string());
+                }
+            }
+        }
+
+        // Fallback: construct URL from worker name
+        Ok(format!("https://{}.workers.dev", self.worker_name))
     }
 }
 
 #[async_trait::async_trait]
 impl SmokeTestHarness for WorkersHarness {
     async fn deploy(&self) -> Result<DeploymentInfo> {
-        tracing::info!("Deploying Workers smoke test: {}", self.worker_name);
+        tracing::info!(
+            "Deploying Workers smoke test: {} (bucket: {}, prefix: {}, catalog: {})",
+            self.worker_name,
+            self.bucket_name,
+            self.test_prefix,
+            if self.catalog_mode == CatalogMode::Enabled {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
 
-        // Deploy using wrangler CLI
-        let output = Command::new("wrangler")
-            .args([
-                "deploy",
-                "--name",
-                &self.worker_name,
-                "--compatibility-date",
-                "2024-01-01",
-            ])
-            .env("CLOUDFLARE_API_TOKEN", &self.api_token)
-            .env("CLOUDFLARE_ACCOUNT_ID", &self.account_id)
-            .current_dir(
-                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../crates/otlp2parquet-cloudflare"),
-            )
+        // Generate wrangler config from template
+        let config_path = self.generate_config()?;
+
+        // Enable R2 Data Catalog if requested
+        if self.catalog_mode == CatalogMode::Enabled {
+            tracing::info!("Enabling R2 Data Catalog for bucket: {}", self.bucket_name);
+            let enable_catalog_cmd =
+                format!("npx wrangler r2 bucket catalog enable {}", self.bucket_name);
+            let output = self
+                .wrangler_command()
+                .arg(&enable_catalog_cmd)
+                .output()
+                .context("Failed to enable R2 catalog")?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                tracing::warn!("Failed to enable R2 catalog: {}", stderr);
+                // Continue anyway - catalog might already be enabled
+            }
+        }
+
+        // Deploy using wrangler CLI with generated config
+        let wrangler_dir =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/otlp2parquet-cloudflare");
+        let deploy_cmd = format!(
+            "cd {} && npx wrangler deploy --config {}",
+            wrangler_dir.display(),
+            config_path.display()
+        );
+
+        let output = self
+            .wrangler_command()
+            .arg(&deploy_cmd)
             .output()
             .context("Failed to run wrangler deploy")?;
 
@@ -121,13 +287,15 @@ impl SmokeTestHarness for WorkersHarness {
 
         Ok(DeploymentInfo {
             endpoint: endpoint.clone(),
-            catalog_endpoint: self
-                .r2_catalog_endpoint
-                .clone()
-                .unwrap_or_else(|| "r2-catalog-not-configured".to_string()),
-            bucket: self.r2_bucket.clone(),
+            catalog_endpoint: if self.catalog_mode == CatalogMode::Enabled {
+                format!("r2-catalog://{}", self.bucket_name)
+            } else {
+                "r2-plain-parquet".to_string()
+            },
+            bucket: self.bucket_name.clone(),
             resource_ids: HashMap::from([
                 ("worker_name".to_string(), self.worker_name.clone()),
+                ("bucket_name".to_string(), self.bucket_name.clone()),
                 ("account_id".to_string(), self.account_id.clone()),
             ]),
         })
@@ -188,16 +356,14 @@ impl SmokeTestHarness for WorkersHarness {
         tokio::time::sleep(Duration::from_secs(5)).await;
 
         // Query Workers tail logs via wrangler
-        let output = Command::new("wrangler")
-            .args([
-                "tail",
-                &self.worker_name,
-                "--format",
-                "json",
-                "--once", // Single batch of logs
-            ])
-            .env("CLOUDFLARE_API_TOKEN", &self.api_token)
-            .env("CLOUDFLARE_ACCOUNT_ID", &self.account_id)
+        let tail_cmd = format!(
+            "npx wrangler tail {} --format json --once",
+            self.worker_name
+        );
+
+        let output = self
+            .wrangler_command()
+            .arg(&tail_cmd)
             .output()
             .context("Failed to run wrangler tail")?;
 
@@ -237,23 +403,20 @@ impl SmokeTestHarness for WorkersHarness {
     }
 
     fn duckdb_verifier(&self) -> DuckDBVerifier {
-        // R2 credentials from environment
-        let r2_access_key = std::env::var("CF_R2_ACCESS_KEY_ID").unwrap_or_default();
-        let r2_secret_key = std::env::var("CF_R2_SECRET_ACCESS_KEY").unwrap_or_default();
-
         DuckDBVerifier {
             catalog_type: CatalogType::R2Catalog,
-            catalog_endpoint: self
-                .r2_catalog_endpoint
-                .clone()
-                .unwrap_or_else(|| "r2-catalog-not-configured".to_string()),
+            catalog_endpoint: if self.catalog_mode == CatalogMode::Enabled {
+                format!("r2-catalog://{}", self.bucket_name)
+            } else {
+                "r2-plain-parquet".to_string()
+            },
             storage_config: StorageConfig {
                 backend: StorageBackend::R2 {
                     account_id: self.account_id.clone(),
-                    bucket: self.r2_bucket.clone(),
+                    bucket: self.bucket_name.clone(),
                     credentials: R2Credentials {
-                        access_key_id: r2_access_key,
-                        secret_access_key: r2_secret_key,
+                        access_key_id: self.r2_access_key_id.clone(),
+                        secret_access_key: self.r2_secret_access_key.clone(),
                     },
                 },
             },
@@ -261,46 +424,53 @@ impl SmokeTestHarness for WorkersHarness {
     }
 
     async fn cleanup(&self) -> Result<()> {
-        tracing::info!("Cleaning up Workers smoke test");
+        tracing::info!("Cleaning up Workers smoke test (fail-safe mode)");
 
-        // Delete Workers script
-        let output = Command::new("wrangler")
-            .args(["delete", &self.worker_name, "--force"])
-            .env("CLOUDFLARE_API_TOKEN", &self.api_token)
-            .env("CLOUDFLARE_ACCOUNT_ID", &self.account_id)
-            .output()
-            .context("Failed to run wrangler delete")?;
+        // 1. Delete Workers script
+        let delete_cmd = format!("npx wrangler delete {} --force", self.worker_name);
 
-        if !output.status.success() {
-            tracing::warn!(
-                "Failed to delete Workers script: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        } else {
-            tracing::info!("Workers script deleted successfully");
-        }
+        let output = self.wrangler_command().arg(&delete_cmd).output();
 
-        // Note: R2 bucket cleanup is not automatic (could delete test objects)
-        // For safety, we leave R2 objects for manual cleanup
-
-        Ok(())
-    }
-}
-
-impl WorkersHarness {
-    /// Extract Workers URL from wrangler deploy output
-    fn extract_workers_url(&self, output: &str) -> Result<String> {
-        // wrangler outputs: "Published smoke-workers-abc123 (1.23 sec)"
-        // "  https://smoke-workers-abc123.workers.dev"
-        for line in output.lines() {
-            if line.contains("https://") && line.contains(".workers.dev") {
-                let url = line.trim();
-                if url.starts_with("https://") {
-                    return Ok(url.to_string());
-                }
+        match output {
+            Ok(out) if out.status.success() => {
+                tracing::info!("Workers script deleted successfully");
+            }
+            Ok(out) => {
+                tracing::warn!(
+                    "Failed to delete Workers script: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            Err(e) => {
+                tracing::warn!("Failed to run wrangler delete: {}", e);
             }
         }
 
-        anyhow::bail!("Failed to extract Workers URL from wrangler output")
+        // Cleanup generated config file (from wrangler directory)
+        let wrangler_dir =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/otlp2parquet-cloudflare");
+        let config_path = wrangler_dir.join(format!("wrangler-{}.toml", self.worker_name));
+        let _ = fs::remove_file(config_path);
+
+        // 2. Delete all R2 objects with test prefix
+        tracing::info!(
+            "Deleting test objects from bucket {} with prefix {}",
+            self.bucket_name,
+            self.test_prefix
+        );
+        match self.list_r2_objects() {
+            Ok(objects) => {
+                tracing::info!("Found {} objects to delete", objects.len());
+                for key in objects {
+                    let _ = self.delete_r2_object(&key);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to list R2 objects: {}", e);
+            }
+        }
+
+        // Always return Ok - cleanup failures are logged but don't fail the test
+        Ok(())
     }
 }

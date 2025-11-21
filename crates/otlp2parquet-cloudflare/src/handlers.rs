@@ -7,13 +7,16 @@ use serde_json::json;
 use std::sync::Arc;
 use worker::{console_error, Response, Result};
 
+use crate::errors;
+
 /// Handle logs request
 pub async fn handle_logs_request(
     body_bytes: &[u8],
     format: otlp2parquet_core::InputFormat,
     content_type: Option<&str>,
-    catalog: &Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>,
-    namespace: &str,
+    catalog: Option<&Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>>,
+    namespace: Option<&str>,
+    request_id: &str,
 ) -> Result<Response> {
     // Cloudflare Workers: Always use passthrough (no batching)
     // Batching requires time-based operations which aren't supported in WASM
@@ -22,12 +25,20 @@ pub async fn handle_logs_request(
     // Process logs
     let request = otlp::parse_otlp_request(body_bytes, format).map_err(|e| {
         console_error!(
-            "Failed to parse OTLP logs (format: {:?}, content-type: {:?}): {:?}",
+            "[{}] Failed to parse OTLP logs (format: {:?}, content-type: {:?}): {:?}",
+            request_id,
             format,
             content_type,
             e
         );
-        worker::Error::RustError(format!("Processing error: {}", e))
+        let error = errors::OtlpErrorKind::InvalidRequest(format!(
+            "Failed to parse OTLP logs request: {}. Ensure the request body contains valid OTLP protobuf, JSON, or JSONL format.",
+            e
+        ));
+        let status_code = error.status_code();
+        let error_response = errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
+        // Convert to worker error with proper status code
+        worker::Error::RustError(format!("{}:{}", status_code, serde_json::to_string(&error_response).unwrap_or_default()))
     })?;
 
     let per_service_requests = otlp::logs::split_request_by_service(request);
@@ -36,8 +47,23 @@ pub async fn handle_logs_request(
 
     for subset in per_service_requests {
         let batch = passthrough.ingest(&subset).map_err(|err| {
-            console_error!("Failed to convert OTLP to Arrow: {:?}", err);
-            worker::Error::RustError(format!("Encoding error: {}", err))
+            console_error!(
+                "[{}] Failed to convert OTLP to Arrow: {:?}",
+                request_id,
+                err
+            );
+            let error = errors::OtlpErrorKind::InternalError(format!(
+                "Failed to convert OTLP logs to Arrow format: {}",
+                err
+            ));
+            let status_code = error.status_code();
+            let error_response =
+                errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
+            worker::Error::RustError(format!(
+                "{}:{}",
+                status_code,
+                serde_json::to_string(&error_response).unwrap_or_default()
+            ))
         })?;
         total_records += batch.metadata.record_count;
         uploads.push(batch);
@@ -48,18 +74,25 @@ pub async fn handle_logs_request(
         // Write via write_batch function
         for record_batch in &batch.batches {
             let path = otlp2parquet_writer::write_batch(
-                catalog.as_ref(),
-                namespace,
+                catalog.map(|arc| arc.as_ref()),
+                namespace.unwrap_or("default"),
                 record_batch,
                 SignalType::Logs,
                 None,
                 &batch.metadata.service_name,
                 batch.metadata.first_timestamp_nanos,
+
             )
             .await
             .map_err(|e| {
-                console_error!("Failed to write logs: {:?}", e);
-                worker::Error::RustError(format!("Write error: {}", e))
+                console_error!("[{}] Failed to write logs: {:?}", request_id, e);
+                let error = errors::OtlpErrorKind::StorageError(format!(
+                    "Failed to write logs to R2 storage: {}. Check R2 credentials and bucket permissions.",
+                    e
+                ));
+                let status_code = error.status_code();
+                let error_response = errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
+                worker::Error::RustError(format!("{}:{}", status_code, serde_json::to_string(&error_response).unwrap_or_default()))
             })?;
 
             uploaded_paths.push(path);
@@ -81,18 +114,26 @@ pub async fn handle_traces_request(
     body_bytes: &[u8],
     format: otlp2parquet_core::InputFormat,
     content_type: Option<&str>,
-    catalog: &Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>,
-    namespace: &str,
+    catalog: Option<&Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>>,
+    namespace: Option<&str>,
+    request_id: &str,
 ) -> Result<Response> {
     // Parse OTLP traces request
     let request = otlp::traces::parse_otlp_trace_request(body_bytes, format).map_err(|e| {
         console_error!(
-            "Failed to parse OTLP traces (format: {:?}, content-type: {:?}): {:?}",
+            "[{}] Failed to parse OTLP traces (format: {:?}, content-type: {:?}): {:?}",
+            request_id,
             format,
             content_type,
             e
         );
-        worker::Error::RustError(format!("Processing error: {}", e))
+        let error = errors::OtlpErrorKind::InvalidRequest(format!(
+            "Failed to parse OTLP traces request: {}. Ensure the request body contains valid OTLP protobuf, JSON, or JSONL format.",
+            e
+        ));
+        let status_code = error.status_code();
+        let error_response = errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
+        worker::Error::RustError(format!("{}:{}", status_code, serde_json::to_string(&error_response).unwrap_or_default()))
     })?;
 
     let per_service_requests = otlp::traces::split_request_by_service(request);
@@ -102,8 +143,23 @@ pub async fn handle_traces_request(
     for subset in per_service_requests {
         let (batches, metadata) =
             otlp::traces::TraceArrowConverter::convert(&subset).map_err(|e| {
-                console_error!("Failed to convert OTLP traces to Arrow: {:?}", e);
-                worker::Error::RustError(format!("Encoding error: {}", e))
+                console_error!(
+                    "[{}] Failed to convert OTLP traces to Arrow: {:?}",
+                    request_id,
+                    e
+                );
+                let error = errors::OtlpErrorKind::InternalError(format!(
+                    "Failed to convert OTLP traces to Arrow format: {}",
+                    e
+                ));
+                let status_code = error.status_code();
+                let error_response =
+                    errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
+                worker::Error::RustError(format!(
+                    "{}:{}",
+                    status_code,
+                    serde_json::to_string(&error_response).unwrap_or_default()
+                ))
             })?;
 
         if batches.is_empty() || metadata.span_count == 0 {
@@ -115,18 +171,25 @@ pub async fn handle_traces_request(
         // Write via write_batch function
         for batch in &batches {
             let path = otlp2parquet_writer::write_batch(
-                catalog.as_ref(),
-                namespace,
+                catalog.map(|arc| arc.as_ref()),
+                namespace.unwrap_or("default"),
                 batch,
                 SignalType::Traces,
                 None,
                 metadata.service_name.as_ref(),
                 metadata.first_timestamp_nanos,
+
             )
             .await
             .map_err(|e| {
-                console_error!("Failed to write traces: {:?}", e);
-                worker::Error::RustError(format!("Write error: {}", e))
+                console_error!("[{}] Failed to write traces: {:?}", request_id, e);
+                let error = errors::OtlpErrorKind::StorageError(format!(
+                    "Failed to write traces to R2 storage: {}. Check R2 credentials and bucket permissions.",
+                    e
+                ));
+                let status_code = error.status_code();
+                let error_response = errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
+                worker::Error::RustError(format!("{}:{}", status_code, serde_json::to_string(&error_response).unwrap_or_default()))
             })?;
 
             uploaded_paths.push(path);
@@ -155,18 +218,26 @@ pub async fn handle_metrics_request(
     body_bytes: &[u8],
     format: otlp2parquet_core::InputFormat,
     content_type: Option<&str>,
-    catalog: &Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>,
-    namespace: &str,
+    catalog: Option<&Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>>,
+    namespace: Option<&str>,
+    request_id: &str,
 ) -> Result<Response> {
     // Parse OTLP metrics request
     let request = otlp::metrics::parse_otlp_request(body_bytes, format).map_err(|e| {
         console_error!(
-            "Failed to parse OTLP metrics (format: {:?}, content-type: {:?}): {:?}",
+            "[{}] Failed to parse OTLP metrics (format: {:?}, content-type: {:?}): {:?}",
+            request_id,
             format,
             content_type,
             e
         );
-        worker::Error::RustError(format!("Processing error: {}", e))
+        let error = errors::OtlpErrorKind::InvalidRequest(format!(
+            "Failed to parse OTLP metrics request: {}. Ensure the request body contains valid OTLP protobuf, JSON, or JSONL format.",
+            e
+        ));
+        let status_code = error.status_code();
+        let error_response = errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
+        worker::Error::RustError(format!("{}:{}", status_code, serde_json::to_string(&error_response).unwrap_or_default()))
     })?;
 
     let per_service_requests = otlp::metrics::split_request_by_service(request);
@@ -176,8 +247,23 @@ pub async fn handle_metrics_request(
 
     for subset in per_service_requests {
         let (batches_by_type, subset_metadata) = converter.convert(subset).map_err(|e| {
-            console_error!("Failed to convert OTLP metrics to Arrow: {:?}", e);
-            worker::Error::RustError(format!("Encoding error: {}", e))
+            console_error!(
+                "[{}] Failed to convert OTLP metrics to Arrow: {:?}",
+                request_id,
+                e
+            );
+            let error = errors::OtlpErrorKind::InternalError(format!(
+                "Failed to convert OTLP metrics to Arrow format: {}",
+                e
+            ));
+            let status_code = error.status_code();
+            let error_response =
+                errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
+            worker::Error::RustError(format!(
+                "{}:{}",
+                status_code,
+                serde_json::to_string(&error_response).unwrap_or_default()
+            ))
         })?;
 
         aggregated.resource_metrics_count += subset_metadata.resource_metrics_count;
@@ -194,18 +280,25 @@ pub async fn handle_metrics_request(
 
             // Write via write_batch function
             let path = otlp2parquet_writer::write_batch(
-                catalog.as_ref(),
-                namespace,
+                catalog.map(|arc| arc.as_ref()),
+                namespace.unwrap_or("default"),
                 &batch,
                 SignalType::Metrics,
                 Some(&metric_type),
                 &service_name,
                 timestamp_nanos,
+
             )
             .await
             .map_err(|e| {
-                console_error!("Failed to write {} metrics: {:?}", metric_type, e);
-                worker::Error::RustError(format!("Write error: {}", e))
+                console_error!("[{}] Failed to write {} metrics: {:?}", request_id, metric_type, e);
+                let error = errors::OtlpErrorKind::StorageError(format!(
+                    "Failed to write {} metrics to R2 storage: {}. Check R2 credentials and bucket permissions.",
+                    metric_type, e
+                ));
+                let status_code = error.status_code();
+                let error_response = errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
+                worker::Error::RustError(format!("{}:{}", status_code, serde_json::to_string(&error_response).unwrap_or_default()))
             })?;
 
             uploaded_paths.push(path);

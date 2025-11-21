@@ -257,7 +257,7 @@ impl SmokeTestHarness for LambdaHarness {
         );
 
         // Print sample of all logs for debugging
-        if all_events.events().len() > 0 {
+        if !all_events.events().is_empty() {
             tracing::info!("Sample Lambda logs:");
             for event in all_events.events().iter().take(10) {
                 if let Some(msg) = event.message() {

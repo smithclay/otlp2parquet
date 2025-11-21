@@ -1,6 +1,6 @@
 use crate::{
-    FsConfig, LambdaConfig, LogFormat, R2Config, RuntimeConfig, S3Config, ServerConfig,
-    StorageBackend,
+    CatalogMode, FsConfig, LambdaConfig, LogFormat, R2Config, RuntimeConfig, S3Config,
+    ServerConfig, StorageBackend,
 };
 use anyhow::{anyhow, Context, Result};
 
@@ -10,6 +10,10 @@ pub const ENV_PREFIX: &str = "OTLP2PARQUET_";
 /// (e.g., Cloudflare Workers) can supply their own source of overrides.
 pub trait EnvSource {
     fn get(&self, key: &str) -> Option<String>;
+
+    /// Get an environment variable WITHOUT the OTLP2PARQUET_ prefix
+    /// Used for AWS standard variables (AWS_ACCESS_KEY_ID, etc.)
+    fn get_raw(&self, key: &str) -> Option<String>;
 }
 
 /// Apply environment-variable overrides (highest priority) to the runtime config.
@@ -63,6 +67,13 @@ pub fn apply_env_overrides<E: EnvSource>(config: &mut RuntimeConfig, env: &E) ->
         config.storage.parquet_row_group_size = row_group_size;
     }
 
+    // Catalog mode
+    if let Some(mode) = get_env_string(env, "CATALOG_MODE")? {
+        config.catalog_mode = mode
+            .parse::<CatalogMode>()
+            .context("Invalid OTLP2PARQUET_CATALOG_MODE value")?;
+    }
+
     // Filesystem storage
     if let Some(path) = get_env_string(env, "STORAGE_PATH")? {
         if config.storage.fs.is_none() {
@@ -91,11 +102,15 @@ pub fn apply_env_overrides<E: EnvSource>(config: &mut RuntimeConfig, env: &E) ->
     if let Some(account_id) = get_env_string(env, "R2_ACCOUNT_ID")? {
         ensure_r2(config).account_id = account_id;
     }
-    if let Some(access_key_id) = get_env_string(env, "R2_ACCESS_KEY_ID")? {
+    // AWS standard credentials (without OTLP2PARQUET_ prefix for compatibility)
+    if let Some(access_key_id) = get_raw_env_string(env, "AWS_ACCESS_KEY_ID")? {
         ensure_r2(config).access_key_id = access_key_id;
     }
-    if let Some(secret_access_key) = get_env_string(env, "R2_SECRET_ACCESS_KEY")? {
+    if let Some(secret_access_key) = get_raw_env_string(env, "AWS_SECRET_ACCESS_KEY")? {
         ensure_r2(config).secret_access_key = secret_access_key;
+    }
+    if let Some(endpoint) = get_raw_env_string(env, "AWS_ENDPOINT_URL")? {
+        ensure_r2(config).endpoint = Some(endpoint);
     }
 
     // Iceberg configuration
@@ -183,6 +198,7 @@ fn ensure_r2(config: &mut RuntimeConfig) -> &mut R2Config {
         account_id: String::new(),
         access_key_id: String::new(),
         secret_access_key: String::new(),
+        endpoint: None,
     })
 }
 
@@ -196,6 +212,12 @@ fn ensure_lambda(config: &mut RuntimeConfig) -> &mut LambdaConfig {
 
 fn get_env_string<E: EnvSource>(env: &E, key: &str) -> Result<Option<String>> {
     Ok(env.get(key))
+}
+
+/// Get a raw environment variable without the OTLP2PARQUET_ prefix
+/// Used for AWS standard variables like AWS_ACCESS_KEY_ID
+fn get_raw_env_string<E: EnvSource>(env: &E, key: &str) -> Result<Option<String>> {
+    Ok(env.get_raw(key))
 }
 
 fn get_env_usize<E: EnvSource>(env: &E, key: &str) -> Result<Option<usize>> {
