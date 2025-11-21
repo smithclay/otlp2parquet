@@ -5,9 +5,10 @@ set -euo pipefail
 # End-to-end Docker integration test orchestrator
 #
 # Usage:
-#   ./scripts/test-e2e.sh                  # Run core tests only
-#   TEST_ICEBERG=1 ./scripts/test-e2e.sh   # Run core + Iceberg tests
-#   KEEP_CONTAINERS=1 ./scripts/test-e2e.sh # Preserve containers for debugging
+#   ./scripts/test-e2e.sh                          # Run core tests only (with Iceberg)
+#   TEST_ICEBERG=1 ./scripts/test-e2e.sh           # Run core + Iceberg tests
+#   CATALOG_MODE=none ./scripts/test-e2e.sh        # Test plain Parquet mode (no catalog)
+#   KEEP_CONTAINERS=1 ./scripts/test-e2e.sh        # Preserve containers for debugging
 #
 
 # Check Docker availability
@@ -39,7 +40,13 @@ trap cleanup EXIT
 
 # Start services
 echo "Starting Docker services..."
-docker compose up -d minio rest otlp2parquet
+if [ "${CATALOG_MODE:-}" = "none" ]; then
+  echo "Running in plain Parquet mode (no catalog)..."
+  CATALOG_MODE=none docker compose up -d minio otlp2parquet
+else
+  echo "Running with Iceberg catalog..."
+  docker compose up -d minio rest otlp2parquet
+fi
 
 # Wait for services to be ready
 echo "Waiting for otlp2parquet to be ready..."

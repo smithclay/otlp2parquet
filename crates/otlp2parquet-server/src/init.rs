@@ -11,12 +11,14 @@ use tracing::info;
 pub(crate) async fn init_writer(
     config: &RuntimeConfig,
 ) -> Result<(
-    Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>,
+    Option<Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>>,
     String,
 )> {
+    use otlp2parquet_config::CatalogMode;
+
     info!(
-        "Initializing writer with storage backend: {}",
-        config.storage.backend
+        "Initializing writer with storage backend: {} (catalog_mode: {})",
+        config.storage.backend, config.catalog_mode
     );
 
     // Create OpenDAL operator based on storage backend
@@ -78,13 +80,27 @@ pub(crate) async fn init_writer(
         }
     };
 
-    // Check if Iceberg catalog is configured
+    // Check catalog_mode to determine whether to initialize Iceberg catalog
+    if config.catalog_mode == CatalogMode::None {
+        // Plain Parquet mode - skip catalog entirely
+        info!("Catalog mode: none - writing plain Parquet files without Iceberg catalog");
+
+        // Initialize storage for direct writes
+        otlp2parquet_writer::initialize_storage(config)
+            .map_err(|e| anyhow::anyhow!("Failed to initialize storage: {}", e))?;
+
+        return Ok((None, String::new()));
+    }
+
+    // Iceberg mode - check if Iceberg catalog is configured
     let iceberg_cfg = config.iceberg.as_ref().ok_or_else(|| {
         anyhow::anyhow!(
-            "Server requires Iceberg catalog configuration. \
-            Add [iceberg] section to config.toml with either:\n\
-            - bucket_arn = \"arn:aws:s3tables:...:bucket/name\" for S3 Tables\n\
-            - rest_uri = \"https://catalog.example.com\" and warehouse = \"s3://bucket/path\" for REST catalog"
+            "Catalog mode is 'iceberg' but no Iceberg catalog configuration found. \
+            Either:\n\
+            1. Add [iceberg] section to config.toml with:\n\
+               - bucket_arn = \"arn:aws:s3tables:...:bucket/name\" for S3 Tables\n\
+               - rest_uri = \"https://catalog.example.com\" and warehouse = \"s3://bucket/path\" for REST catalog\n\
+            2. Or set OTLP2PARQUET_CATALOG_MODE=none to write plain Parquet files"
         )
     })?;
 
@@ -145,7 +161,7 @@ pub(crate) async fn init_writer(
     // Ensure namespace exists
     otlp2parquet_writer::ensure_namespace(catalog.as_ref(), &namespace).await?;
 
-    Ok((catalog, namespace))
+    Ok((Some(catalog), namespace))
 }
 
 /// Initialize tracing/logging from RuntimeConfig

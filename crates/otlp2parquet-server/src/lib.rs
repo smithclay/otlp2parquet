@@ -38,7 +38,7 @@ use init::{init_tracing, init_writer};
 /// Application state shared across all requests
 #[derive(Clone)]
 pub(crate) struct AppState {
-    pub catalog: Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>,
+    pub catalog: Option<Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>>,
     pub namespace: String,
     pub batcher: Option<Arc<BatchManager>>,
     pub passthrough: PassthroughBatcher,

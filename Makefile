@@ -341,6 +341,10 @@ test-e2e-iceberg: test-e2e ## Run e2e tests including Iceberg catalog validation
 test-e2e-debug: KEEP_CONTAINERS=1
 test-e2e-debug: test-e2e ## Run e2e tests and preserve containers for debugging
 
+.PHONY: test-e2e-no-catalog
+test-e2e-no-catalog: ## Run e2e tests in plain Parquet mode (no Iceberg catalog)
+	@CATALOG_MODE=none TEST_ICEBERG=0 ./scripts/test-e2e.sh
+
 .PHONY: test-all
 test-all: test test-e2e ## Run unit tests + core e2e tests (legacy alias for test-full)
 

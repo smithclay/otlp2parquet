@@ -225,7 +225,7 @@ async fn process_traces(
         let mut partition_path = String::new();
         for batch in &batches {
             let path = otlp2parquet_writer::write_batch(
-                Some(state.catalog.as_ref()),
+                state.catalog.as_ref().map(|c| c.as_ref()),
                 &state.namespace,
                 batch,
                 otlp2parquet_core::SignalType::Traces,
@@ -317,7 +317,7 @@ async fn process_metrics(
             let timestamp_nanos = extract_first_timestamp(&batch);
 
             let partition_path = otlp2parquet_writer::write_batch(
-                Some(state.catalog.as_ref()),
+                state.catalog.as_ref().map(|c| c.as_ref()),
                 &state.namespace,
                 &batch,
                 otlp2parquet_core::SignalType::Metrics,
@@ -394,7 +394,7 @@ pub(crate) async fn persist_log_batch(
 
     for batch in &completed.batches {
         let path = otlp2parquet_writer::write_batch(
-            Some(state.catalog.as_ref()),
+            state.catalog.as_ref().map(|c| c.as_ref()),
             &state.namespace,
             batch,
             otlp2parquet_core::SignalType::Logs,

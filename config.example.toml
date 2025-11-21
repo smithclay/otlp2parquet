@@ -28,6 +28,24 @@ max_payload_bytes = 8_388_608
 
 
 # ==============================================================================
+# Catalog Mode Configuration (All Platforms)
+# ==============================================================================
+# catalog_mode = "iceberg"  # Use Iceberg catalog for ACID transactions and schema evolution (default)
+# catalog_mode = "none"     # Write plain Parquet files without catalog integration
+#
+# When catalog_mode="none":
+# - No Iceberg catalog is required
+# - Writes plain Parquet files directly to storage
+# - No ACID transactions or schema evolution
+# - Simpler setup, useful for testing or non-production workloads
+#
+# When catalog_mode="iceberg":
+# - Requires [iceberg] section configuration
+# - Provides ACID transactions and schema evolution
+# - Recommended for production workloads
+
+
+# ==============================================================================
 # Storage Configuration
 # ==============================================================================
 [storage]

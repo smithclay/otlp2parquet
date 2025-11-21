@@ -204,9 +204,24 @@ async fn test_logs_pipeline() -> anyhow::Result<()> {
     tokio::time::sleep(Duration::from_secs(2)).await;
     eprintln!("[test_logs_pipeline] Done waiting");
 
-    // Verify Parquet files exist in MinIO (Iceberg structure: otel/otel_logs/data/)
+    // Verify Parquet files exist in MinIO
+    // Path structure depends on catalog mode:
+    // - With catalog (Iceberg): otel/otel_logs/data/
+    // - Without catalog (plain Parquet): logs/*/year=...
     eprintln!("[test_logs_pipeline] Checking for log files in S3");
-    let files = verify_s3_files("otel/otel_logs/data/").await?;
+
+    let catalog_enabled = std::env::var("TEST_ICEBERG").unwrap_or_else(|_| "1".to_string()) != "0";
+    let prefix = if catalog_enabled {
+        "otel/otel_logs/data/"
+    } else {
+        "logs/"
+    };
+
+    eprintln!(
+        "[test_logs_pipeline] Using prefix: '{}' (catalog_enabled={})",
+        prefix, catalog_enabled
+    );
+    let files = verify_s3_files(prefix).await?;
 
     // If no files found, check all files in bucket for debugging
     if files.is_empty() {
@@ -260,9 +275,22 @@ async fn test_metrics_pipeline() -> anyhow::Result<()> {
         eprintln!("[test_metrics_pipeline] Waiting 2 seconds for processing...");
         tokio::time::sleep(Duration::from_secs(2)).await;
 
-        // Verify files exist for this metric type (Iceberg structure: otel/otel_metrics_{type}/data/)
+        // Verify files exist for this metric type
+        // Path structure depends on catalog mode:
+        // - With catalog (Iceberg): otel/otel_metrics_{type}/data/
+        // - Without catalog (plain Parquet): metrics/{type}/
         eprintln!("[test_metrics_pipeline] Checking for {} files", metric_type);
-        let files = verify_s3_files(&format!("otel/otel_metrics_{}/data/", metric_type)).await?;
+
+        let catalog_enabled =
+            std::env::var("TEST_ICEBERG").unwrap_or_else(|_| "1".to_string()) != "0";
+        let prefix = if catalog_enabled {
+            format!("otel/otel_metrics_{}/data/", metric_type)
+        } else {
+            format!("metrics/{}/", metric_type)
+        };
+
+        eprintln!("[test_metrics_pipeline] Using prefix: '{}'", prefix);
+        let files = verify_s3_files(&prefix).await?;
         assert!(
             !files.is_empty(),
             "Expected at least one {} file",
@@ -298,9 +326,21 @@ async fn test_traces_pipeline() -> anyhow::Result<()> {
     eprintln!("[test_traces_pipeline] Waiting 2 seconds for processing...");
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    // Verify Parquet files exist in MinIO (Iceberg structure: otel/otel_traces/data/)
+    // Verify Parquet files exist in MinIO
+    // Path structure depends on catalog mode:
+    // - With catalog (Iceberg): otel/otel_traces/data/
+    // - Without catalog (plain Parquet): traces/
     eprintln!("[test_traces_pipeline] Checking for trace files in S3");
-    let files = verify_s3_files("otel/otel_traces/data/").await?;
+
+    let catalog_enabled = std::env::var("TEST_ICEBERG").unwrap_or_else(|_| "1".to_string()) != "0";
+    let prefix = if catalog_enabled {
+        "otel/otel_traces/data/"
+    } else {
+        "traces/"
+    };
+
+    eprintln!("[test_traces_pipeline] Using prefix: '{}'", prefix);
+    let files = verify_s3_files(prefix).await?;
     assert!(!files.is_empty(), "Expected at least one trace file");
 
     // Verify first file is valid Parquet
