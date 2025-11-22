@@ -151,6 +151,117 @@ pub async fn process_traces(
     })
 }
 
+/// Process OTLP metrics request
+pub async fn process_metrics(
+    body: &[u8],
+    format: InputFormat,
+    config: ProcessorConfig<'_>,
+) -> Result<ProcessingResult, OtlpError> {
+    // Parse OTLP metrics request
+    let request =
+        otlp::metrics::parse_otlp_request(body, format).map_err(|e| OtlpError::InvalidRequest {
+            message: format!("Failed to parse OTLP metrics request: {}", e),
+            hint: Some(
+                "Ensure the request body contains valid OTLP protobuf, JSON, or JSONL format."
+                    .into(),
+            ),
+        })?;
+
+    // Split by service name
+    let per_service_requests = otlp::metrics::split_request_by_service(request);
+    let converter = otlp::metrics::ArrowConverter::new();
+
+    let mut paths = Vec::new();
+    let mut total_data_points = 0;
+
+    for subset in per_service_requests {
+        let (batches_by_type, metadata) =
+            converter
+                .convert(subset)
+                .map_err(|e| OtlpError::ConversionFailed {
+                    signal: "metrics".into(),
+                    message: e.to_string(),
+                })?;
+
+        // Count total data points
+        total_data_points += metadata.gauge_count
+            + metadata.sum_count
+            + metadata.histogram_count
+            + metadata.exponential_histogram_count
+            + metadata.summary_count;
+
+        // Write each metric type
+        for (metric_type, batch) in batches_by_type {
+            // Extract service name and timestamp from batch
+            use arrow::array::{Array, StringArray, TimestampNanosecondArray};
+
+            let service_name =
+                if let Some(array) = batch.column(1).as_any().downcast_ref::<StringArray>() {
+                    let mut name = otlp::common::UNKNOWN_SERVICE_NAME.to_string();
+                    for idx in 0..array.len() {
+                        if array.is_valid(idx) {
+                            let value = array.value(idx);
+                            if !value.is_empty() {
+                                name = value.to_string();
+                                break;
+                            }
+                        }
+                    }
+                    name
+                } else {
+                    otlp::common::UNKNOWN_SERVICE_NAME.to_string()
+                };
+
+            let timestamp_nanos = if let Some(array) = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<TimestampNanosecondArray>()
+            {
+                let mut min_value = i64::MAX;
+                for idx in 0..array.len() {
+                    if array.is_valid(idx) {
+                        let value = array.value(idx);
+                        if value < min_value {
+                            min_value = value;
+                        }
+                    }
+                }
+                if min_value != i64::MAX {
+                    min_value
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+
+            let path = otlp2parquet_writer::write_batch(WriteBatchRequest {
+                catalog: config.catalog,
+                namespace: config.namespace,
+                batch: &batch,
+                signal_type: SignalType::Metrics,
+                metric_type: Some(&metric_type),
+                service_name: &service_name,
+                timestamp_micros: timestamp_nanos,
+                snapshot_timestamp_ms: config.snapshot_timestamp_ms,
+            })
+            .await
+            .map_err(|e| OtlpError::StorageFailed {
+                message: e.to_string(),
+            })?;
+
+            paths.push(path);
+        }
+    }
+
+    let batch_count = paths.len();
+    Ok(ProcessingResult {
+        paths_written: paths,
+        records_processed: total_data_points,
+        batches_flushed: batch_count,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,6 +414,79 @@ mod tests {
         let result = process_traces(&test_data, InputFormat::Protobuf, config)
             .await
             .expect("Failed to process traces");
+
+        assert!(result.records_processed > 0);
+        assert!(!result.paths_written.is_empty());
+
+        // Cleanup
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn test_process_metrics_invalid_request() {
+        use otlp2parquet_core::InputFormat;
+
+        let invalid_data = b"not valid otlp data";
+        let config = ProcessorConfig {
+            catalog: None,
+            namespace: "test",
+            snapshot_timestamp_ms: None,
+        };
+
+        let result = process_metrics(invalid_data, InputFormat::Protobuf, config).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.error_type(), "InvalidRequest");
+        assert!(err
+            .message()
+            .contains("Failed to parse OTLP metrics request"));
+    }
+
+    #[tokio::test]
+    async fn test_process_metrics_valid_request() {
+        use otlp2parquet_config::{FsConfig, StorageBackend, StorageConfig};
+        use otlp2parquet_core::InputFormat;
+
+        // Read test data
+        let test_data =
+            std::fs::read("../../testdata/metrics_gauge.pb").expect("Failed to read testdata");
+
+        // Initialize storage
+        let temp_dir = std::env::temp_dir().join("otlp2parquet-handlers-test-metrics");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let runtime_config = otlp2parquet_config::RuntimeConfig {
+            batch: Default::default(),
+            request: Default::default(),
+            storage: StorageConfig {
+                backend: StorageBackend::Fs,
+                parquet_row_group_size: 100_000,
+                fs: Some(FsConfig {
+                    path: temp_dir.to_string_lossy().to_string(),
+                }),
+                s3: None,
+                r2: None,
+            },
+            catalog_mode: Default::default(),
+            server: None,
+            lambda: None,
+            cloudflare: None,
+            iceberg: None,
+        };
+
+        otlp2parquet_writer::initialize_storage(&runtime_config)
+            .expect("Failed to initialize storage");
+
+        let config = ProcessorConfig {
+            catalog: None,
+            namespace: "test",
+            snapshot_timestamp_ms: None,
+        };
+
+        let result = process_metrics(&test_data, InputFormat::Protobuf, config)
+            .await
+            .expect("Failed to process metrics");
 
         assert!(result.records_processed > 0);
         assert!(!result.paths_written.is_empty());

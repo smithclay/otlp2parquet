@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+arrow = { version = "56", default-features = false }
 otlp2parquet-core = { path = "../otlp2parquet-core", default-features = false }
 otlp2parquet-batch = { path = "../otlp2parquet-batch", default-features = false }
 otlp2parquet-writer = { path = "../otlp2parquet-writer", default-features = false }

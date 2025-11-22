@@ -7,4 +7,6 @@ pub mod error;
 pub mod processor;
 
 pub use error::OtlpError;
-pub use processor::{process_logs, process_traces, ProcessingResult, ProcessorConfig};
+pub use processor::{
+    process_logs, process_metrics, process_traces, ProcessingResult, ProcessorConfig,
+};
