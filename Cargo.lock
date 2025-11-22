@@ -2642,6 +2642,7 @@ dependencies = [
  "otlp2parquet-batch",
  "otlp2parquet-config",
  "otlp2parquet-core",
+ "otlp2parquet-handlers",
  "otlp2parquet-writer",
  "serde",
  "serde_json",

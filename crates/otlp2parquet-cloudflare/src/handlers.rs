@@ -1,13 +1,29 @@
 // Request handlers for OTLP signals (logs, traces, metrics)
 
 use arrow::array::{Array, RecordBatch, StringArray, TimestampNanosecondArray};
-use otlp2parquet_batch::{LogSignalProcessor, PassthroughBatcher};
 use otlp2parquet_core::{otlp, SignalType};
+use otlp2parquet_handlers::{process_logs as process_logs_handler, OtlpError, ProcessorConfig};
 use serde_json::json;
 use std::sync::Arc;
 use worker::{console_error, Response, Result};
 
 use crate::errors;
+
+/// Convert OtlpError to worker::Error
+fn convert_to_worker_error(err: OtlpError, request_id: &str) -> worker::Error {
+    let status_code = err.status_code();
+    let error_response = errors::ErrorResponse {
+        error: err.error_type().to_string(),
+        message: err.message(),
+        details: err.hint(),
+        request_id: Some(request_id.to_string()),
+    };
+
+    let error_json = serde_json::to_string(&error_response).unwrap_or_else(|_| {
+        r#"{"error":"internal error","code":"SERIALIZATION_FAILED"}"#.to_string()
+    });
+    worker::Error::RustError(format!("{}:{}", status_code, error_json))
+}
 
 /// Handle logs request
 pub async fn handle_logs_request(
@@ -19,100 +35,34 @@ pub async fn handle_logs_request(
     catalog_enabled: bool,
     request_id: &str,
 ) -> Result<Response> {
-    // Cloudflare Workers: Always use passthrough (no batching)
-    // Batching requires time-based operations which aren't supported in WASM
-    let passthrough: PassthroughBatcher<LogSignalProcessor> = PassthroughBatcher::default();
+    let current_time_ms = worker::Date::now().as_millis() as i64;
 
-    // Process logs
-    let request = otlp::parse_otlp_request(body_bytes, format).map_err(|e| {
+    let result = process_logs_handler(
+        body_bytes,
+        format,
+        ProcessorConfig {
+            catalog: catalog.map(|c| c.as_ref()),
+            namespace: namespace.unwrap_or("default"),
+            snapshot_timestamp_ms: Some(current_time_ms),
+        },
+    )
+    .await
+    .map_err(|e| {
         console_error!(
-            "[{}] Failed to parse OTLP logs (format: {:?}, content-type: {:?}): {:?}",
+            "[{}] Failed to process logs (format: {:?}, content-type: {:?}): {:?}",
             request_id,
             format,
             content_type,
-            e
+            e.message()
         );
-        let error = errors::OtlpErrorKind::InvalidRequest(format!(
-            "Failed to parse OTLP logs request: {}. Ensure the request body contains valid OTLP protobuf, JSON, or JSONL format.",
-            e
-        ));
-        let status_code = error.status_code();
-        let error_response = errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
-        // Convert to worker error with proper status code
-        let error_json = serde_json::to_string(&error_response)
-            .unwrap_or_else(|_| r#"{"error":"internal error","code":"SERIALIZATION_FAILED"}"#.to_string());
-        worker::Error::RustError(format!("{}:{}", status_code, error_json))
+        convert_to_worker_error(e, request_id)
     })?;
-
-    let per_service_requests = otlp::logs::split_request_by_service(request);
-    let mut uploads = Vec::new();
-    let mut total_records = 0usize;
-
-    for subset in per_service_requests {
-        let batch = passthrough.ingest(&subset).map_err(|err| {
-            console_error!(
-                "[{}] Failed to convert OTLP to Arrow: {:?}",
-                request_id,
-                err
-            );
-            let error = errors::OtlpErrorKind::InternalError(format!(
-                "Failed to convert OTLP logs to Arrow format: {}",
-                err
-            ));
-            let status_code = error.status_code();
-            let error_response =
-                errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
-            let error_json = serde_json::to_string(&error_response).unwrap_or_else(|_| {
-                r#"{"error":"internal error","code":"SERIALIZATION_FAILED"}"#.to_string()
-            });
-            worker::Error::RustError(format!("{}:{}", status_code, error_json))
-        })?;
-        total_records += batch.metadata.record_count;
-        uploads.push(batch);
-    }
-
-    let mut uploaded_paths = Vec::new();
-    for batch in uploads {
-        // Write via write_batch function
-        // Get current time in milliseconds for Iceberg snapshot timestamp
-        let current_time_ms = worker::Date::now().as_millis() as i64;
-
-        for record_batch in &batch.batches {
-            let path = otlp2parquet_writer::write_batch(
-                otlp2parquet_writer::WriteBatchRequest {
-                    catalog: catalog.map(|arc| arc.as_ref()),
-                    namespace: namespace.unwrap_or("default"),
-                    batch: record_batch,
-                    signal_type: SignalType::Logs,
-                    metric_type: None,
-                    service_name: &batch.metadata.service_name,
-                    timestamp_micros: batch.metadata.first_timestamp_nanos,
-                    snapshot_timestamp_ms: Some(current_time_ms),
-                },
-            )
-            .await
-            .map_err(|e| {
-                console_error!("[{}] Failed to write logs: {:?}", request_id, e);
-                let error = errors::OtlpErrorKind::StorageError(format!(
-                    "Failed to write logs to R2 storage: {}. Check R2 credentials and bucket permissions.",
-                    e
-                ));
-                let status_code = error.status_code();
-                let error_response = errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
-                let error_json = serde_json::to_string(&error_response)
-                    .unwrap_or_else(|_| r#"{"error":"internal error","code":"SERIALIZATION_FAILED"}"#.to_string());
-                worker::Error::RustError(format!("{}:{}", status_code, error_json))
-            })?;
-
-            uploaded_paths.push(path);
-        }
-    }
 
     let response_body = json!({
         "status": "ok",
-        "records_processed": total_records,
-        "flush_count": uploaded_paths.len(),
-        "partitions": uploaded_paths,
+        "records_processed": result.records_processed,
+        "flush_count": result.batches_flushed,
+        "partitions": result.paths_written,
         "catalog_enabled": catalog_enabled,
     });
 
