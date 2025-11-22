@@ -4,5 +4,7 @@
 //! used across Cloudflare Workers, Lambda, and Server platforms.
 
 pub mod error;
+pub mod processor;
 
 pub use error::OtlpError;
+pub use processor::{ProcessingResult, ProcessorConfig};
