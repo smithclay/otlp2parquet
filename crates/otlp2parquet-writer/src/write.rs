@@ -159,7 +159,8 @@ pub async fn write_batch(req: WriteBatchRequest<'_>) -> Result<String> {
             // This path is used by Cloudflare Workers when no R2 Data Catalog is configured
             let op = crate::storage::get_operator().ok_or_else(|| {
                 WriterError::WriteFailure(
-                    "Storage operator not initialized. Call initialize_storage() before writing without catalog.".to_string()
+                    "Storage operator not initialized. Call initialize_storage() with RuntimeConfig before writing. \
+                     For catalog mode, ensure catalog is provided in WriteBatchRequest.".to_string()
                 )
             })?;
 

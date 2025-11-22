@@ -39,7 +39,9 @@ pub async fn handle_logs_request(
         let status_code = error.status_code();
         let error_response = errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
         // Convert to worker error with proper status code
-        worker::Error::RustError(format!("{}:{}", status_code, serde_json::to_string(&error_response).unwrap_or_default()))
+        let error_json = serde_json::to_string(&error_response)
+            .unwrap_or_else(|_| r#"{"error":"internal error","code":"SERIALIZATION_FAILED"}"#.to_string());
+        worker::Error::RustError(format!("{}:{}", status_code, error_json))
     })?;
 
     let per_service_requests = otlp::logs::split_request_by_service(request);
@@ -60,11 +62,10 @@ pub async fn handle_logs_request(
             let status_code = error.status_code();
             let error_response =
                 errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
-            worker::Error::RustError(format!(
-                "{}:{}",
-                status_code,
-                serde_json::to_string(&error_response).unwrap_or_default()
-            ))
+            let error_json = serde_json::to_string(&error_response).unwrap_or_else(|_| {
+                r#"{"error":"internal error","code":"SERIALIZATION_FAILED"}"#.to_string()
+            });
+            worker::Error::RustError(format!("{}:{}", status_code, error_json))
         })?;
         total_records += batch.metadata.record_count;
         uploads.push(batch);
@@ -98,7 +99,9 @@ pub async fn handle_logs_request(
                 ));
                 let status_code = error.status_code();
                 let error_response = errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
-                worker::Error::RustError(format!("{}:{}", status_code, serde_json::to_string(&error_response).unwrap_or_default()))
+                let error_json = serde_json::to_string(&error_response)
+                    .unwrap_or_else(|_| r#"{"error":"internal error","code":"SERIALIZATION_FAILED"}"#.to_string());
+                worker::Error::RustError(format!("{}:{}", status_code, error_json))
             })?;
 
             uploaded_paths.push(path);
@@ -141,7 +144,9 @@ pub async fn handle_traces_request(
         ));
         let status_code = error.status_code();
         let error_response = errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
-        worker::Error::RustError(format!("{}:{}", status_code, serde_json::to_string(&error_response).unwrap_or_default()))
+        let error_json = serde_json::to_string(&error_response)
+            .unwrap_or_else(|_| r#"{"error":"internal error","code":"SERIALIZATION_FAILED"}"#.to_string());
+        worker::Error::RustError(format!("{}:{}", status_code, error_json))
     })?;
 
     let per_service_requests = otlp::traces::split_request_by_service(request);
@@ -163,11 +168,10 @@ pub async fn handle_traces_request(
                 let status_code = error.status_code();
                 let error_response =
                     errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
-                worker::Error::RustError(format!(
-                    "{}:{}",
-                    status_code,
-                    serde_json::to_string(&error_response).unwrap_or_default()
-                ))
+                let error_json = serde_json::to_string(&error_response).unwrap_or_else(|_| {
+                    r#"{"error":"internal error","code":"SERIALIZATION_FAILED"}"#.to_string()
+                });
+                worker::Error::RustError(format!("{}:{}", status_code, error_json))
             })?;
 
         if batches.is_empty() || metadata.span_count == 0 {
@@ -202,7 +206,9 @@ pub async fn handle_traces_request(
                 ));
                 let status_code = error.status_code();
                 let error_response = errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
-                worker::Error::RustError(format!("{}:{}", status_code, serde_json::to_string(&error_response).unwrap_or_default()))
+                let error_json = serde_json::to_string(&error_response)
+                    .unwrap_or_else(|_| r#"{"error":"internal error","code":"SERIALIZATION_FAILED"}"#.to_string());
+                worker::Error::RustError(format!("{}:{}", status_code, error_json))
             })?;
 
             uploaded_paths.push(path);
@@ -253,7 +259,9 @@ pub async fn handle_metrics_request(
         ));
         let status_code = error.status_code();
         let error_response = errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
-        worker::Error::RustError(format!("{}:{}", status_code, serde_json::to_string(&error_response).unwrap_or_default()))
+        let error_json = serde_json::to_string(&error_response)
+            .unwrap_or_else(|_| r#"{"error":"internal error","code":"SERIALIZATION_FAILED"}"#.to_string());
+        worker::Error::RustError(format!("{}:{}", status_code, error_json))
     })?;
 
     let per_service_requests = otlp::metrics::split_request_by_service(request);
@@ -275,11 +283,10 @@ pub async fn handle_metrics_request(
             let status_code = error.status_code();
             let error_response =
                 errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
-            worker::Error::RustError(format!(
-                "{}:{}",
-                status_code,
-                serde_json::to_string(&error_response).unwrap_or_default()
-            ))
+            let error_json = serde_json::to_string(&error_response).unwrap_or_else(|_| {
+                r#"{"error":"internal error","code":"SERIALIZATION_FAILED"}"#.to_string()
+            });
+            worker::Error::RustError(format!("{}:{}", status_code, error_json))
         })?;
 
         aggregated.resource_metrics_count += subset_metadata.resource_metrics_count;
@@ -319,7 +326,9 @@ pub async fn handle_metrics_request(
                 ));
                 let status_code = error.status_code();
                 let error_response = errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
-                worker::Error::RustError(format!("{}:{}", status_code, serde_json::to_string(&error_response).unwrap_or_default()))
+                let error_json = serde_json::to_string(&error_response)
+                    .unwrap_or_else(|_| r#"{"error":"internal error","code":"SERIALIZATION_FAILED"}"#.to_string());
+                worker::Error::RustError(format!("{}:{}", status_code, error_json))
             })?;
 
             uploaded_paths.push(path);
