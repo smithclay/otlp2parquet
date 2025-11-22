@@ -120,12 +120,15 @@ async-trait = "0.1"
 uuid = { version = "1", features = ["v4"] }
 serde = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 chrono = { workspace = true }
+paste = "1.0"
 
 [features]
 default = []
 dhat-heap = ["dep:dhat"]
 docker-tests = []
+smoke-server = []
 smoke-lambda = ["dep:aws-sdk-cloudformation", "dep:aws-sdk-cloudwatchlogs", "dep:aws-sdk-s3tables"]
 smoke-workers = []
 

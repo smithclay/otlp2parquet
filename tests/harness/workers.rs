@@ -293,6 +293,7 @@ impl SmokeTestHarness for WorkersHarness {
                 "r2-plain-parquet".to_string()
             },
             bucket: self.bucket_name.clone(),
+            namespace: "otel".to_string(), // Workers uses "otel" namespace
             resource_ids: HashMap::from([
                 ("worker_name".to_string(), self.worker_name.clone()),
                 ("bucket_name".to_string(), self.bucket_name.clone()),
@@ -402,7 +403,7 @@ impl SmokeTestHarness for WorkersHarness {
         })
     }
 
-    fn duckdb_verifier(&self) -> DuckDBVerifier {
+    fn duckdb_verifier(&self, _info: &DeploymentInfo) -> DuckDBVerifier {
         DuckDBVerifier {
             catalog_type: CatalogType::R2Catalog,
             catalog_endpoint: if self.catalog_mode == CatalogMode::Enabled {

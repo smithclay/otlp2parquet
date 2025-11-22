@@ -42,7 +42,7 @@ jobs:
         run: make build-lambda
 
       - name: Run Lambda smoke tests
-        run: cargo test --test smoke_tests --features smoke-lambda -- lambda --test-threads=1
+        run: cargo test --test smoke --features smoke-lambda -- --test-threads=1
         env:
           SMOKE_TEST_STACK_PREFIX: gh-${{ github.run_id }}
           SMOKE_TEST_AWS_REGION: us-west-2
@@ -91,7 +91,7 @@ jobs:
         run: make wasm-compress
 
       - name: Run Workers smoke tests
-        run: cargo test --test smoke_tests --features smoke-workers -- workers --test-threads=1
+        run: cargo test --test smoke --features smoke-workers -- --test-threads=1
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

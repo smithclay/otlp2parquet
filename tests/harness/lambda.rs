@@ -155,6 +155,7 @@ impl SmokeTestHarness for LambdaHarness {
             endpoint,
             catalog_endpoint: s3_tables_arn,
             bucket: s3_tables_name,
+            namespace: self.namespace.clone(),
             resource_ids: HashMap::from([("stack_name".to_string(), self.stack_name.clone())]),
         })
     }
@@ -273,14 +274,14 @@ impl SmokeTestHarness for LambdaHarness {
         })
     }
 
-    fn duckdb_verifier(&self) -> DuckDBVerifier {
+    fn duckdb_verifier(&self, info: &DeploymentInfo) -> DuckDBVerifier {
         DuckDBVerifier {
             catalog_type: CatalogType::S3Tables,
-            catalog_endpoint: String::new(), // Will be set from deployment info
+            catalog_endpoint: info.catalog_endpoint.clone(),
             storage_config: StorageConfig {
                 backend: StorageBackend::S3 {
                     region: self.region.clone(),
-                    bucket: String::new(), // Will be set from deployment info
+                    bucket: info.bucket.clone(),
                     endpoint: None,
                     credentials: S3Credentials::FromEnvironment,
                 },

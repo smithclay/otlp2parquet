@@ -47,9 +47,8 @@ services:
     depends_on:
       minio:
         condition: service_healthy
-    container_name: iceberg-rest
     ports:
-      - 8181:8181
+      - "${REST_CATALOG_PORT:-8181}:8181"
     environment:
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin

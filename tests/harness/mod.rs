@@ -21,13 +21,26 @@
 //! Same verification logic (table counts, schema, samples) regardless of platform.
 
 #![cfg_attr(
-    not(any(feature = "smoke-lambda", feature = "smoke-workers")),
+    not(any(
+        feature = "smoke-server",
+        feature = "smoke-lambda",
+        feature = "smoke-workers"
+    )),
     allow(dead_code)
 )]
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+/// Catalog mode for smoke tests
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CatalogMode {
+    /// Use Iceberg catalog (REST, S3 Tables, R2 Data Catalog)
+    Enabled,
+    /// Plain Parquet files without catalog
+    None,
+}
 
 /// Shared test harness trait for platform smoke tests
 #[async_trait::async_trait]
@@ -46,7 +59,10 @@ pub trait SmokeTestHarness {
     async fn verify_execution(&self) -> Result<ExecutionStatus>;
 
     /// Get DuckDB verifier configured for this platform's catalog
-    fn duckdb_verifier(&self) -> DuckDBVerifier;
+    ///
+    /// Takes deployment info to access catalog endpoints and bucket names
+    /// that are only known after deployment
+    fn duckdb_verifier(&self, info: &DeploymentInfo) -> DuckDBVerifier;
 
     /// Cleanup all deployed resources
     async fn cleanup(&self) -> Result<()>;
@@ -62,6 +78,8 @@ pub struct DeploymentInfo {
     pub catalog_endpoint: String,
     /// Storage bucket name
     pub bucket: String,
+    /// Iceberg namespace for tables
+    pub namespace: String,
     /// Deployed resource identifiers for cleanup
     pub resource_ids: HashMap<String, String>,
 }
@@ -101,6 +119,8 @@ pub enum CatalogType {
     S3Tables,
     /// Cloudflare R2 Data Catalog (Workers tests)
     R2Catalog,
+    /// Plain Parquet files without catalog
+    PlainParquet,
 }
 
 /// Storage backend configuration for DuckDB
@@ -228,7 +248,14 @@ impl DuckDBVerifier {
                     } => {
                         let endpoint_config = endpoint
                             .as_ref()
-                            .map(|e| format!("ENDPOINT '{}',\n    URL_STYLE 'path',\n    USE_SSL false,\n    ", e))
+                            .map(|e| {
+                                // Strip http:// or https:// protocol - DuckDB expects just hostname:port
+                                let stripped = e
+                                    .strip_prefix("http://")
+                                    .or_else(|| e.strip_prefix("https://"))
+                                    .unwrap_or(e);
+                                format!("ENDPOINT '{}',\n    URL_STYLE 'path',\n    USE_SSL false,\n    ", stripped)
+                            })
                             .unwrap_or_default();
                         script.push_str(&format!(
                             "CREATE SECRET s3_secret (
@@ -260,7 +287,7 @@ impl DuckDBVerifier {
             }
         }
 
-        // Attach Iceberg catalog based on type
+        // Attach Iceberg catalog based on type OR direct Parquet scanning
         match self.catalog_type {
             CatalogType::NessieREST => {
                 script.push_str(&format!(
@@ -293,6 +320,10 @@ impl DuckDBVerifier {
                     self.catalog_endpoint
                 ));
             }
+            CatalogType::PlainParquet => {
+                // No catalog attachment needed for plain Parquet mode
+                // Will use direct read_parquet() queries instead
+            }
         }
 
         // Note: information_schema.tables query causes "NameListToString NOT IMPLEMENTED" error
@@ -300,20 +331,61 @@ impl DuckDBVerifier {
 
         // Count rows in tables that should exist based on test signals sent
         // The full pipeline test sends: logs, metrics (gauge only), and traces
-        script.push_str(&format!(
-            "SELECT 'otel_logs' AS table_name, COUNT(*) AS row_count FROM iceberg_catalog.{}.otel_logs;\n",
-            namespace
-        ));
-        script.push_str(&format!(
-            "SELECT 'otel_traces' AS table_name, COUNT(*) AS row_count FROM iceberg_catalog.{}.otel_traces;\n",
-            namespace
-        ));
-        script.push_str(&format!(
-            "SELECT 'otel_metrics_gauge' AS table_name, COUNT(*) AS row_count FROM iceberg_catalog.{}.otel_metrics_gauge;\n",
-            namespace
-        ));
+        if self.catalog_type == CatalogType::PlainParquet {
+            // Plain Parquet mode: Direct file scanning with glob patterns
+            let logs_path = self.get_parquet_scan_path("logs")?;
+            let traces_path = self.get_parquet_scan_path("traces")?;
+            let metrics_gauge_path = self.get_parquet_scan_path("metrics/gauge")?;
+
+            script.push_str(&format!(
+                "SELECT 'otel_logs' AS table_name, COUNT(*) AS row_count FROM read_parquet('{}');\n",
+                logs_path
+            ));
+            script.push_str(&format!(
+                "SELECT 'otel_traces' AS table_name, COUNT(*) AS row_count FROM read_parquet('{}');\n",
+                traces_path
+            ));
+            script.push_str(&format!(
+                "SELECT 'otel_metrics_gauge' AS table_name, COUNT(*) AS row_count FROM read_parquet('{}');\n",
+                metrics_gauge_path
+            ));
+        } else {
+            // Iceberg catalog mode: Query catalog tables
+            script.push_str(&format!(
+                "SELECT 'otel_logs' AS table_name, COUNT(*) AS row_count FROM iceberg_catalog.{}.otel_logs;\n",
+                namespace
+            ));
+            script.push_str(&format!(
+                "SELECT 'otel_traces' AS table_name, COUNT(*) AS row_count FROM iceberg_catalog.{}.otel_traces;\n",
+                namespace
+            ));
+            script.push_str(&format!(
+                "SELECT 'otel_metrics_gauge' AS table_name, COUNT(*) AS row_count FROM iceberg_catalog.{}.otel_metrics_gauge;\n",
+                namespace
+            ));
+        }
 
         Ok(script)
+    }
+
+    /// Get path pattern for direct Parquet scanning (plain Parquet mode)
+    fn get_parquet_scan_path(&self, prefix: &str) -> Result<String> {
+        match &self.storage_config.backend {
+            StorageBackend::S3 {
+                bucket, endpoint, ..
+            } => {
+                if endpoint.is_some() {
+                    // MinIO: s3://bucket/prefix/**/*.parquet
+                    Ok(format!("s3://{}/{}/**/*.parquet", bucket, prefix))
+                } else {
+                    // Real S3
+                    Ok(format!("s3://{}/{}/**/*.parquet", bucket, prefix))
+                }
+            }
+            StorageBackend::R2 { bucket, .. } => {
+                Ok(format!("r2://{}/{}/**/*.parquet", bucket, prefix))
+            }
+        }
     }
 
     /// Execute DuckDB script and return output
@@ -451,6 +523,9 @@ impl TestDataSet {
         }
     }
 }
+
+#[cfg(feature = "smoke-server")]
+pub mod server;
 
 #[cfg(feature = "smoke-lambda")]
 pub mod lambda;

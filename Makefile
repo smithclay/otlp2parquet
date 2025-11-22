@@ -326,27 +326,26 @@ profile-all: bloat llvm-lines flamegraph ## Run all profiling tools
 	@echo "    - CPU profile: flamegraph.svg"
 
 #
-# End-to-End Docker Integration Tests
+# Smoke Tests (Unified Framework)
 #
 
-.PHONY: test-e2e
-test-e2e: ## Run core e2e tests with Docker (MinIO, otlp2parquet). Override TEST_ICEBERG=1 or KEEP_CONTAINERS=1 for advanced scenarios.
-	@TEST_ICEBERG=$(TEST_ICEBERG) KEEP_CONTAINERS=$(KEEP_CONTAINERS) ./scripts/test-e2e.sh
+.PHONY: test-smoke
+test-smoke: ## Run smoke tests for all platforms (requires Docker + cloud credentials)
+	@echo "==> Running unified smoke tests for all platforms..."
+	@cargo test --test smoke --features smoke-server,smoke-lambda,smoke-workers
 
-.PHONY: test-e2e-iceberg
-test-e2e-iceberg: TEST_ICEBERG=1
-test-e2e-iceberg: test-e2e ## Run e2e tests including Iceberg catalog validation and DuckDB verification
+.PHONY: test-smoke-server
+test-smoke-server: ## Run server smoke tests only (requires Docker)
+	@echo "==> Running server smoke tests (both catalog modes)..."
+	@cargo test --test smoke --features smoke-server
 
-.PHONY: test-e2e-debug
-test-e2e-debug: KEEP_CONTAINERS=1
-test-e2e-debug: test-e2e ## Run e2e tests and preserve containers for debugging
-
-.PHONY: test-e2e-no-catalog
-test-e2e-no-catalog: ## Run e2e tests in plain Parquet mode (no Iceberg catalog)
-	@CATALOG_MODE=none TEST_ICEBERG=0 ./scripts/test-e2e.sh
+.PHONY: test-smoke-server-verbose
+test-smoke-server-verbose: ## Run server smoke tests with verbose output
+	@echo "==> Running server smoke tests (verbose mode)..."
+	cargo test --test smoke --features smoke-server -- --nocapture
 
 .PHONY: test-all
-test-all: test test-e2e ## Run unit tests + core e2e tests (legacy alias for test-full)
+test-all: test test-smoke-server ## Run unit tests + server smoke tests
 
 #
 # Platform Smoke Tests (requires cloud credentials)
@@ -356,7 +355,7 @@ test-all: test test-e2e ## Run unit tests + core e2e tests (legacy alias for tes
 smoke-lambda: build-lambda ## Run Lambda + S3 Tables smoke tests (requires AWS credentials)
 	@echo "==> Running Lambda smoke tests..."
 	@echo "Prerequisites: AWS credentials (deployment bucket auto-created)"
-	@cargo test --test smoke_tests --features smoke-lambda -- lambda --test-threads=1
+	@cargo test --test smoke --features smoke-lambda -- --test-threads=1
 
 .PHONY: smoke-workers
 smoke-workers: wasm-compress ## Run Workers + R2 Catalog smoke tests (requires Cloudflare credentials)
@@ -365,16 +364,16 @@ smoke-workers: wasm-compress ## Run Workers + R2 Catalog smoke tests (requires C
 	@if [ -f crates/otlp2parquet-cloudflare/.env ]; then \
 		echo "Loading environment from crates/otlp2parquet-cloudflare/.env"; \
 		set -a && . crates/otlp2parquet-cloudflare/.env && set +a && \
-		PATH="$$PATH" cargo test --test smoke_tests --features smoke-workers -- workers --test-threads=1; \
+		PATH="$$PATH" cargo test --test smoke --features smoke-workers -- --test-threads=1; \
 	else \
-		PATH="$$PATH" cargo test --test smoke_tests --features smoke-workers -- workers --test-threads=1; \
+		PATH="$$PATH" cargo test --test smoke --features smoke-workers -- --test-threads=1; \
 	fi
 
 .PHONY: smoke-all
 smoke-all: smoke-lambda smoke-workers ## Run all platform smoke tests (requires all cloud credentials)
 
 .PHONY: test-full
-test-full: test test-e2e-iceberg ## Run unit tests + Docker integration tests (no cloud required)
+test-full: test test-smoke-server ## Run unit tests + server smoke tests (no cloud required)
 
 .PHONY: test-ci
 test-ci: test-full smoke-all ## Run complete test suite including cloud smoke tests
