@@ -6,7 +6,6 @@
 // We don't add our own tokio - lambda_runtime provides it
 
 use lambda_runtime::{service_fn, Error, LambdaEvent};
-use otlp2parquet_batch::PassthroughBatcher;
 use otlp2parquet_config::{RuntimeConfig, StorageBackend};
 use otlp2parquet_core::parquet::encoding::set_parquet_row_group_size;
 use std::sync::Arc;
@@ -111,7 +110,6 @@ async fn handle_request(
 pub(crate) struct LambdaState {
     pub catalog: Option<Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>>,
     pub namespace: String,
-    pub passthrough: PassthroughBatcher,
     pub max_payload_bytes: usize,
 }
 
@@ -262,7 +260,6 @@ pub async fn run() -> Result<(), Error> {
     let state = Arc::new(LambdaState {
         catalog,
         namespace,
-        passthrough: PassthroughBatcher::default(),
         max_payload_bytes,
     });
 

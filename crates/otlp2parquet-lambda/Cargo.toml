@@ -10,6 +10,7 @@ otlp2parquet-core = { path = "../otlp2parquet-core" }
 otlp2parquet-batch = { path = "../otlp2parquet-batch" }
 otlp2parquet-config = { path = "../otlp2parquet-config" }
 otlp2parquet-writer = { path = "../otlp2parquet-writer" }
+otlp2parquet-handlers = { path = "../otlp2parquet-handlers" }
 arrow = { workspace = true }
 opendal = { version = "0.54", default-features = false, features = ["services-s3"] }
 
