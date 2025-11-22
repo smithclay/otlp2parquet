@@ -28,6 +28,9 @@ use super::{
     StorageBackend, StorageConfig, TestDataSet,
 };
 use anyhow::{Context, Result};
+use aws_config::{BehaviorVersion, Region};
+use aws_credential_types::Credentials;
+use aws_sdk_s3::{config::Builder as S3ConfigBuilder, Client as S3Client};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -63,6 +66,29 @@ pub struct WorkersHarness {
 }
 
 impl WorkersHarness {
+    /// Create S3 client configured for R2's S3-compatible API
+    fn create_s3_client(&self) -> S3Client {
+        let credentials = Credentials::new(
+            &self.r2_access_key_id,
+            &self.r2_secret_access_key,
+            None, // session token
+            None, // expiration
+            "r2-static-credentials",
+        );
+
+        let r2_endpoint = format!("https://{}.r2.cloudflarestorage.com", self.account_id);
+
+        let s3_config = S3ConfigBuilder::new()
+            .behavior_version(BehaviorVersion::latest())
+            .region(Region::new("auto"))
+            .endpoint_url(r2_endpoint)
+            .credentials_provider(credentials)
+            .force_path_style(false)
+            .build();
+
+        S3Client::from_conf(s3_config)
+    }
+
     /// Get wrangler command with proper environment setup
     fn wrangler_command(&self) -> Command {
         let mut cmd = Command::new("sh");
@@ -147,7 +173,7 @@ impl WorkersHarness {
             config_content = config_content.replace("# {{CATALOG_VARS}}", "");
         }
 
-        // Write to wrangler directory (so paths in config resolve correctly)
+        // Write to wrangler directory (gitignored via wrangler-smoke-*.toml pattern)
         let config_path = wrangler_dir.join(format!("wrangler-{}.toml", self.worker_name));
         fs::write(&config_path, config_content)
             .context("Failed to write generated wrangler config")?;
@@ -156,51 +182,62 @@ impl WorkersHarness {
         Ok(config_path)
     }
 
-    /// List all objects in R2 bucket with test prefix
-    fn list_r2_objects(&self) -> Result<Vec<String>> {
-        let list_cmd = format!(
-            "npx wrangler r2 object list {} --prefix {} --json",
-            self.bucket_name, self.test_prefix
-        );
-        let output = self
-            .wrangler_command()
-            .arg(&list_cmd)
-            .output()
-            .context("Failed to list R2 objects")?;
+    /// List all objects in R2 bucket with test prefix using S3 API
+    async fn list_r2_objects(&self) -> Result<Vec<String>> {
+        let client = self.create_s3_client();
 
-        if !output.status.success() {
-            // If bucket doesn't exist or is empty, return empty list
-            return Ok(Vec::new());
-        }
-
-        let output_str = String::from_utf8_lossy(&output.stdout);
-
-        // Parse JSON output to extract object keys
-        // wrangler outputs: [{"key": "...", ...}, ...]
         let mut keys = Vec::new();
-        for line in output_str.lines() {
-            if line.contains("\"key\"") {
-                // Simple extraction: find "key": "value"
-                if let Some(start) = line.find("\"key\":") {
-                    let rest = &line[start + 6..].trim_start();
-                    if let Some(stripped) = rest.strip_prefix('\"') {
-                        if let Some(end) = stripped.find('\"') {
-                            let key = &stripped[..end];
-                            keys.push(key.to_string());
-                        }
-                    }
+        let mut continuation_token: Option<String> = None;
+
+        // Paginate through all objects with the test prefix
+        loop {
+            let mut request = client
+                .list_objects_v2()
+                .bucket(&self.bucket_name)
+                .prefix(&self.test_prefix);
+
+            if let Some(token) = continuation_token.take() {
+                request = request.continuation_token(token);
+            }
+
+            let response = match request.send().await {
+                Ok(resp) => resp,
+                Err(_) => {
+                    // If bucket doesn't exist or is empty, return empty list
+                    return Ok(Vec::new());
                 }
+            };
+
+            // Iterate through contents (returns &[Object])
+            for object in response.contents() {
+                if let Some(key) = object.key() {
+                    keys.push(key.to_string());
+                }
+            }
+
+            // Check if there are more pages
+            if response.is_truncated() == Some(true) {
+                continuation_token = response.next_continuation_token().map(|s| s.to_string());
+            } else {
+                break;
             }
         }
 
         Ok(keys)
     }
 
-    /// Delete a single object from R2 bucket
-    fn delete_r2_object(&self, key: &str) -> Result<()> {
-        let delete_cmd = format!("npx wrangler r2 object delete {}/{}", self.bucket_name, key);
-        let _ = self.wrangler_command().arg(&delete_cmd).output();
-        Ok(()) // Ignore errors - best effort
+    /// Delete a single object from R2 bucket using S3 API
+    async fn delete_r2_object(&self, key: &str) -> Result<()> {
+        let client = self.create_s3_client();
+
+        let _ = client
+            .delete_object()
+            .bucket(&self.bucket_name)
+            .key(key)
+            .send()
+            .await;
+
+        Ok(()) // Ignore errors - best effort cleanup
     }
 
     /// Extract Workers URL from wrangler deploy output
@@ -284,6 +321,10 @@ impl SmokeTestHarness for WorkersHarness {
         let endpoint = self.extract_workers_url(&output_str)?;
 
         tracing::info!("Workers deployed successfully: {}", endpoint);
+
+        // Wait for deployment to propagate globally (Workers typically take 2-5 seconds)
+        tracing::info!("Waiting 5 seconds for Workers deployment to propagate...");
+        tokio::time::sleep(Duration::from_secs(5)).await;
 
         Ok(DeploymentInfo {
             endpoint: endpoint.clone(),
@@ -370,23 +411,25 @@ impl SmokeTestHarness for WorkersHarness {
 
         let log_output = String::from_utf8_lossy(&output.stdout);
 
-        // Count error/warning messages
-        let error_count = log_output
-            .lines()
-            .filter(|line| {
-                line.contains("\"error\"")
-                    || line.contains("\"ERROR\"")
-                    || line.contains("\"warn\"")
-            })
-            .count();
+        // Count error/warning messages (filter out CLI help text)
+        let is_actual_error = |line: &&str| -> bool {
+            // Skip CLI help text (contains -- flags or [choices:])
+            if line.contains("--") || line.contains("[choices:") || line.contains("[array]") {
+                return false;
+            }
+            // Match actual error/warning log messages
+            line.contains("\"error\"")
+                || line.contains("\"ERROR\"")
+                || line.contains("\"warn\"")
+                || line.contains("(error)")
+                || line.contains("Error:")
+        };
+
+        let error_count = log_output.lines().filter(is_actual_error).count();
 
         let sample_errors: Vec<String> = log_output
             .lines()
-            .filter(|line| {
-                line.contains("\"error\"")
-                    || line.contains("\"ERROR\"")
-                    || line.contains("\"warn\"")
-            })
+            .filter(is_actual_error)
             .take(5)
             .map(|s| s.to_string())
             .collect();
@@ -405,7 +448,11 @@ impl SmokeTestHarness for WorkersHarness {
 
     fn duckdb_verifier(&self, _info: &DeploymentInfo) -> DuckDBVerifier {
         DuckDBVerifier {
-            catalog_type: CatalogType::R2Catalog,
+            catalog_type: if self.catalog_mode == CatalogMode::Enabled {
+                CatalogType::R2Catalog
+            } else {
+                CatalogType::PlainParquet
+            },
             catalog_endpoint: if self.catalog_mode == CatalogMode::Enabled {
                 format!("r2-catalog://{}", self.bucket_name)
             } else {
@@ -427,43 +474,47 @@ impl SmokeTestHarness for WorkersHarness {
     async fn cleanup(&self) -> Result<()> {
         tracing::info!("Cleaning up Workers smoke test (fail-safe mode)");
 
-        // 1. Delete Workers script
-        let delete_cmd = format!("npx wrangler delete {} --force", self.worker_name);
+        // 1. Delete Workers script using Cloudflare API (wrangler delete has permission issues)
+        let client = reqwest::Client::new();
+        let delete_url = format!(
+            "https://api.cloudflare.com/client/v4/accounts/{}/workers/scripts/{}",
+            self.account_id, self.worker_name
+        );
 
-        let output = self.wrangler_command().arg(&delete_cmd).output();
-
-        match output {
-            Ok(out) if out.status.success() => {
+        match client
+            .delete(&delete_url)
+            .header("Authorization", format!("Bearer {}", self.api_token))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
                 tracing::info!("Workers script deleted successfully");
             }
-            Ok(out) => {
-                tracing::warn!(
-                    "Failed to delete Workers script: {}",
-                    String::from_utf8_lossy(&out.stderr)
-                );
+            Ok(resp) => {
+                tracing::warn!("Failed to delete Workers script: HTTP {}", resp.status());
             }
             Err(e) => {
-                tracing::warn!("Failed to run wrangler delete: {}", e);
+                tracing::warn!("Failed to delete Workers script: {}", e);
             }
         }
 
-        // Cleanup generated config file (from wrangler directory)
+        // Cleanup generated config file (gitignored via pattern)
         let wrangler_dir =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/otlp2parquet-cloudflare");
         let config_path = wrangler_dir.join(format!("wrangler-{}.toml", self.worker_name));
         let _ = fs::remove_file(config_path);
 
-        // 2. Delete all R2 objects with test prefix
+        // 2. Delete all R2 objects with test prefix using S3 API
         tracing::info!(
             "Deleting test objects from bucket {} with prefix {}",
             self.bucket_name,
             self.test_prefix
         );
-        match self.list_r2_objects() {
+        match self.list_r2_objects().await {
             Ok(objects) => {
                 tracing::info!("Found {} objects to delete", objects.len());
                 for key in objects {
-                    let _ = self.delete_r2_object(&key);
+                    let _ = self.delete_r2_object(&key).await;
                 }
             }
             Err(e) => {

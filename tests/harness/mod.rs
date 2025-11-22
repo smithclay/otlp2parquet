@@ -383,7 +383,9 @@ impl DuckDBVerifier {
                 }
             }
             StorageBackend::R2 { bucket, .. } => {
-                Ok(format!("r2://{}/{}/**/*.parquet", bucket, prefix))
+                // DuckDB doesn't support r2:// URI scheme
+                // Use s3:// with R2 endpoint configured in secret
+                Ok(format!("s3://{}/{}/**/*.parquet", bucket, prefix))
             }
         }
     }

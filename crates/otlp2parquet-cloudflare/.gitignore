@@ -1,1 +1,2 @@
 *.env
+wrangler-smoke-*.toml
