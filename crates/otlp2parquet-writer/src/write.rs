@@ -71,6 +71,115 @@ pub struct WriteBatchRequest<'a> {
 /// Returns `WriterError::InvalidTableName` if signal/metric type combination is invalid
 /// Returns `WriterError::WriteFailure` if icepick append operation fails or direct write fails
 /// Returns `WriterError::WriteFailure` if catalog is None and storage operator is not initialized
+/// Write a batch to Iceberg catalog
+async fn write_with_catalog(
+    catalog: &dyn Catalog,
+    namespace: &str,
+    table_name: &str,
+    batch: &RecordBatch,
+    snapshot_timestamp_ms: Option<i64>,
+) -> Result<()> {
+    let namespace_ident = NamespaceIdent::new(vec![namespace.to_string()]);
+
+    // Create writer with options
+    // Note: Iceberg snapshot timestamp should represent when the write occurs (current time),
+    // not when the data was generated (timestamp_micros). The data timestamps are preserved
+    // in the Parquet file columns.
+    let mut writer = AppendOnlyTableWriter::new(catalog, namespace_ident, table_name.to_string());
+
+    // If snapshot_timestamp_ms is provided (e.g., from Cloudflare Workers Date.now()),
+    // use it for the catalog commit timestamp. Otherwise, icepick will use system time.
+    if let Some(timestamp_ms) = snapshot_timestamp_ms {
+        let options = TableWriterOptions::new().with_timestamp_ms(timestamp_ms);
+        writer = writer.with_options(options);
+    }
+
+    let result = writer
+        .append_batch(batch.clone())
+        .await
+        .map_err(|e| WriterError::WriteFailure(format!("table '{}': {}", table_name, e)))?;
+
+    // Log different outcomes for observability
+    match result {
+        AppendResult::TableCreated {
+            ref data_file,
+            ref schema,
+        } => {
+            tracing::info!(
+                "✓ Created table '{}' with {} fields and wrote {} rows",
+                table_name,
+                schema.fields().len(),
+                data_file.record_count()
+            );
+        }
+        AppendResult::SchemaEvolved {
+            ref data_file,
+            ref old_schema,
+            ref new_schema,
+        } => {
+            tracing::warn!(
+                "✓ Schema evolved for '{}' from {} to {} fields, wrote {} rows",
+                table_name,
+                old_schema.fields().len(),
+                new_schema.fields().len(),
+                data_file.record_count()
+            );
+        }
+        AppendResult::Appended { ref data_file } => {
+            tracing::info!(
+                "✓ Wrote {} rows to '{}' via AppendOnlyTableWriter",
+                data_file.record_count(),
+                table_name
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Write a batch as plain Parquet file (no catalog)
+async fn write_plain_parquet(
+    signal_type: SignalType,
+    metric_type: Option<&str>,
+    service_name: &str,
+    timestamp_micros: i64,
+    batch: &RecordBatch,
+) -> Result<()> {
+    // Get global storage operator
+    let op = crate::storage::get_operator().ok_or_else(|| {
+        WriterError::WriteFailure(
+            "Storage operator not initialized. Call initialize_storage() with RuntimeConfig before writing. \
+             For catalog mode, ensure catalog is provided in WriteBatchRequest.".to_string()
+        )
+    })?;
+
+    // Generate timestamped file path with partitioning
+    // Format: {signal}/{service}/year={year}/month={month}/day={day}/hour={hour}/{uuid}.parquet
+    let file_path =
+        generate_parquet_path(signal_type, metric_type, service_name, timestamp_micros)?;
+
+    tracing::debug!("Writing plain Parquet to path: {}", file_path);
+
+    // Convert RecordBatch to Parquet bytes
+    let parquet_bytes = write_batch_to_parquet_bytes(batch)?;
+    let bytes_written = parquet_bytes.len();
+
+    // Write to storage using OpenDAL operator
+    op.write(&file_path, parquet_bytes)
+        .await
+        .map_err(|e| WriterError::WriteFailure(format!("Failed to write to storage: {}", e)))?;
+
+    let row_count = batch.num_rows();
+    tracing::info!(
+        "✓ Wrote {} rows to '{}' (plain Parquet, no catalog, {} bytes)",
+        row_count,
+        file_path,
+        bytes_written
+    );
+
+    Ok(())
+}
+
 pub async fn write_batch(req: WriteBatchRequest<'_>) -> Result<String> {
     let row_count = req.batch.num_rows();
 
@@ -94,102 +203,24 @@ pub async fn write_batch(req: WriteBatchRequest<'_>) -> Result<String> {
     // If catalog is provided, use Iceberg. Otherwise, write plain Parquet to storage
     match req.catalog {
         Some(cat) => {
-            // Create AppendOnlyTableWriter for this table
-            // icepick will:
-            // 1. Create table if it doesn't exist (deriving Iceberg schema from Arrow field_id)
-            // 2. Write Parquet file with statistics
-            // 3. Commit to catalog atomically
-            let namespace_ident = NamespaceIdent::new(vec![req.namespace.to_string()]);
-
-            // Create writer with options
-            // Note: Iceberg snapshot timestamp should represent when the write occurs (current time),
-            // not when the data was generated (timestamp_micros). The data timestamps are preserved
-            // in the Parquet file columns.
-            let mut writer = AppendOnlyTableWriter::new(cat, namespace_ident, table_name.clone());
-
-            // If snapshot_timestamp_ms is provided (e.g., from Cloudflare Workers Date.now()),
-            // use it for the catalog commit timestamp. Otherwise, icepick will use system time.
-            if let Some(timestamp_ms) = req.snapshot_timestamp_ms {
-                let options = TableWriterOptions::new().with_timestamp_ms(timestamp_ms);
-                writer = writer.with_options(options);
-            }
-
-            let result = writer
-                .append_batch(req.batch.clone())
-                .await
-                .map_err(|e| WriterError::WriteFailure(format!("table '{}': {}", table_name, e)))?;
-
-            // Log different outcomes for observability
-            match result {
-                AppendResult::TableCreated {
-                    ref data_file,
-                    ref schema,
-                } => {
-                    tracing::info!(
-                        "✓ Created table '{}' with {} fields and wrote {} rows",
-                        table_name,
-                        schema.fields().len(),
-                        data_file.record_count()
-                    );
-                }
-                AppendResult::SchemaEvolved {
-                    ref data_file,
-                    ref old_schema,
-                    ref new_schema,
-                } => {
-                    tracing::warn!(
-                        "✓ Schema evolved for '{}' from {} to {} fields, wrote {} rows",
-                        table_name,
-                        old_schema.fields().len(),
-                        new_schema.fields().len(),
-                        data_file.record_count()
-                    );
-                }
-                AppendResult::Appended { ref data_file } => {
-                    tracing::info!(
-                        "✓ Wrote {} rows to '{}' via AppendOnlyTableWriter",
-                        data_file.record_count(),
-                        table_name
-                    );
-                }
-            }
+            write_with_catalog(
+                cat,
+                req.namespace,
+                &table_name,
+                req.batch,
+                req.snapshot_timestamp_ms,
+            )
+            .await?;
         }
         None => {
-            // No catalog - write plain Parquet file to storage using global operator
-            // This path is used by Cloudflare Workers when no R2 Data Catalog is configured
-            let op = crate::storage::get_operator().ok_or_else(|| {
-                WriterError::WriteFailure(
-                    "Storage operator not initialized. Call initialize_storage() with RuntimeConfig before writing. \
-                     For catalog mode, ensure catalog is provided in WriteBatchRequest.".to_string()
-                )
-            })?;
-
-            // Generate timestamped file path with partitioning
-            // Format: {signal}/{service}/year={year}/month={month}/day={day}/hour={hour}/{uuid}.parquet
-            let file_path = generate_parquet_path(
+            write_plain_parquet(
                 req.signal_type,
                 req.metric_type,
                 req.service_name,
                 req.timestamp_micros,
-            )?;
-
-            tracing::debug!("Writing plain Parquet to path: {}", file_path);
-
-            // Convert RecordBatch to Parquet bytes
-            let parquet_bytes = write_batch_to_parquet_bytes(req.batch)?;
-            let bytes_written = parquet_bytes.len();
-
-            // Write to storage using OpenDAL operator
-            op.write(&file_path, parquet_bytes).await.map_err(|e| {
-                WriterError::WriteFailure(format!("Failed to write to storage: {}", e))
-            })?;
-
-            tracing::info!(
-                "✓ Wrote {} rows to '{}' (plain Parquet, no catalog, {} bytes)",
-                row_count,
-                file_path,
-                bytes_written
-            );
+                req.batch,
+            )
+            .await?;
         }
     }
 
