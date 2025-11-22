@@ -2,7 +2,9 @@
 
 use arrow::array::{Array, RecordBatch, StringArray, TimestampNanosecondArray};
 use otlp2parquet_core::{otlp, SignalType};
-use otlp2parquet_handlers::{process_logs as process_logs_handler, OtlpError, ProcessorConfig};
+use otlp2parquet_handlers::{
+    process_logs as process_logs_handler, process_traces, OtlpError, ProcessorConfig,
+};
 use serde_json::json;
 use std::sync::Arc;
 use worker::{console_error, Response, Result};
@@ -79,105 +81,33 @@ pub async fn handle_traces_request(
     catalog_enabled: bool,
     request_id: &str,
 ) -> Result<Response> {
-    // Parse OTLP traces request
-    let request = otlp::traces::parse_otlp_trace_request(body_bytes, format).map_err(|e| {
+    let current_time_ms = worker::Date::now().as_millis() as i64;
+
+    let result = process_traces(
+        body_bytes,
+        format,
+        otlp2parquet_handlers::ProcessorConfig {
+            catalog: catalog.map(|c| c.as_ref()),
+            namespace: namespace.unwrap_or("default"),
+            snapshot_timestamp_ms: Some(current_time_ms),
+        },
+    )
+    .await
+    .map_err(|e| {
         console_error!(
-            "[{}] Failed to parse OTLP traces (format: {:?}, content-type: {:?}): {:?}",
+            "[{}] Failed to process traces (format: {:?}, content-type: {:?}): {:?}",
             request_id,
             format,
             content_type,
-            e
+            e.message()
         );
-        let error = errors::OtlpErrorKind::InvalidRequest(format!(
-            "Failed to parse OTLP traces request: {}. Ensure the request body contains valid OTLP protobuf, JSON, or JSONL format.",
-            e
-        ));
-        let status_code = error.status_code();
-        let error_response = errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
-        let error_json = serde_json::to_string(&error_response)
-            .unwrap_or_else(|_| r#"{"error":"internal error","code":"SERIALIZATION_FAILED"}"#.to_string());
-        worker::Error::RustError(format!("{}:{}", status_code, error_json))
+        convert_to_worker_error(e, request_id)
     })?;
-
-    let per_service_requests = otlp::traces::split_request_by_service(request);
-    let mut uploaded_paths = Vec::new();
-    let mut spans_processed = 0usize;
-
-    for subset in per_service_requests {
-        let (batches, metadata) =
-            otlp::traces::TraceArrowConverter::convert(&subset).map_err(|e| {
-                console_error!(
-                    "[{}] Failed to convert OTLP traces to Arrow: {:?}",
-                    request_id,
-                    e
-                );
-                let error = errors::OtlpErrorKind::InternalError(format!(
-                    "Failed to convert OTLP traces to Arrow format: {}",
-                    e
-                ));
-                let status_code = error.status_code();
-                let error_response =
-                    errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
-                let error_json = serde_json::to_string(&error_response).unwrap_or_else(|_| {
-                    r#"{"error":"internal error","code":"SERIALIZATION_FAILED"}"#.to_string()
-                });
-                worker::Error::RustError(format!("{}:{}", status_code, error_json))
-            })?;
-
-        if batches.is_empty() || metadata.span_count == 0 {
-            continue;
-        }
-
-        spans_processed += metadata.span_count;
-
-        // Write via write_batch function
-        // Get current time in milliseconds for Iceberg snapshot timestamp
-        let current_time_ms = worker::Date::now().as_millis() as i64;
-
-        for batch in &batches {
-            let path = otlp2parquet_writer::write_batch(
-                otlp2parquet_writer::WriteBatchRequest {
-                    catalog: catalog.map(|arc| arc.as_ref()),
-                    namespace: namespace.unwrap_or("default"),
-                    batch,
-                    signal_type: SignalType::Traces,
-                    metric_type: None,
-                    service_name: metadata.service_name.as_ref(),
-                    timestamp_micros: metadata.first_timestamp_nanos,
-                    snapshot_timestamp_ms: Some(current_time_ms),
-                },
-            )
-            .await
-            .map_err(|e| {
-                console_error!("[{}] Failed to write traces: {:?}", request_id, e);
-                let error = errors::OtlpErrorKind::StorageError(format!(
-                    "Failed to write traces to R2 storage: {}. Check R2 credentials and bucket permissions.",
-                    e
-                ));
-                let status_code = error.status_code();
-                let error_response = errors::ErrorResponse::from_error(error, Some(request_id.to_string()));
-                let error_json = serde_json::to_string(&error_response)
-                    .unwrap_or_else(|_| r#"{"error":"internal error","code":"SERIALIZATION_FAILED"}"#.to_string());
-                worker::Error::RustError(format!("{}:{}", status_code, error_json))
-            })?;
-
-            uploaded_paths.push(path);
-        }
-    }
-
-    if spans_processed == 0 {
-        let response = Response::from_json(&json!({
-            "status": "ok",
-            "message": "No trace spans to process",
-            "catalog_enabled": catalog_enabled,
-        }))?;
-        return Ok(response);
-    }
 
     let response_body = json!({
         "status": "ok",
-        "spans_processed": spans_processed,
-        "partitions": uploaded_paths,
+        "spans_processed": result.records_processed,
+        "partitions": result.paths_written,
         "catalog_enabled": catalog_enabled,
     });
 
