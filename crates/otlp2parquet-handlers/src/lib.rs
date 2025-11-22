@@ -4,3 +4,5 @@
 //! used across Cloudflare Workers, Lambda, and Server platforms.
 
 pub mod error;
+
+pub use error::OtlpError;
