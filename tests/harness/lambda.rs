@@ -338,6 +338,43 @@ impl SmokeTestHarness for LambdaHarness {
                             tracing::warn!("Failed to delete table {}: {}", table_arn, e);
                         }
                     }
+
+                    // Wait for all tables to be deleted (poll until empty)
+                    tracing::info!("Waiting for tables to be deleted...");
+                    let mut attempts = 0;
+                    loop {
+                        match s3tables_client
+                            .list_tables()
+                            .table_bucket_arn(bucket_arn)
+                            .namespace(&self.namespace)
+                            .send()
+                            .await
+                        {
+                            Ok(resp) if resp.tables().is_empty() => {
+                                tracing::info!("All tables deleted successfully");
+                                break;
+                            }
+                            Ok(resp) => {
+                                let remaining = resp.tables().len();
+                                tracing::info!(
+                                    "Still waiting for {} tables to delete...",
+                                    remaining
+                                );
+                                attempts += 1;
+                                if attempts > 30 {
+                                    tracing::warn!(
+                                        "Timeout waiting for tables to delete, continuing anyway"
+                                    );
+                                    break;
+                                }
+                                tokio::time::sleep(Duration::from_secs(2)).await;
+                            }
+                            Err(e) => {
+                                tracing::warn!("Error checking table deletion status: {}", e);
+                                break;
+                            }
+                        }
+                    }
                 }
                 Err(e) => {
                     tracing::warn!("Failed to list tables for cleanup: {}", e);
@@ -354,6 +391,44 @@ impl SmokeTestHarness for LambdaHarness {
                 .await
             {
                 tracing::warn!("Failed to delete namespace {}: {}", self.namespace, e);
+            } else {
+                // Wait for namespace to be deleted
+                tracing::info!("Waiting for namespace to be deleted...");
+                let mut attempts = 0;
+                loop {
+                    match s3tables_client
+                        .list_namespaces()
+                        .table_bucket_arn(bucket_arn)
+                        .send()
+                        .await
+                    {
+                        Ok(resp) => {
+                            let namespace_exists = resp
+                                .namespaces()
+                                .iter()
+                                .any(|ns| ns.namespace() == &[self.namespace.as_str()]);
+
+                            if !namespace_exists {
+                                tracing::info!("Namespace deleted successfully");
+                                break;
+                            }
+
+                            tracing::info!("Still waiting for namespace to delete...");
+                            attempts += 1;
+                            if attempts > 30 {
+                                tracing::warn!(
+                                    "Timeout waiting for namespace to delete, continuing anyway"
+                                );
+                                break;
+                            }
+                            tokio::time::sleep(Duration::from_secs(2)).await;
+                        }
+                        Err(e) => {
+                            tracing::warn!("Error checking namespace deletion status: {}", e);
+                            break;
+                        }
+                    }
+                }
             }
         }
 
@@ -366,9 +441,6 @@ impl SmokeTestHarness for LambdaHarness {
             .context("Failed to delete CloudFormation stack")?;
 
         tracing::info!("CloudFormation stack deletion initiated");
-
-        // Don't wait for deletion to complete (can be slow)
-        // Stack will be cleaned up asynchronously
 
         Ok(())
     }
