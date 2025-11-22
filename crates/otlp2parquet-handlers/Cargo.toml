@@ -13,3 +13,4 @@ otlp2parquet-writer = { path = "../otlp2parquet-writer", default-features = fals
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }
+otlp2parquet-config = { path = "../otlp2parquet-config", default-features = false }

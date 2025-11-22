@@ -2684,6 +2684,7 @@ name = "otlp2parquet-handlers"
 version = "0.2.0"
 dependencies = [
  "otlp2parquet-batch",
+ "otlp2parquet-config",
  "otlp2parquet-core",
  "otlp2parquet-writer",
  "tokio",
