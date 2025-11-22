@@ -84,6 +84,73 @@ pub async fn process_logs(
     })
 }
 
+/// Process OTLP traces request
+pub async fn process_traces(
+    body: &[u8],
+    format: InputFormat,
+    config: ProcessorConfig<'_>,
+) -> Result<ProcessingResult, OtlpError> {
+    // Parse OTLP traces request
+    let request = otlp::traces::parse_otlp_trace_request(body, format).map_err(|e| {
+        OtlpError::InvalidRequest {
+            message: format!("Failed to parse OTLP traces request: {}", e),
+            hint: Some(
+                "Ensure the request body contains valid OTLP protobuf, JSON, or JSONL format."
+                    .into(),
+            ),
+        }
+    })?;
+
+    // Split by service name
+    let per_service_requests = otlp::traces::split_request_by_service(request);
+
+    let mut paths = Vec::new();
+    let mut spans_processed = 0;
+
+    for subset in per_service_requests {
+        let (batches, metadata) =
+            otlp::traces::TraceArrowConverter::convert(&subset).map_err(|e| {
+                OtlpError::ConversionFailed {
+                    signal: "traces".into(),
+                    message: e.to_string(),
+                }
+            })?;
+
+        if batches.is_empty() || metadata.span_count == 0 {
+            continue;
+        }
+
+        spans_processed += metadata.span_count;
+
+        // Write traces
+        for batch in &batches {
+            let path = otlp2parquet_writer::write_batch(WriteBatchRequest {
+                catalog: config.catalog,
+                namespace: config.namespace,
+                batch,
+                signal_type: SignalType::Traces,
+                metric_type: None,
+                service_name: metadata.service_name.as_ref(),
+                timestamp_micros: metadata.first_timestamp_nanos,
+                snapshot_timestamp_ms: config.snapshot_timestamp_ms,
+            })
+            .await
+            .map_err(|e| OtlpError::StorageFailed {
+                message: e.to_string(),
+            })?;
+
+            paths.push(path);
+        }
+    }
+
+    let batch_count = paths.len();
+    Ok(ProcessingResult {
+        paths_written: paths,
+        records_processed: spans_processed,
+        batches_flushed: batch_count,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,6 +234,78 @@ mod tests {
         assert!(result.records_processed > 0);
         assert!(!result.paths_written.is_empty());
         assert_eq!(result.batches_flushed, result.paths_written.len());
+
+        // Cleanup
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn test_process_traces_invalid_request() {
+        use otlp2parquet_core::InputFormat;
+
+        let invalid_data = b"not valid otlp data";
+        let config = ProcessorConfig {
+            catalog: None,
+            namespace: "test",
+            snapshot_timestamp_ms: None,
+        };
+
+        let result = process_traces(invalid_data, InputFormat::Protobuf, config).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.error_type(), "InvalidRequest");
+        assert!(err
+            .message()
+            .contains("Failed to parse OTLP traces request"));
+    }
+
+    #[tokio::test]
+    async fn test_process_traces_valid_request() {
+        use otlp2parquet_config::{FsConfig, StorageBackend, StorageConfig};
+        use otlp2parquet_core::InputFormat;
+
+        // Read test data
+        let test_data = std::fs::read("../../testdata/traces.pb").expect("Failed to read testdata");
+
+        // Initialize storage
+        let temp_dir = std::env::temp_dir().join("otlp2parquet-handlers-test-traces");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let runtime_config = otlp2parquet_config::RuntimeConfig {
+            batch: Default::default(),
+            request: Default::default(),
+            storage: StorageConfig {
+                backend: StorageBackend::Fs,
+                parquet_row_group_size: 100_000,
+                fs: Some(FsConfig {
+                    path: temp_dir.to_string_lossy().to_string(),
+                }),
+                s3: None,
+                r2: None,
+            },
+            catalog_mode: Default::default(),
+            server: None,
+            lambda: None,
+            cloudflare: None,
+            iceberg: None,
+        };
+
+        otlp2parquet_writer::initialize_storage(&runtime_config)
+            .expect("Failed to initialize storage");
+
+        let config = ProcessorConfig {
+            catalog: None,
+            namespace: "test",
+            snapshot_timestamp_ms: None,
+        };
+
+        let result = process_traces(&test_data, InputFormat::Protobuf, config)
+            .await
+            .expect("Failed to process traces");
+
+        assert!(result.records_processed > 0);
+        assert!(!result.paths_written.is_empty());
 
         // Cleanup
         std::fs::remove_dir_all(&temp_dir).ok();
