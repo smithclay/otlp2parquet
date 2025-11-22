@@ -45,6 +45,7 @@ pub async fn handle_logs_request(
             catalog: catalog.map(|c| c.as_ref()),
             namespace: namespace.unwrap_or("default"),
             snapshot_timestamp_ms: Some(current_time_ms),
+            retry_policy: otlp2parquet_writer::RetryPolicy::default(),
         },
     )
     .await
@@ -89,6 +90,7 @@ pub async fn handle_traces_request(
             catalog: catalog.map(|c| c.as_ref()),
             namespace: namespace.unwrap_or("default"),
             snapshot_timestamp_ms: Some(current_time_ms),
+            retry_policy: otlp2parquet_writer::RetryPolicy::default(),
         },
     )
     .await
@@ -132,6 +134,7 @@ pub async fn handle_metrics_request(
             catalog: catalog.map(|c| c.as_ref()),
             namespace: namespace.unwrap_or("default"),
             snapshot_timestamp_ms: Some(current_time_ms),
+            retry_policy: otlp2parquet_writer::RetryPolicy::default(),
         },
     )
     .await

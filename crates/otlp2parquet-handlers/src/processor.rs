@@ -11,12 +11,13 @@ pub struct ProcessorConfig<'a> {
     pub catalog: Option<&'a dyn otlp2parquet_writer::icepick::catalog::Catalog>,
     pub namespace: &'a str,
     pub snapshot_timestamp_ms: Option<i64>,
+    pub retry_policy: RetryPolicy,
 }
 
 use crate::error::OtlpError;
 use otlp2parquet_batch::LogSignalProcessor;
 use otlp2parquet_core::{otlp, InputFormat, SignalType};
-use otlp2parquet_writer::WriteBatchRequest;
+use otlp2parquet_writer::{RetryPolicy, WriteBatchRequest};
 
 /// Process OTLP logs request
 pub async fn process_logs(
@@ -67,6 +68,7 @@ pub async fn process_logs(
                 service_name: &batch.metadata.service_name,
                 timestamp_micros: batch.metadata.first_timestamp_nanos,
                 snapshot_timestamp_ms: config.snapshot_timestamp_ms,
+                retry_policy: config.retry_policy,
             })
             .await
             .map_err(|e| OtlpError::StorageFailed {
@@ -133,6 +135,7 @@ pub async fn process_traces(
                 service_name: metadata.service_name.as_ref(),
                 timestamp_micros: metadata.first_timestamp_nanos,
                 snapshot_timestamp_ms: config.snapshot_timestamp_ms,
+                retry_policy: config.retry_policy,
             })
             .await
             .map_err(|e| OtlpError::StorageFailed {
@@ -244,6 +247,7 @@ pub async fn process_metrics(
                 service_name: &service_name,
                 timestamp_micros: timestamp_nanos,
                 snapshot_timestamp_ms: config.snapshot_timestamp_ms,
+                retry_policy: config.retry_policy,
             })
             .await
             .map_err(|e| OtlpError::StorageFailed {
@@ -288,6 +292,7 @@ mod tests {
             catalog: None,
             namespace: "test",
             snapshot_timestamp_ms: None,
+            retry_policy: RetryPolicy::default(),
         };
 
         let result = process_logs(invalid_data, InputFormat::Protobuf, config).await;
@@ -336,6 +341,7 @@ mod tests {
             catalog: None,
             namespace: "test",
             snapshot_timestamp_ms: None,
+            retry_policy: RetryPolicy::default(),
         };
 
         let result = process_logs(&test_data, InputFormat::Protobuf, config)
@@ -359,6 +365,7 @@ mod tests {
             catalog: None,
             namespace: "test",
             snapshot_timestamp_ms: None,
+            retry_policy: RetryPolicy::default(),
         };
 
         let result = process_traces(invalid_data, InputFormat::Protobuf, config).await;
@@ -409,6 +416,7 @@ mod tests {
             catalog: None,
             namespace: "test",
             snapshot_timestamp_ms: None,
+            retry_policy: RetryPolicy::default(),
         };
 
         let result = process_traces(&test_data, InputFormat::Protobuf, config)
@@ -431,6 +439,7 @@ mod tests {
             catalog: None,
             namespace: "test",
             snapshot_timestamp_ms: None,
+            retry_policy: RetryPolicy::default(),
         };
 
         let result = process_metrics(invalid_data, InputFormat::Protobuf, config).await;
@@ -482,6 +491,7 @@ mod tests {
             catalog: None,
             namespace: "test",
             snapshot_timestamp_ms: None,
+            retry_policy: RetryPolicy::default(),
         };
 
         let result = process_metrics(&test_data, InputFormat::Protobuf, config)

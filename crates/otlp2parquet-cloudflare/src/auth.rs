@@ -99,7 +99,13 @@ pub fn check_basic_auth(
         });
         let status_code = error.status_code();
         let error_response = errors::ErrorResponse::from_error(error, request_id);
-        return Err(error_response.into_response(status_code).unwrap());
+        // into_response only fails if JSON serialization fails, which is extremely rare
+        // In that case, return a simple text error response
+        return Err(error_response
+            .into_response(status_code)
+            .unwrap_or_else(|_| {
+                Response::error("Authentication configuration error", status_code).unwrap()
+            }));
     };
 
     // Get Authorization header
@@ -111,7 +117,11 @@ pub fn check_basic_auth(
             );
             let status_code = error.status_code();
             let error_response = errors::ErrorResponse::from_error(error, request_id);
-            let mut response = error_response.into_response(status_code).unwrap();
+            let mut response = error_response
+                .into_response(status_code)
+                .unwrap_or_else(|_| {
+                    Response::error("Authentication required", status_code).unwrap()
+                });
             response = response.with_headers(worker::Headers::from_iter([(
                 "WWW-Authenticate",
                 "Basic realm=\"OTLP Ingestion\"",
@@ -136,7 +146,11 @@ pub fn check_basic_auth(
             ));
             let status_code = error.status_code();
             let error_response = errors::ErrorResponse::from_error(error, request_id);
-            return Err(error_response.into_response(status_code).unwrap());
+            return Err(error_response
+                .into_response(status_code)
+                .unwrap_or_else(|_| {
+                    Response::error("Invalid authentication format", status_code).unwrap()
+                }));
         }
     };
 
@@ -153,7 +167,9 @@ pub fn check_basic_auth(
             errors::OtlpErrorKind::Unauthorized("Invalid username or password.".to_string());
         let status_code = error.status_code();
         let error_response = errors::ErrorResponse::from_error(error, request_id);
-        Err(error_response.into_response(status_code).unwrap())
+        Err(error_response
+            .into_response(status_code)
+            .unwrap_or_else(|_| Response::error("Invalid credentials", status_code).unwrap()))
     }
 }
 

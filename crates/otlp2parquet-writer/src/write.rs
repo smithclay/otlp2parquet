@@ -11,6 +11,7 @@ use crate::error::{Result, WriterError};
 use crate::table_mapping::table_name_for_signal;
 use arrow::array::RecordBatch;
 use icepick::catalog::Catalog;
+use icepick::error::Error as CatalogError;
 use icepick::spec::NamespaceIdent;
 use icepick::{AppendOnlyTableWriter, AppendResult, TableWriterOptions};
 use otlp2parquet_core::SignalType;
@@ -37,6 +38,120 @@ pub struct WriteBatchRequest<'a> {
     /// occurs (current time), not when the data was generated. Use this on WASM platforms
     /// (Cloudflare Workers) where system time is unavailable.
     pub snapshot_timestamp_ms: Option<i64>,
+    /// Retry policy for optimistic Iceberg commits. Use [`RetryPolicy::disabled()`]
+    /// to turn retries off entirely.
+    pub retry_policy: RetryPolicy,
+}
+
+/// Controls optimistic retry behavior when committing to Iceberg catalogs.
+#[derive(Debug, Clone, Copy)]
+pub struct RetryPolicy {
+    /// Whether retries are enabled.
+    pub enabled: bool,
+    /// Maximum number of attempts (including the initial write).
+    pub max_attempts: u32,
+    /// Initial delay in milliseconds before retrying (applies to the first retry).
+    pub initial_delay_ms: u32,
+    /// Maximum backoff delay in milliseconds.
+    pub max_delay_ms: u32,
+}
+
+impl RetryPolicy {
+    /// Disable optimistic retries entirely.
+    pub const fn disabled() -> Self {
+        Self {
+            enabled: false,
+            max_attempts: 1,
+            initial_delay_ms: 0,
+            max_delay_ms: 0,
+        }
+    }
+
+    /// Create an enabled retry policy with the provided parameters.
+    pub const fn enabled(max_attempts: u32, initial_delay_ms: u32, max_delay_ms: u32) -> Self {
+        Self {
+            enabled: true,
+            max_attempts,
+            initial_delay_ms,
+            max_delay_ms,
+        }
+    }
+
+    /// Number of attempts the writer will make (always >= 1).
+    pub fn effective_max_attempts(&self) -> u32 {
+        self.max_attempts.max(1)
+    }
+
+    /// Determine whether the failure should be retried.
+    pub fn should_retry(&self, attempt: u32, err: &CatalogError) -> bool {
+        self.enabled && attempt < self.effective_max_attempts() && is_retryable_error(err)
+    }
+
+    /// Compute the delay applied before the next retry (in milliseconds).
+    pub fn delay_for_attempt(&self, attempt: u32) -> u32 {
+        if !self.enabled || self.initial_delay_ms == 0 {
+            return 0;
+        }
+
+        let exp = attempt.saturating_sub(1).min(10); // prevent overflow
+        let mut delay = (self.initial_delay_ms as u64) << exp;
+        let max_allowed = self.max_delay_ms.max(self.initial_delay_ms) as u64;
+        if delay > max_allowed {
+            delay = max_allowed;
+        }
+        delay as u32
+    }
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        #[cfg(target_family = "wasm")]
+        {
+            Self {
+                enabled: true,
+                max_attempts: 3,
+                initial_delay_ms: 0,
+                max_delay_ms: 0,
+            }
+        }
+
+        #[cfg(not(target_family = "wasm"))]
+        {
+            Self {
+                enabled: true,
+                max_attempts: 4,
+                initial_delay_ms: 25,
+                max_delay_ms: 250,
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SnapshotClock {
+    base_ms: Option<i64>,
+}
+
+impl SnapshotClock {
+    fn new(snapshot_timestamp_ms: Option<i64>) -> Self {
+        #[cfg(target_family = "wasm")]
+        {
+            let base = snapshot_timestamp_ms.or_else(|| Some(js_sys::Date::now() as i64));
+            Self { base_ms: base }
+        }
+
+        #[cfg(not(target_family = "wasm"))]
+        {
+            Self {
+                base_ms: snapshot_timestamp_ms,
+            }
+        }
+    }
+
+    fn timestamp_for_attempt(&self, attempt: u32) -> Option<i64> {
+        self.base_ms
+            .map(|base| base + i64::from(attempt.saturating_sub(1)))
+    }
 }
 
 /// Write a RecordBatch to an Iceberg table via catalog
@@ -51,12 +166,14 @@ pub struct WriteBatchRequest<'a> {
 ///    deriving the Iceberg schema from Arrow field_id metadata in the RecordBatch
 /// 2. **Schema evolution**: Not currently supported - schema changes will fail the write
 /// 3. **Atomicity**: Write and catalog commit are atomic via icepick
-/// 4. **Retries**: None - failures return immediately. Callers should retry if needed
+/// 4. **Optimistic retries**: Controlled via `RetryPolicy`. Enabled by default to smooth out
+///    thundering herd commits and can be disabled with `RetryPolicy::disabled()`
 ///
 /// # Resilience
 ///
-/// Write operations have no built-in retry logic. Failures propagate immediately as
-/// `WriterError::WriteFailure`. Typical failure modes:
+/// Write operations include a lightweight optimistic retry loop that only retries retryable
+/// catalog failures (concurrent modifications, transient 5xxs). When disabled, failures propagate
+/// immediately as `WriterError::WriteFailure`. Typical failure modes:
 /// - Network errors (catalog unreachable)
 /// - Schema mismatches (field type changes)
 /// - Storage errors (quota exceeded, permissions)
@@ -71,35 +188,60 @@ pub struct WriteBatchRequest<'a> {
 /// Returns `WriterError::InvalidTableName` if signal/metric type combination is invalid
 /// Returns `WriterError::WriteFailure` if icepick append operation fails or direct write fails
 /// Returns `WriterError::WriteFailure` if catalog is None and storage operator is not initialized
-/// Write a batch to Iceberg catalog
+/// Write a batch to Iceberg catalog with optimistic retries.
 async fn write_with_catalog(
     catalog: &dyn Catalog,
     namespace: &str,
     table_name: &str,
     batch: &RecordBatch,
     snapshot_timestamp_ms: Option<i64>,
+    retry_policy: RetryPolicy,
 ) -> Result<()> {
     let namespace_ident = NamespaceIdent::new(vec![namespace.to_string()]);
+    let table_name_owned = table_name.to_string();
+    let mut attempt: u32 = 1;
+    let max_attempts = retry_policy.effective_max_attempts();
+    let snapshot_clock = SnapshotClock::new(snapshot_timestamp_ms);
 
-    // Create writer with options
-    // Note: Iceberg snapshot timestamp should represent when the write occurs (current time),
-    // not when the data was generated (timestamp_micros). The data timestamps are preserved
-    // in the Parquet file columns.
-    let mut writer = AppendOnlyTableWriter::new(catalog, namespace_ident, table_name.to_string());
+    loop {
+        let mut writer =
+            AppendOnlyTableWriter::new(catalog, namespace_ident.clone(), table_name_owned.clone());
 
-    // If snapshot_timestamp_ms is provided (e.g., from Cloudflare Workers Date.now()),
-    // use it for the catalog commit timestamp. Otherwise, icepick will use system time.
-    if let Some(timestamp_ms) = snapshot_timestamp_ms {
-        let options = TableWriterOptions::new().with_timestamp_ms(timestamp_ms);
-        writer = writer.with_options(options);
+        if let Some(timestamp_ms) = snapshot_clock.timestamp_for_attempt(attempt) {
+            let options = TableWriterOptions::new().with_timestamp_ms(timestamp_ms);
+            writer = writer.with_options(options);
+        }
+
+        match writer.append_batch(batch.clone()).await {
+            Ok(result) => {
+                log_append_result(table_name, &result);
+                return Ok(());
+            }
+            Err(err) => {
+                if !retry_policy.should_retry(attempt, &err) {
+                    return Err(WriterError::WriteFailure(format!(
+                        "table '{}': {} (attempt {}/{})",
+                        table_name, err, attempt, max_attempts
+                    )));
+                }
+
+                let delay_ms = retry_policy.delay_for_attempt(attempt);
+                tracing::warn!(
+                    table = %table_name,
+                    attempt,
+                    max_attempts,
+                    delay_ms,
+                    error = %err,
+                    "Iceberg append conflict detected; retrying"
+                );
+                wait_for_retry(delay_ms).await;
+                attempt += 1;
+            }
+        }
     }
+}
 
-    let result = writer
-        .append_batch(batch.clone())
-        .await
-        .map_err(|e| WriterError::WriteFailure(format!("table '{}': {}", table_name, e)))?;
-
-    // Log different outcomes for observability
+fn log_append_result(table_name: &str, result: &AppendResult) {
     match result {
         AppendResult::TableCreated {
             ref data_file,
@@ -133,8 +275,32 @@ async fn write_with_catalog(
             );
         }
     }
+}
 
-    Ok(())
+#[cfg(not(target_family = "wasm"))]
+async fn wait_for_retry(delay_ms: u32) {
+    if delay_ms == 0 {
+        return;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(delay_ms as u64)).await;
+}
+
+#[cfg(target_family = "wasm")]
+async fn wait_for_retry(delay_ms: u32) {
+    if delay_ms == 0 {
+        return;
+    }
+    gloo_timers::future::TimeoutFuture::new(delay_ms).await;
+}
+
+fn is_retryable_error(err: &CatalogError) -> bool {
+    matches!(
+        err,
+        CatalogError::ConcurrentModification { .. }
+            | CatalogError::Conflict { .. }
+            | CatalogError::ServerError { .. }
+            | CatalogError::NetworkError { .. }
+    )
 }
 
 /// Write a batch as plain Parquet file (no catalog)
@@ -209,6 +375,7 @@ pub async fn write_batch(req: WriteBatchRequest<'_>) -> Result<String> {
                 &table_name,
                 req.batch,
                 req.snapshot_timestamp_ms,
+                req.retry_policy,
             )
             .await?;
         }
@@ -320,6 +487,23 @@ fn write_batch_to_parquet_bytes(batch: &RecordBatch) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_policy_can_be_disabled() {
+        let policy = RetryPolicy::disabled();
+        assert_eq!(policy.effective_max_attempts(), 1);
+        let err = CatalogError::concurrent_modification("conflict");
+        assert!(!policy.should_retry(1, &err));
+        assert_eq!(policy.delay_for_attempt(1), 0);
+    }
+
+    #[test]
+    fn snapshot_clock_increments_monotonically() {
+        let clock = SnapshotClock::new(Some(1_000));
+        assert_eq!(clock.timestamp_for_attempt(1), Some(1_000));
+        assert_eq!(clock.timestamp_for_attempt(2), Some(1_001));
+        assert_eq!(clock.timestamp_for_attempt(3), Some(1_002));
+    }
 
     #[test]
     fn test_timestamp_conversion_from_nanos_to_millis() {

@@ -93,17 +93,21 @@ impl AppError {
 /// Graceful shutdown handler
 async fn shutdown_signal() {
     let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
+        if let Err(e) = signal::ctrl_c().await {
+            tracing::error!("Failed to install Ctrl+C handler: {}", e);
+        }
     };
 
     #[cfg(unix)]
     let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
-            .recv()
-            .await;
+        match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+            }
+            Err(e) => {
+                tracing::error!("Failed to install SIGTERM handler: {}", e);
+            }
+        }
     };
 
     #[cfg(not(unix))]
@@ -136,7 +140,7 @@ pub async fn run() -> Result<()> {
     let addr = config
         .server
         .as_ref()
-        .expect("server config required")
+        .ok_or_else(|| anyhow::anyhow!("server config required"))?
         .listen_addr
         .clone();
 

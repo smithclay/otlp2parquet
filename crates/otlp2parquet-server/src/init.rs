@@ -28,7 +28,7 @@ pub(crate) async fn init_writer(
                 .storage
                 .fs
                 .as_ref()
-                .expect("fs config required for filesystem backend");
+                .ok_or_else(|| anyhow::anyhow!("fs config required for filesystem backend"))?;
             info!("Using filesystem storage at: {}", fs.path);
 
             let fs_builder = opendal::services::Fs::default().root(&fs.path);
@@ -39,7 +39,7 @@ pub(crate) async fn init_writer(
                 .storage
                 .s3
                 .as_ref()
-                .expect("s3 config required for S3 backend");
+                .ok_or_else(|| anyhow::anyhow!("s3 config required for S3 backend"))?;
             info!(
                 "Using S3 storage: bucket={}, region={}",
                 s3.bucket, s3.region
@@ -60,7 +60,7 @@ pub(crate) async fn init_writer(
                 .storage
                 .r2
                 .as_ref()
-                .expect("r2 config required for R2 backend");
+                .ok_or_else(|| anyhow::anyhow!("r2 config required for R2 backend"))?;
             info!(
                 "Using R2 storage: account={}, bucket={}",
                 r2.account_id, r2.bucket
@@ -168,7 +168,10 @@ pub(crate) async fn init_writer(
 pub(crate) fn init_tracing(config: &RuntimeConfig) {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    let server = config.server.as_ref().expect("server config required");
+    let Some(server) = config.server.as_ref() else {
+        eprintln!("ERROR: server config required for tracing initialization");
+        return;
+    };
 
     // Parse log level from config
     let env_filter =

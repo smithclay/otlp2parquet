@@ -13,7 +13,7 @@ pub use catalog::{ensure_namespace, initialize_catalog, CatalogConfig, CatalogTy
 pub use error::{Result, WriterError};
 pub use storage::initialize_storage;
 pub use table_mapping::table_name_for_signal;
-pub use write::{write_batch, WriteBatchRequest};
+pub use write::{write_batch, RetryPolicy, WriteBatchRequest};
 
 // Re-export commonly used types for convenience
 pub use icepick;

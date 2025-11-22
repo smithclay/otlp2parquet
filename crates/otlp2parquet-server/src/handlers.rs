@@ -233,6 +233,7 @@ async fn process_traces(
                 service_name,
                 timestamp_micros: metadata.first_timestamp_nanos,
                 snapshot_timestamp_ms: None,
+                retry_policy: otlp2parquet_writer::RetryPolicy::default(),
             })
             .await
             .map_err(|e| {
@@ -327,6 +328,7 @@ async fn process_metrics(
                     service_name: &service_name,
                     timestamp_micros: timestamp_nanos,
                     snapshot_timestamp_ms: None,
+                    retry_policy: otlp2parquet_writer::RetryPolicy::default(),
                 })
                 .await
                 .map_err(|e| {
@@ -405,6 +407,7 @@ pub(crate) async fn persist_log_batch(
             service_name: &completed.metadata.service_name,
             timestamp_micros: completed.metadata.first_timestamp_nanos,
             snapshot_timestamp_ms: None,
+            retry_policy: otlp2parquet_writer::RetryPolicy::default(),
         })
         .await
         .context("Failed to write logs to storage")?;
@@ -423,7 +426,7 @@ pub(crate) async fn persist_log_batch(
     use parquet::schema::types::Type;
     let parquet_schema = Type::group_type_builder("schema")
         .build()
-        .expect("Failed to build parquet schema");
+        .context("Failed to build parquet schema")?;
     let schema_descriptor = Arc::new(parquet::schema::types::SchemaDescriptor::new(Arc::new(
         parquet_schema,
     )));

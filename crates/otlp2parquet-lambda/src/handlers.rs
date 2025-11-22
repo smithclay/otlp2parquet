@@ -104,6 +104,7 @@ async fn process_logs(
             catalog: state.catalog.as_deref(),
             namespace: &state.namespace,
             snapshot_timestamp_ms: None,
+            retry_policy: otlp2parquet_writer::RetryPolicy::default(),
         },
     )
     .await
@@ -145,6 +146,7 @@ async fn process_metrics(
             catalog: state.catalog.as_deref(),
             namespace: &state.namespace,
             snapshot_timestamp_ms: None,
+            retry_policy: otlp2parquet_writer::RetryPolicy::default(),
         },
     )
     .await
@@ -185,6 +187,7 @@ async fn process_traces(
             catalog: state.catalog.as_deref(),
             namespace: &state.namespace,
             snapshot_timestamp_ms: None,
+            retry_policy: otlp2parquet_writer::RetryPolicy::default(),
         },
     )
     .await

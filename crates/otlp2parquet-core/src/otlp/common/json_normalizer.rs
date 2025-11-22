@@ -303,7 +303,11 @@ pub(crate) fn normalise_json_value(value: &mut JsonValue, key_hint: Option<&str>
                 // We detect exponential histogram data points by the presence of "scale" field
                 if map.contains_key(otlp::SCALE) {
                     map.entry("zero_threshold".to_string()).or_insert_with(|| {
-                        JsonValue::Number(serde_json::Number::from_f64(0.0).unwrap())
+                        // 0.0 is always valid, but use fallback for safety
+                        JsonValue::Number(
+                            serde_json::Number::from_f64(0.0)
+                                .unwrap_or_else(|| serde_json::Number::from(0u32)),
+                        )
                     });
                 }
 
@@ -362,10 +366,18 @@ pub(crate) fn normalise_json_value(value: &mut JsonValue, key_hint: Option<&str>
             // Quantile values: add default quantile field (0.0 for minimum)
             if let Some(otlp::QUANTILE_VALUES) = key_hint {
                 map.entry(otlp::QUANTILE.to_string()).or_insert_with(|| {
-                    JsonValue::Number(serde_json::Number::from_f64(0.0).unwrap())
+                    // 0.0 is always valid, but use fallback for safety
+                    JsonValue::Number(
+                        serde_json::Number::from_f64(0.0)
+                            .unwrap_or_else(|| serde_json::Number::from(0u32)),
+                    )
                 });
                 map.entry("value".to_string()).or_insert_with(|| {
-                    JsonValue::Number(serde_json::Number::from_f64(0.0).unwrap())
+                    // 0.0 is always valid, but use fallback for safety
+                    JsonValue::Number(
+                        serde_json::Number::from_f64(0.0)
+                            .unwrap_or_else(|| serde_json::Number::from(0u32)),
+                    )
                 });
             }
 
