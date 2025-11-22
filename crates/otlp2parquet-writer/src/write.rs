@@ -12,8 +12,32 @@ use crate::table_mapping::table_name_for_signal;
 use arrow::array::RecordBatch;
 use icepick::catalog::Catalog;
 use icepick::spec::NamespaceIdent;
-use icepick::{AppendOnlyTableWriter, AppendResult};
+use icepick::{AppendOnlyTableWriter, AppendResult, TableWriterOptions};
 use otlp2parquet_core::SignalType;
+
+/// Request parameters for writing a batch to storage
+pub struct WriteBatchRequest<'a> {
+    /// Optional catalog instance for Iceberg table operations
+    pub catalog: Option<&'a dyn Catalog>,
+    /// Namespace for tables (e.g., "otlp")
+    pub namespace: &'a str,
+    /// Arrow RecordBatch to write
+    pub batch: &'a RecordBatch,
+    /// Type of OTLP signal (logs, traces, metrics)
+    pub signal_type: SignalType,
+    /// Metric type if signal_type is Metrics (gauge, sum, etc.)
+    pub metric_type: Option<&'a str>,
+    /// Service name for logging (not used for partitioning)
+    pub service_name: &'a str,
+    /// Timestamp in microseconds (from OTLP-to-Arrow nanos_to_micros conversion)
+    pub timestamp_micros: i64,
+    /// Optional Iceberg snapshot timestamp in milliseconds
+    ///
+    /// If provided, used for catalog commit timestamp. Should represent when the write
+    /// occurs (current time), not when the data was generated. Use this on WASM platforms
+    /// (Cloudflare Workers) where system time is unavailable.
+    pub snapshot_timestamp_ms: Option<i64>,
+}
 
 /// Write a RecordBatch to an Iceberg table via catalog
 ///
@@ -40,15 +64,6 @@ use otlp2parquet_core::SignalType;
 ///
 /// Application-level retry logic should handle transient failures based on error type.
 ///
-/// # Arguments
-/// * `catalog` - Optional catalog instance for Iceberg table operations. If None, writes plain Parquet to storage.
-/// * `namespace` - Namespace for tables (e.g., "otlp")
-/// * `batch` - Arrow RecordBatch to write
-/// * `signal_type` - Type of OTLP signal (logs, traces, metrics)
-/// * `metric_type` - Metric type if signal_type is Metrics (gauge, sum, etc.)
-/// * `service_name` - Service name for logging (not used for partitioning)
-/// * `timestamp_nanos` - Timestamp for logging (not used for partitioning)
-///
 /// # Returns
 /// Table path in format "{namespace}/{table_name}" for logging purposes only
 ///
@@ -56,28 +71,20 @@ use otlp2parquet_core::SignalType;
 /// Returns `WriterError::InvalidTableName` if signal/metric type combination is invalid
 /// Returns `WriterError::WriteFailure` if icepick append operation fails or direct write fails
 /// Returns `WriterError::WriteFailure` if catalog is None and storage operator is not initialized
-pub async fn write_batch(
-    catalog: Option<&dyn Catalog>,
-    namespace: &str,
-    batch: &RecordBatch,
-    signal_type: SignalType,
-    metric_type: Option<&str>,
-    service_name: &str,
-    _timestamp_nanos: i64,
-) -> Result<String> {
-    let row_count = batch.num_rows();
+pub async fn write_batch(req: WriteBatchRequest<'_>) -> Result<String> {
+    let row_count = req.batch.num_rows();
 
     // Get table name based on signal type
     // e.g., "otel_logs", "otel_traces", "otel_metrics_gauge"
-    let table_name = table_name_for_signal(signal_type, metric_type)?;
+    let table_name = table_name_for_signal(req.signal_type, req.metric_type)?;
 
     tracing::debug!(
         "Writing {} rows to table '{}' (service: {}, signal: {:?}, catalog: {})",
         row_count,
         table_name,
-        service_name,
-        signal_type,
-        if catalog.is_some() {
+        req.service_name,
+        req.signal_type,
+        if req.catalog.is_some() {
             "enabled"
         } else {
             "disabled"
@@ -85,18 +92,30 @@ pub async fn write_batch(
     );
 
     // If catalog is provided, use Iceberg. Otherwise, write plain Parquet to storage
-    match catalog {
+    match req.catalog {
         Some(cat) => {
             // Create AppendOnlyTableWriter for this table
             // icepick will:
             // 1. Create table if it doesn't exist (deriving Iceberg schema from Arrow field_id)
             // 2. Write Parquet file with statistics
             // 3. Commit to catalog atomically
-            let namespace_ident = NamespaceIdent::new(vec![namespace.to_string()]);
-            let writer = AppendOnlyTableWriter::new(cat, namespace_ident, table_name.clone());
+            let namespace_ident = NamespaceIdent::new(vec![req.namespace.to_string()]);
+
+            // Create writer with options
+            // Note: Iceberg snapshot timestamp should represent when the write occurs (current time),
+            // not when the data was generated (timestamp_micros). The data timestamps are preserved
+            // in the Parquet file columns.
+            let mut writer = AppendOnlyTableWriter::new(cat, namespace_ident, table_name.clone());
+
+            // If snapshot_timestamp_ms is provided (e.g., from Cloudflare Workers Date.now()),
+            // use it for the catalog commit timestamp. Otherwise, icepick will use system time.
+            if let Some(timestamp_ms) = req.snapshot_timestamp_ms {
+                let options = TableWriterOptions::new().with_timestamp_ms(timestamp_ms);
+                writer = writer.with_options(options);
+            }
 
             let result = writer
-                .append_batch(batch.clone())
+                .append_batch(req.batch.clone())
                 .await
                 .map_err(|e| WriterError::WriteFailure(format!("table '{}': {}", table_name, e)))?;
 
@@ -146,13 +165,17 @@ pub async fn write_batch(
 
             // Generate timestamped file path with partitioning
             // Format: {signal}/{service}/year={year}/month={month}/day={day}/hour={hour}/{uuid}.parquet
-            let file_path =
-                generate_parquet_path(signal_type, metric_type, service_name, _timestamp_nanos)?;
+            let file_path = generate_parquet_path(
+                req.signal_type,
+                req.metric_type,
+                req.service_name,
+                req.timestamp_micros,
+            )?;
 
             tracing::debug!("Writing plain Parquet to path: {}", file_path);
 
             // Convert RecordBatch to Parquet bytes
-            let parquet_bytes = write_batch_to_parquet_bytes(batch)?;
+            let parquet_bytes = write_batch_to_parquet_bytes(req.batch)?;
             let bytes_written = parquet_bytes.len();
 
             // Write to storage using OpenDAL operator
@@ -170,7 +193,7 @@ pub async fn write_batch(
     }
 
     // Return table path for logging
-    Ok(format!("{}/{}", namespace, table_name))
+    Ok(format!("{}/{}", req.namespace, table_name))
 }
 
 /// Generate a partitioned file path for plain Parquet files
@@ -260,4 +283,246 @@ fn write_batch_to_parquet_bytes(batch: &RecordBatch) -> Result<Vec<u8>> {
         .map_err(|e| WriterError::WriteFailure(format!("Failed to close Parquet writer: {}", e)))?;
 
     Ok(buffer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_timestamp_conversion_from_nanos_to_millis() {
+        // Test typical OTLP timestamp (nanoseconds since Unix epoch)
+        // Example: 2025-01-15 10:00:00 UTC = 1736938800 seconds
+        let timestamp_nanos = 1736938800000000000i64; // 19 digits (nanoseconds)
+        let timestamp_ms = timestamp_nanos / 1_000_000;
+
+        // Should produce 13-digit milliseconds timestamp
+        assert_eq!(timestamp_ms, 1736938800000);
+        assert_eq!(
+            timestamp_ms.to_string().len(),
+            13,
+            "Millisecond timestamp should have 13 digits"
+        );
+    }
+
+    #[test]
+    fn test_timestamp_from_error_message() {
+        // These are the actual timestamps from the error message:
+        // "Invalid snapshot timestamp 1760741572: before last updated timestamp 1763790139618"
+
+        let invalid_timestamp = 1760741572i64; // 10 digits
+        let last_updated = 1763790139618i64; // 13 digits
+
+        println!(
+            "Invalid timestamp: {} ({} digits)",
+            invalid_timestamp,
+            invalid_timestamp.to_string().len()
+        );
+        println!(
+            "Last updated: {} ({} digits)",
+            last_updated,
+            last_updated.to_string().len()
+        );
+
+        // If this was supposed to be milliseconds, what was the original nanoseconds value?
+        let reconstructed_nanos_from_invalid = invalid_timestamp * 1_000_000;
+        println!(
+            "If {} was the result of nanos/1_000_000, original nanos would be: {}",
+            invalid_timestamp, reconstructed_nanos_from_invalid
+        );
+
+        // Check: 10 digits suggests this might be seconds, not milliseconds
+        // If it was seconds, the original nanoseconds would be:
+        let nanos_if_seconds = invalid_timestamp * 1_000_000_000;
+        println!(
+            "If {} was seconds, nanos would be: {} ({} digits)",
+            invalid_timestamp,
+            nanos_if_seconds,
+            nanos_if_seconds.to_string().len()
+        );
+
+        // The issue: 1760741572 is 10 digits (seconds or short milliseconds)
+        // Expected: 13 digits for milliseconds (like 1763790139618)
+        assert_eq!(invalid_timestamp.to_string().len(), 10);
+        assert_eq!(last_updated.to_string().len(), 13);
+    }
+
+    #[test]
+    fn test_timestamp_scenarios() {
+        // Scenario 1: Correct nanosecond input
+        let correct_nanos = 1763790139618000000i64; // 19 digits
+        let correct_ms = correct_nanos / 1_000_000;
+        assert_eq!(correct_ms, 1763790139618); // 13 digits
+        assert_eq!(correct_ms.to_string().len(), 13);
+
+        // Scenario 2: What if input was already in milliseconds?
+        let already_ms = 1763790139618i64; // 13 digits
+        let double_converted = already_ms / 1_000_000;
+        assert_eq!(double_converted, 1763790); // Oops! Now only 7 digits
+        println!(
+            "If input was already milliseconds ({}), dividing by 1_000_000 gives: {} ({} digits)",
+            already_ms,
+            double_converted,
+            double_converted.to_string().len()
+        );
+
+        // Scenario 3: What if input was in seconds?
+        let seconds = 1763790139i64; // 10 digits
+        let seconds_to_ms_wrong = seconds / 1_000_000;
+        println!(
+            "If input was seconds ({}), dividing by 1_000_000 gives: {} ({} digits)",
+            seconds,
+            seconds_to_ms_wrong,
+            seconds_to_ms_wrong.to_string().len()
+        );
+
+        // Scenario 4: What if input was in microseconds?
+        let micros = 1763790139618000i64; // 16 digits
+        let micros_to_ms = micros / 1_000_000;
+        assert_eq!(micros_to_ms, 1763790139); // 10 digits - matches the error!
+        println!(
+            "If input was microseconds ({}), dividing by 1_000_000 gives: {} ({} digits)",
+            micros,
+            micros_to_ms,
+            micros_to_ms.to_string().len()
+        );
+    }
+
+    #[test]
+    fn test_extract_timestamp_from_arrow_batch() {
+        // This test would verify the actual extraction from RecordBatch
+        // We need to check if extract_first_timestamp returns nanoseconds as expected
+        use arrow::array::{ArrayRef, TimestampNanosecondArray};
+        use arrow::datatypes::{DataType, Field, Schema};
+        use std::sync::Arc;
+
+        // Create a test RecordBatch with timestamp in nanoseconds
+        let timestamp_nanos = 1736938800000000000i64; // 19 digits (nanoseconds)
+        let timestamp_array = TimestampNanosecondArray::from(vec![timestamp_nanos]);
+        let dummy_array = arrow::array::StringArray::from(vec!["test"]);
+
+        let schema = Schema::new(vec![
+            Field::new(
+                "timestamp",
+                DataType::Timestamp(arrow::datatypes::TimeUnit::Nanosecond, None),
+                false,
+            ),
+            Field::new("service", DataType::Utf8, false),
+        ]);
+
+        let batch = RecordBatch::try_new(
+            Arc::new(schema),
+            vec![
+                Arc::new(timestamp_array) as ArrayRef,
+                Arc::new(dummy_array) as ArrayRef,
+            ],
+        )
+        .unwrap();
+
+        // Extract timestamp using the same logic as handlers.rs
+        if let Some(array) = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<TimestampNanosecondArray>()
+        {
+            let value = array.value(0);
+            assert_eq!(value, timestamp_nanos);
+            assert_eq!(
+                value.to_string().len(),
+                19,
+                "Extracted timestamp should be 19 digits (nanoseconds)"
+            );
+
+            // Now test the conversion
+            let timestamp_ms = value / 1_000_000;
+            assert_eq!(timestamp_ms, 1736938800000);
+            assert_eq!(
+                timestamp_ms.to_string().len(),
+                13,
+                "Converted timestamp should be 13 digits (milliseconds)"
+            );
+        } else {
+            panic!("Failed to extract timestamp from batch");
+        }
+    }
+
+    #[test]
+    fn test_real_otlp_timestamp_from_testdata() {
+        // Parse actual OTLP logs from testdata to see what timestamp values we get
+        use otlp2parquet_core::otlp;
+
+        // Read the test data file
+        let test_data =
+            std::fs::read("../../testdata/logs.pb").expect("Failed to read testdata/logs.pb");
+
+        // Parse OTLP request
+        let request =
+            otlp::parse_otlp_request(&test_data, otlp2parquet_core::InputFormat::Protobuf)
+                .expect("Failed to parse OTLP request");
+
+        println!("\n=== Real OTLP Test Data Analysis ===");
+        println!("Resource logs count: {}", request.resource_logs.len());
+
+        // Get first resource logs
+        if let Some(resource_logs) = request.resource_logs.first() {
+            if let Some(scope_logs) = resource_logs.scope_logs.first() {
+                if let Some(log_record) = scope_logs.log_records.first() {
+                    let time_unix_nano = log_record.time_unix_nano;
+
+                    println!("Raw OTLP time_unix_nano: {}", time_unix_nano);
+                    println!("Timestamp digits: {}", time_unix_nano.to_string().len());
+
+                    // Test all three conversion scenarios
+                    println!("\n--- Conversion Analysis ---");
+
+                    // Scenario 1: If this is nanoseconds (expected)
+                    let ms_from_nano = time_unix_nano / 1_000_000;
+                    println!(
+                        "If nanoseconds -> milliseconds (/ 1_000_000): {} ({} digits)",
+                        ms_from_nano,
+                        ms_from_nano.to_string().len()
+                    );
+
+                    // Scenario 2: If this is microseconds (hypothesis)
+                    let ms_from_micro = time_unix_nano / 1_000;
+                    println!(
+                        "If microseconds -> milliseconds (/ 1_000): {} ({} digits)",
+                        ms_from_micro,
+                        ms_from_micro.to_string().len()
+                    );
+
+                    // Scenario 3: If this is already milliseconds
+                    println!(
+                        "If already milliseconds (/ 1): {} ({} digits)",
+                        time_unix_nano,
+                        time_unix_nano.to_string().len()
+                    );
+
+                    // Check if this matches the error pattern
+                    if ms_from_nano.to_string().len() == 10 {
+                        println!("\n⚠️  FOUND THE BUG!");
+                        println!(
+                            "   Current conversion (nanos / 1_000_000) produces 10 digits: {}",
+                            ms_from_nano
+                        );
+                        println!(
+                            "   This suggests the input '{}' is in MICROSECONDS, not nanoseconds",
+                            time_unix_nano
+                        );
+                        println!(
+                            "   Correct conversion should be: {} / 1_000 = {} (13 digits)",
+                            time_unix_nano, ms_from_micro
+                        );
+                    } else if ms_from_nano.to_string().len() == 13 {
+                        println!("\n✓ Conversion is correct");
+                        println!("   Input '{}' is in nanoseconds", time_unix_nano);
+                        println!(
+                            "   Output '{}' is in milliseconds (13 digits)",
+                            ms_from_nano
+                        );
+                    }
+                }
+            }
+        }
+    }
 }

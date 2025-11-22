@@ -16,6 +16,7 @@ pub async fn handle_logs_request(
     content_type: Option<&str>,
     catalog: Option<&Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>>,
     namespace: Option<&str>,
+    catalog_enabled: bool,
     request_id: &str,
 ) -> Result<Response> {
     // Cloudflare Workers: Always use passthrough (no batching)
@@ -72,16 +73,21 @@ pub async fn handle_logs_request(
     let mut uploaded_paths = Vec::new();
     for batch in uploads {
         // Write via write_batch function
+        // Get current time in milliseconds for Iceberg snapshot timestamp
+        let current_time_ms = worker::Date::now().as_millis() as i64;
+
         for record_batch in &batch.batches {
             let path = otlp2parquet_writer::write_batch(
-                catalog.map(|arc| arc.as_ref()),
-                namespace.unwrap_or("default"),
-                record_batch,
-                SignalType::Logs,
-                None,
-                &batch.metadata.service_name,
-                batch.metadata.first_timestamp_nanos,
-
+                otlp2parquet_writer::WriteBatchRequest {
+                    catalog: catalog.map(|arc| arc.as_ref()),
+                    namespace: namespace.unwrap_or("default"),
+                    batch: record_batch,
+                    signal_type: SignalType::Logs,
+                    metric_type: None,
+                    service_name: &batch.metadata.service_name,
+                    timestamp_micros: batch.metadata.first_timestamp_nanos,
+                    snapshot_timestamp_ms: Some(current_time_ms),
+                },
             )
             .await
             .map_err(|e| {
@@ -104,6 +110,7 @@ pub async fn handle_logs_request(
         "records_processed": total_records,
         "flush_count": uploaded_paths.len(),
         "partitions": uploaded_paths,
+        "catalog_enabled": catalog_enabled,
     });
 
     Response::from_json(&response_body)
@@ -116,6 +123,7 @@ pub async fn handle_traces_request(
     content_type: Option<&str>,
     catalog: Option<&Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>>,
     namespace: Option<&str>,
+    catalog_enabled: bool,
     request_id: &str,
 ) -> Result<Response> {
     // Parse OTLP traces request
@@ -169,16 +177,21 @@ pub async fn handle_traces_request(
         spans_processed += metadata.span_count;
 
         // Write via write_batch function
+        // Get current time in milliseconds for Iceberg snapshot timestamp
+        let current_time_ms = worker::Date::now().as_millis() as i64;
+
         for batch in &batches {
             let path = otlp2parquet_writer::write_batch(
-                catalog.map(|arc| arc.as_ref()),
-                namespace.unwrap_or("default"),
-                batch,
-                SignalType::Traces,
-                None,
-                metadata.service_name.as_ref(),
-                metadata.first_timestamp_nanos,
-
+                otlp2parquet_writer::WriteBatchRequest {
+                    catalog: catalog.map(|arc| arc.as_ref()),
+                    namespace: namespace.unwrap_or("default"),
+                    batch,
+                    signal_type: SignalType::Traces,
+                    metric_type: None,
+                    service_name: metadata.service_name.as_ref(),
+                    timestamp_micros: metadata.first_timestamp_nanos,
+                    snapshot_timestamp_ms: Some(current_time_ms),
+                },
             )
             .await
             .map_err(|e| {
@@ -200,6 +213,7 @@ pub async fn handle_traces_request(
         let response = Response::from_json(&json!({
             "status": "ok",
             "message": "No trace spans to process",
+            "catalog_enabled": catalog_enabled,
         }))?;
         return Ok(response);
     }
@@ -208,6 +222,7 @@ pub async fn handle_traces_request(
         "status": "ok",
         "spans_processed": spans_processed,
         "partitions": uploaded_paths,
+        "catalog_enabled": catalog_enabled,
     });
 
     Response::from_json(&response_body)
@@ -220,6 +235,7 @@ pub async fn handle_metrics_request(
     content_type: Option<&str>,
     catalog: Option<&Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>>,
     namespace: Option<&str>,
+    catalog_enabled: bool,
     request_id: &str,
 ) -> Result<Response> {
     // Parse OTLP metrics request
@@ -274,20 +290,25 @@ pub async fn handle_metrics_request(
         aggregated.exponential_histogram_count += subset_metadata.exponential_histogram_count;
         aggregated.summary_count += subset_metadata.summary_count;
 
+        // Get current time in milliseconds for Iceberg snapshot timestamp
+        let current_time_ms = worker::Date::now().as_millis() as i64;
+
         for (metric_type, batch) in batches_by_type {
             let service_name = extract_service_name(&batch);
             let timestamp_nanos = extract_first_timestamp(&batch);
 
             // Write via write_batch function
             let path = otlp2parquet_writer::write_batch(
-                catalog.map(|arc| arc.as_ref()),
-                namespace.unwrap_or("default"),
-                &batch,
-                SignalType::Metrics,
-                Some(&metric_type),
-                &service_name,
-                timestamp_nanos,
-
+                otlp2parquet_writer::WriteBatchRequest {
+                    catalog: catalog.map(|arc| arc.as_ref()),
+                    namespace: namespace.unwrap_or("default"),
+                    batch: &batch,
+                    signal_type: SignalType::Metrics,
+                    metric_type: Some(&metric_type),
+                    service_name: &service_name,
+                    timestamp_micros: timestamp_nanos,
+                    snapshot_timestamp_ms: Some(current_time_ms),
+                },
             )
             .await
             .map_err(|e| {
@@ -309,6 +330,7 @@ pub async fn handle_metrics_request(
         let response = Response::from_json(&json!({
             "status": "ok",
             "message": "No metrics data points to process",
+            "catalog_enabled": catalog_enabled,
         }))?;
         return Ok(response);
     }
@@ -328,6 +350,7 @@ pub async fn handle_metrics_request(
         "exponential_histogram_count": aggregated.exponential_histogram_count,
         "summary_count": aggregated.summary_count,
         "partitions": uploaded_paths,
+        "catalog_enabled": catalog_enabled,
     });
 
     Response::from_json(&response_body)

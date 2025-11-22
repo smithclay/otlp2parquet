@@ -224,15 +224,16 @@ async fn process_traces(
         // Write traces via write_batch function
         let mut partition_path = String::new();
         for batch in &batches {
-            let path = otlp2parquet_writer::write_batch(
-                state.catalog.as_ref().map(|c| c.as_ref()),
-                &state.namespace,
+            let path = otlp2parquet_writer::write_batch(otlp2parquet_writer::WriteBatchRequest {
+                catalog: state.catalog.as_ref().map(|c| c.as_ref()),
+                namespace: &state.namespace,
                 batch,
-                otlp2parquet_core::SignalType::Traces,
-                None, // No metric type for traces
+                signal_type: otlp2parquet_core::SignalType::Traces,
+                metric_type: None,
                 service_name,
-                metadata.first_timestamp_nanos,
-            )
+                timestamp_micros: metadata.first_timestamp_nanos,
+                snapshot_timestamp_ms: None,
+            })
             .await
             .map_err(|e| {
                 AppError::internal(anyhow::anyhow!("Failed to write traces to storage: {}", e))
@@ -316,23 +317,25 @@ async fn process_metrics(
             let service_name = extract_service_name(&batch);
             let timestamp_nanos = extract_first_timestamp(&batch);
 
-            let partition_path = otlp2parquet_writer::write_batch(
-                state.catalog.as_ref().map(|c| c.as_ref()),
-                &state.namespace,
-                &batch,
-                otlp2parquet_core::SignalType::Metrics,
-                Some(&metric_type),
-                &service_name,
-                timestamp_nanos,
-            )
-            .await
-            .map_err(|e| {
-                AppError::internal(anyhow::anyhow!(
-                    "Failed to write {} metrics: {}",
-                    metric_type,
-                    e
-                ))
-            })?;
+            let partition_path =
+                otlp2parquet_writer::write_batch(otlp2parquet_writer::WriteBatchRequest {
+                    catalog: state.catalog.as_ref().map(|c| c.as_ref()),
+                    namespace: &state.namespace,
+                    batch: &batch,
+                    signal_type: otlp2parquet_core::SignalType::Metrics,
+                    metric_type: Some(&metric_type),
+                    service_name: &service_name,
+                    timestamp_micros: timestamp_nanos,
+                    snapshot_timestamp_ms: None,
+                })
+                .await
+                .map_err(|e| {
+                    AppError::internal(anyhow::anyhow!(
+                        "Failed to write {} metrics: {}",
+                        metric_type,
+                        e
+                    ))
+                })?;
 
             counter!("otlp.metrics.flushes", 1, "metric_type" => metric_type.clone());
             info!(
@@ -393,15 +396,16 @@ pub(crate) async fn persist_log_batch(
     let mut uploaded_paths = Vec::new();
 
     for batch in &completed.batches {
-        let path = otlp2parquet_writer::write_batch(
-            state.catalog.as_ref().map(|c| c.as_ref()),
-            &state.namespace,
+        let path = otlp2parquet_writer::write_batch(otlp2parquet_writer::WriteBatchRequest {
+            catalog: state.catalog.as_ref().map(|c| c.as_ref()),
+            namespace: &state.namespace,
             batch,
-            otlp2parquet_core::SignalType::Logs,
-            None, // No metric type for logs
-            &completed.metadata.service_name,
-            completed.metadata.first_timestamp_nanos,
-        )
+            signal_type: otlp2parquet_core::SignalType::Logs,
+            metric_type: None,
+            service_name: &completed.metadata.service_name,
+            timestamp_micros: completed.metadata.first_timestamp_nanos,
+            snapshot_timestamp_ms: None,
+        })
         .await
         .context("Failed to write logs to storage")?;
 

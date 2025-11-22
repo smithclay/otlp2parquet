@@ -1,45 +1,16 @@
 //! Catalog initialization and management
 
 use crate::error::{Result, WriterError};
-use icepick::catalog::{BackoffStrategy, Catalog, CatalogOptions, HttpClientConfig, RetryConfig};
+use icepick::catalog::{Catalog, CatalogOptions};
 use icepick::NamespaceIdent;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+// Only import retry/timeout types on non-WASM platforms where they're used
+#[cfg(not(target_family = "wasm"))]
+use icepick::catalog::{BackoffStrategy, RetryConfig};
+#[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
-
-/// Create default catalog options with retry and timeout configuration
-///
-/// Default configuration:
-/// - **WASM**: No timeout/retry config (time APIs not available)
-/// - **Native**: Timeout 60s requests, 10s connections; 3 retries with exponential backoff
-fn default_catalog_options() -> CatalogOptions {
-    #[cfg(target_family = "wasm")]
-    {
-        // WASM doesn't support std::time APIs, so we can't use timeouts or retries
-        CatalogOptions::new()
-    }
-
-    #[cfg(not(target_family = "wasm"))]
-    {
-        let http_config = HttpClientConfig::new()
-            .with_timeout(Duration::from_secs(60))
-            .with_connect_timeout(Duration::from_secs(10));
-
-        let retry_config = RetryConfig::new(
-            3, // max retries
-            BackoffStrategy::Exponential {
-                initial_delay: Duration::from_millis(100),
-                max_delay: Duration::from_secs(30),
-                multiplier: 2.0,
-            },
-        )
-        .with_max_elapsed_time(Duration::from_secs(120));
-
-        CatalogOptions::new()
-            .with_http_config(http_config)
-            .with_retry_config(retry_config)
-    }
-}
 
 /// Configuration for catalog initialization
 pub struct CatalogConfig {
@@ -75,6 +46,10 @@ pub enum CatalogType {
         bucket_name: String,
         /// Cloudflare API token
         api_token: String,
+        /// R2 access key ID (AWS-compatible)
+        access_key_id: String,
+        /// R2 secret access key (AWS-compatible)
+        secret_access_key: String,
     },
 }
 
@@ -123,16 +98,11 @@ pub async fn initialize_catalog(config: CatalogConfig) -> Result<Arc<dyn Catalog
             {
                 tracing::debug!("Initializing S3 Tables catalog with ARN: {}", bucket_arn);
 
-                let options = default_catalog_options();
-                let catalog = icepick::S3TablesCatalog::from_arn_with_options(
-                    "otlp2parquet",
-                    &bucket_arn,
-                    options,
-                )
-                .await
-                .map_err(|e| {
-                    WriterError::CatalogInit(format!("S3 Tables ARN '{}': {}", bucket_arn, e))
-                })?;
+                let catalog = icepick::S3TablesCatalog::from_arn("otlp2parquet", &bucket_arn)
+                    .await
+                    .map_err(|e| {
+                        WriterError::CatalogInit(format!("S3 Tables ARN '{}': {}", bucket_arn, e))
+                    })?;
 
                 tracing::info!("✓ Connected to S3 Tables catalog: {}", bucket_arn);
                 Ok(Arc::new(catalog))
@@ -196,6 +166,8 @@ pub async fn initialize_catalog(config: CatalogConfig) -> Result<Arc<dyn Catalog
             account_id,
             bucket_name,
             api_token,
+            access_key_id,
+            secret_access_key,
         } => {
             tracing::debug!(
                 "Initializing R2 Data Catalog: account={}, bucket={}",
@@ -203,13 +175,14 @@ pub async fn initialize_catalog(config: CatalogConfig) -> Result<Arc<dyn Catalog
                 bucket_name
             );
 
-            let options = default_catalog_options();
-            let catalog = icepick::R2Catalog::with_options(
+            let catalog = icepick::R2Catalog::with_credentials(
                 "otlp2parquet",
                 &account_id,
                 &bucket_name,
                 &api_token,
-                options,
+                &access_key_id,
+                &secret_access_key,
+                CatalogOptions::default(),
             )
             .await
             .map_err(|e| {

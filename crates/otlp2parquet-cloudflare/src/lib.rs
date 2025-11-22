@@ -188,12 +188,26 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
                     namespace
                 );
 
+                // Note: R2 always uses region="auto" - no need to bridge env vars in WASM
+                // icepick::R2Catalog handles the region internally via OpendDAL configuration
+                // WASM cannot use std::env::set_var anyway (causes panic)
+
+                // Get R2 credentials from config for Parquet file writes
+                let r2_config = config.storage.r2.as_ref().ok_or_else(|| {
+                    console_error!("[{}] R2 storage config missing", request_id);
+                    worker::Error::RustError(
+                        "R2 storage configuration required for catalog mode".to_string(),
+                    )
+                })?;
+
                 let catalog_config = otlp2parquet_writer::CatalogConfig {
                     namespace: namespace.clone(),
                     catalog_type: otlp2parquet_writer::CatalogType::R2DataCatalog {
                         account_id,
                         bucket_name,
                         api_token,
+                        access_key_id: r2_config.access_key_id.clone(),
+                        secret_access_key: r2_config.secret_access_key.clone(),
                     },
                 };
 
@@ -312,6 +326,9 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
         );
     }
 
+    // Determine if catalog is enabled based on config and initialization status
+    let catalog_enabled = config.catalog_mode == otlp2parquet_config::CatalogMode::Iceberg;
+
     // Route to appropriate handler based on signal type
     match signal {
         SignalKind::Logs => {
@@ -321,6 +338,7 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
                 content_type,
                 catalog,
                 namespace.map(|s| s.as_str()),
+                catalog_enabled,
                 &request_id,
             )
             .await
@@ -332,6 +350,7 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
                 content_type,
                 catalog,
                 namespace.map(|s| s.as_str()),
+                catalog_enabled,
                 &request_id,
             )
             .await
@@ -343,6 +362,7 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
                 content_type,
                 catalog,
                 namespace.map(|s| s.as_str()),
+                catalog_enabled,
                 &request_id,
             )
             .await

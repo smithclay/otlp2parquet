@@ -21,13 +21,14 @@ bucket_name = "{{BUCKET_NAME}}"
 # R2 Storage configuration (required)
 OTLP2PARQUET_STORAGE_BACKEND = "r2"
 OTLP2PARQUET_R2_BUCKET = "{{BUCKET_NAME}}"
-OTLP2PARQUET_R2_ACCOUNT_ID = "auto"
+OTLP2PARQUET_R2_ACCOUNT_ID = "{{CLOUDFLARE_ACCOUNT_ID}}"
 
 # AWS standard credential variables (no prefix for AWS compatibility)
+# Note: R2 always uses region="auto" - OpenDAL will use this automatically
+AWS_REGION = "auto"
 AWS_ACCESS_KEY_ID = "{{R2_ACCESS_KEY_ID}}"
 AWS_SECRET_ACCESS_KEY = "{{R2_SECRET_ACCESS_KEY}}"
 AWS_ENDPOINT_URL = "https://{{CLOUDFLARE_ACCOUNT_ID}}.r2.cloudflarestorage.com"
-AWS_REGION = "auto"
 
 # Catalog mode: "iceberg" (default) or "none" (plain Parquet)
 OTLP2PARQUET_CATALOG_MODE = "none"

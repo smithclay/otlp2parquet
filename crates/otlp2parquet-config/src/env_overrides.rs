@@ -113,6 +113,9 @@ pub fn apply_env_overrides<E: EnvSource>(config: &mut RuntimeConfig, env: &E) ->
         ensure_r2(config).endpoint = Some(endpoint);
     }
 
+    // Note: AWS_REGION should be set directly in wrangler.toml [vars] for Cloudflare Workers
+    // WASM cannot use std::env::set_var, so OpenDAL reads it from worker::Env via get_raw_env_string above
+
     // Iceberg configuration
     if config.iceberg.is_none()
         && (has_any(

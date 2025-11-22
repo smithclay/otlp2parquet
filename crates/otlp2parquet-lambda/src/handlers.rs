@@ -124,15 +124,16 @@ async fn process_logs(
     for batch in uploads {
         // Write logs via write_batch function
         for record_batch in &batch.batches {
-            match otlp2parquet_writer::write_batch(
-                state.catalog.as_deref(),
-                &state.namespace,
-                record_batch,
-                otlp2parquet_core::SignalType::Logs,
-                None, // No metric type for logs
-                &batch.metadata.service_name,
-                batch.metadata.first_timestamp_nanos,
-            )
+            match otlp2parquet_writer::write_batch(otlp2parquet_writer::WriteBatchRequest {
+                catalog: state.catalog.as_deref(),
+                namespace: &state.namespace,
+                batch: record_batch,
+                signal_type: otlp2parquet_core::SignalType::Logs,
+                metric_type: None,
+                service_name: &batch.metadata.service_name,
+                timestamp_micros: batch.metadata.first_timestamp_nanos,
+                snapshot_timestamp_ms: None,
+            })
             .await
             {
                 Ok(path) => {
@@ -213,15 +214,16 @@ async fn process_metrics(
             let service_name = extract_service_name(&batch);
             let timestamp_nanos = extract_first_timestamp(&batch);
 
-            match otlp2parquet_writer::write_batch(
-                state.catalog.as_deref(),
-                &state.namespace,
-                &batch,
-                otlp2parquet_core::SignalType::Metrics,
-                Some(&metric_type),
-                &service_name,
-                timestamp_nanos,
-            )
+            match otlp2parquet_writer::write_batch(otlp2parquet_writer::WriteBatchRequest {
+                catalog: state.catalog.as_deref(),
+                namespace: &state.namespace,
+                batch: &batch,
+                signal_type: otlp2parquet_core::SignalType::Metrics,
+                metric_type: Some(&metric_type),
+                service_name: &service_name,
+                timestamp_micros: timestamp_nanos,
+                snapshot_timestamp_ms: None,
+            })
             .await
             {
                 Ok(path) => {
@@ -320,15 +322,16 @@ async fn process_traces(
             let service_name = extract_service_name(record_batch);
             let timestamp_nanos = extract_first_timestamp(record_batch);
 
-            match otlp2parquet_writer::write_batch(
-                state.catalog.as_deref(),
-                &state.namespace,
-                record_batch,
-                otlp2parquet_core::SignalType::Traces,
-                None, // No metric type for traces
-                &service_name,
-                timestamp_nanos,
-            )
+            match otlp2parquet_writer::write_batch(otlp2parquet_writer::WriteBatchRequest {
+                catalog: state.catalog.as_deref(),
+                namespace: &state.namespace,
+                batch: record_batch,
+                signal_type: otlp2parquet_core::SignalType::Traces,
+                metric_type: None,
+                service_name: &service_name,
+                timestamp_micros: timestamp_nanos,
+                snapshot_timestamp_ms: None,
+            })
             .await
             {
                 Ok(path) => {
