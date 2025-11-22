@@ -8,6 +8,7 @@ members = [
     "crates/otlp2parquet-cloudflare",
     "crates/otlp2parquet-lambda",
     "crates/otlp2parquet-server",
+    "crates/otlp2parquet-handlers",
 ]
 resolver = "2"
 
