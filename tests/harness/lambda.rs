@@ -286,6 +286,7 @@ impl SmokeTestHarness for LambdaHarness {
                     credentials: S3Credentials::FromEnvironment,
                 },
             },
+            catalog_token: None, // S3 Tables uses IAM authentication
         }
     }
 

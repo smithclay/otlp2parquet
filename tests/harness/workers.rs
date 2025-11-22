@@ -164,13 +164,14 @@ impl WorkersHarness {
 
         // Add catalog configuration if enabled
         if self.catalog_mode == CatalogMode::Enabled {
-            let catalog_vars = format!(
-                "CLOUDFLARE_BUCKET_NAME = \"{}\"\nCLOUDFLARE_ACCOUNT_ID = \"{}\"\nCLOUDFLARE_API_TOKEN = \"{}\"",
-                self.bucket_name, self.account_id, self.api_token
+            // Set catalog mode to iceberg
+            config_content = config_content.replace(
+                "OTLP2PARQUET_CATALOG_MODE = \"none\"",
+                &format!(
+                    "OTLP2PARQUET_CATALOG_MODE = \"iceberg\"\n\n# R2 Data Catalog credentials\nCLOUDFLARE_BUCKET_NAME = \"{}\"\nCLOUDFLARE_ACCOUNT_ID = \"{}\"\nCLOUDFLARE_API_TOKEN = \"{}\"",
+                    self.bucket_name, self.account_id, self.api_token
+                ),
             );
-            config_content = config_content.replace("# {{CATALOG_VARS}}", &catalog_vars);
-        } else {
-            config_content = config_content.replace("# {{CATALOG_VARS}}", "");
         }
 
         // Write to wrangler directory (gitignored via wrangler-smoke-*.toml pattern)
@@ -329,7 +330,11 @@ impl SmokeTestHarness for WorkersHarness {
         Ok(DeploymentInfo {
             endpoint: endpoint.clone(),
             catalog_endpoint: if self.catalog_mode == CatalogMode::Enabled {
-                format!("r2-catalog://{}", self.bucket_name)
+                // R2 Data Catalog REST endpoint format
+                format!(
+                    "https://catalog.cloudflarestorage.com/{}/{}",
+                    self.account_id, self.bucket_name
+                )
             } else {
                 "r2-plain-parquet".to_string()
             },
@@ -454,7 +459,11 @@ impl SmokeTestHarness for WorkersHarness {
                 CatalogType::PlainParquet
             },
             catalog_endpoint: if self.catalog_mode == CatalogMode::Enabled {
-                format!("r2-catalog://{}", self.bucket_name)
+                // R2 Data Catalog REST endpoint format
+                format!(
+                    "https://catalog.cloudflarestorage.com/{}/{}",
+                    self.account_id, self.bucket_name
+                )
             } else {
                 "r2-plain-parquet".to_string()
             },
@@ -467,6 +476,11 @@ impl SmokeTestHarness for WorkersHarness {
                         secret_access_key: self.r2_secret_access_key.clone(),
                     },
                 },
+            },
+            catalog_token: if self.catalog_mode == CatalogMode::Enabled {
+                Some(self.api_token.clone())
+            } else {
+                None
             },
         }
     }

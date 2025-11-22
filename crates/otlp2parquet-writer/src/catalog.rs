@@ -10,27 +10,35 @@ use std::time::Duration;
 /// Create default catalog options with retry and timeout configuration
 ///
 /// Default configuration:
-/// - Timeout: 60 seconds for requests, 10 seconds for connections
-/// - Retry: 3 attempts with exponential backoff (100ms -> 30s max)
-/// - Max elapsed time: 120 seconds total across all retries
+/// - **WASM**: No timeout/retry config (time APIs not available)
+/// - **Native**: Timeout 60s requests, 10s connections; 3 retries with exponential backoff
 fn default_catalog_options() -> CatalogOptions {
-    let http_config = HttpClientConfig::new()
-        .with_timeout(Duration::from_secs(60))
-        .with_connect_timeout(Duration::from_secs(10));
+    #[cfg(target_family = "wasm")]
+    {
+        // WASM doesn't support std::time APIs, so we can't use timeouts or retries
+        CatalogOptions::new()
+    }
 
-    let retry_config = RetryConfig::new(
-        3, // max retries
-        BackoffStrategy::Exponential {
-            initial_delay: Duration::from_millis(100),
-            max_delay: Duration::from_secs(30),
-            multiplier: 2.0,
-        },
-    )
-    .with_max_elapsed_time(Duration::from_secs(120));
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let http_config = HttpClientConfig::new()
+            .with_timeout(Duration::from_secs(60))
+            .with_connect_timeout(Duration::from_secs(10));
 
-    CatalogOptions::new()
-        .with_http_config(http_config)
-        .with_retry_config(retry_config)
+        let retry_config = RetryConfig::new(
+            3, // max retries
+            BackoffStrategy::Exponential {
+                initial_delay: Duration::from_millis(100),
+                max_delay: Duration::from_secs(30),
+                multiplier: 2.0,
+            },
+        )
+        .with_max_elapsed_time(Duration::from_secs(120));
+
+        CatalogOptions::new()
+            .with_http_config(http_config)
+            .with_retry_config(retry_config)
+    }
 }
 
 /// Configuration for catalog initialization
@@ -143,21 +151,26 @@ pub async fn initialize_catalog(config: CatalogConfig) -> Result<Arc<dyn Catalog
                 warehouse
             );
 
-            // Configure retry with exponential backoff
-            let retry_config = RetryConfig::new(
-                3,
-                BackoffStrategy::Exponential {
-                    initial_delay: Duration::from_millis(100),
-                    max_delay: Duration::from_secs(30),
-                    multiplier: 2.0,
-                },
-            )
-            .with_max_elapsed_time(Duration::from_secs(120));
-
             let mut builder = icepick::RestCatalog::builder("otlp2parquet", &uri)
-                .with_file_io(icepick::FileIO::new(operator))
-                .with_retry_config(retry_config)
-                .with_timeout(Duration::from_secs(60));
+                .with_file_io(icepick::FileIO::new(operator));
+
+            // Configure retry and timeout (not available on WASM)
+            #[cfg(not(target_family = "wasm"))]
+            {
+                let retry_config = RetryConfig::new(
+                    3,
+                    BackoffStrategy::Exponential {
+                        initial_delay: Duration::from_millis(100),
+                        max_delay: Duration::from_secs(30),
+                        multiplier: 2.0,
+                    },
+                )
+                .with_max_elapsed_time(Duration::from_secs(120));
+
+                builder = builder
+                    .with_retry_config(retry_config)
+                    .with_timeout(Duration::from_secs(60));
+            }
 
             if let Some(token) = token {
                 tracing::debug!("Using Bearer token authentication");

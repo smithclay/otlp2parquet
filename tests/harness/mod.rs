@@ -107,6 +107,8 @@ pub struct DuckDBVerifier {
     pub catalog_type: CatalogType,
     pub catalog_endpoint: String,
     pub storage_config: StorageConfig,
+    /// Optional catalog token (e.g., R2 API token for R2 Data Catalog)
+    pub catalog_token: Option<String>,
 }
 
 /// Iceberg catalog types
@@ -311,13 +313,35 @@ impl DuckDBVerifier {
                 ));
             }
             CatalogType::R2Catalog => {
-                script.push_str(&format!(
-                    "ATTACH 'r2://otlp/' AS iceberg_catalog (
+                // R2 Data Catalog requires an Iceberg SECRET with API token
+                if let Some(token) = &self.catalog_token {
+                    script.push_str(&format!(
+                        "CREATE SECRET r2_catalog_secret (
     TYPE ICEBERG,
-    ENDPOINT '{}',
-    AUTHORIZATION_TYPE 'bearer'
+    TOKEN '{}'
 );\n\n",
-                    self.catalog_endpoint
+                        token
+                    ));
+                }
+
+                // Extract account and bucket from catalog endpoint for warehouse name
+                // Endpoint format: https://catalog.cloudflarestorage.com/<account>/<bucket>
+                // Warehouse name format: <account>_<bucket>
+                let parts: Vec<&str> = self.catalog_endpoint.split('/').collect();
+                let warehouse_name = if parts.len() >= 5 {
+                    // parts: ["https:", "", "catalog.cloudflarestorage.com", "<account>", "<bucket>"]
+                    format!("{}_{}", parts[3], parts[4])
+                } else {
+                    // Fallback if format is unexpected
+                    "default".to_string()
+                };
+
+                script.push_str(&format!(
+                    "ATTACH '{}' AS iceberg_catalog (
+    TYPE ICEBERG,
+    ENDPOINT '{}'
+);\n\n",
+                    warehouse_name, self.catalog_endpoint
                 ));
             }
             CatalogType::PlainParquet => {

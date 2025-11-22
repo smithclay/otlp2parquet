@@ -417,6 +417,7 @@ impl SmokeTestHarness for ServerHarness {
                     },
                 },
             },
+            catalog_token: None, // Nessie doesn't require authentication
         }
     }
 
