@@ -30,7 +30,8 @@ struct BatchKey {
 impl BatchKey {
     fn from_metadata<M: BatchMetadata>(metadata: &M) -> Self {
         let bucket = if metadata.first_timestamp_nanos() > 0 {
-            metadata.first_timestamp_nanos() / 60_000_000_000
+            // Metadata timestamps are stored in microseconds; bucket by minute in micros.
+            metadata.first_timestamp_nanos() / 60_000_000
         } else {
             0
         };

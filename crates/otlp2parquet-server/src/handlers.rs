@@ -3,7 +3,7 @@
 // Implements OTLP ingestion and health check endpoints
 
 use anyhow::Context;
-use arrow::array::{Array, RecordBatch, StringArray, TimestampNanosecondArray};
+use arrow::array::{Array, RecordBatch, TimestampNanosecondArray};
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
@@ -221,22 +221,26 @@ async fn process_traces(
 
         let service_name = metadata.service_name.as_ref();
 
-        // Write traces using new writer trait
+        // Write traces via write_batch function
         let mut partition_path = String::new();
         for batch in &batches {
-            let result = state
-                .writer
-                .write_batch(
-                    batch,
-                    otlp2parquet_core::SignalType::Traces,
-                    None, // No metric type for traces
-                    service_name,
-                    metadata.first_timestamp_nanos,
-                )
-                .await
-                .map_err(|e| AppError::internal(e.context("Failed to write traces to storage")))?;
+            let path = otlp2parquet_writer::write_batch(otlp2parquet_writer::WriteBatchRequest {
+                catalog: state.catalog.as_ref().map(|c| c.as_ref()),
+                namespace: &state.namespace,
+                batch,
+                signal_type: otlp2parquet_core::SignalType::Traces,
+                metric_type: None,
+                service_name,
+                timestamp_micros: metadata.first_timestamp_nanos,
+                snapshot_timestamp_ms: None,
+                retry_policy: otlp2parquet_writer::RetryPolicy::default(),
+            })
+            .await
+            .map_err(|e| {
+                AppError::internal(anyhow::anyhow!("Failed to write traces to storage: {}", e))
+            })?;
 
-            partition_path = result.path; // Track last path for logging
+            partition_path = path; // Track last path for logging
         }
 
         counter!("otlp.traces.flushes", 1);
@@ -310,27 +314,33 @@ async fn process_metrics(
         aggregated.exponential_histogram_count += subset_metadata.exponential_histogram_count;
         aggregated.summary_count += subset_metadata.summary_count;
 
-        for (metric_type, batch) in batches_by_type {
-            let service_name = extract_service_name(&batch);
-            let timestamp_nanos = extract_first_timestamp(&batch);
+        let service_name = subset_metadata.service_name().to_string();
 
-            let result = state
-                .writer
-                .write_batch(
-                    &batch,
-                    otlp2parquet_core::SignalType::Metrics,
-                    Some(&metric_type),
-                    &service_name,
-                    timestamp_nanos,
-                )
+        for (metric_type, batch) in batches_by_type {
+            let timestamp_nanos = subset_metadata
+                .first_timestamp_for(&metric_type)
+                .unwrap_or_else(|| extract_first_timestamp(&batch));
+
+            let partition_path =
+                otlp2parquet_writer::write_batch(otlp2parquet_writer::WriteBatchRequest {
+                    catalog: state.catalog.as_ref().map(|c| c.as_ref()),
+                    namespace: &state.namespace,
+                    batch: &batch,
+                    signal_type: otlp2parquet_core::SignalType::Metrics,
+                    metric_type: Some(&metric_type),
+                    service_name: &service_name,
+                    timestamp_micros: timestamp_nanos,
+                    snapshot_timestamp_ms: None,
+                    retry_policy: otlp2parquet_writer::RetryPolicy::default(),
+                })
                 .await
                 .map_err(|e| {
-                    AppError::internal(
-                        e.context(format!("Failed to write {} metrics", metric_type)),
-                    )
+                    AppError::internal(anyhow::anyhow!(
+                        "Failed to write {} metrics: {}",
+                        metric_type,
+                        e
+                    ))
                 })?;
-
-            let partition_path = result.path.clone();
 
             counter!("otlp.metrics.flushes", 1, "metric_type" => metric_type.clone());
             info!(
@@ -391,24 +401,24 @@ pub(crate) async fn persist_log_batch(
     let mut uploaded_paths = Vec::new();
 
     for batch in &completed.batches {
-        let result = state
-            .writer
-            .write_batch(
-                batch,
-                otlp2parquet_core::SignalType::Logs,
-                None, // No metric type for logs
-                &completed.metadata.service_name,
-                completed.metadata.first_timestamp_nanos,
-            )
-            .await
-            .context("Failed to write logs to storage")?;
+        let path = otlp2parquet_writer::write_batch(otlp2parquet_writer::WriteBatchRequest {
+            catalog: state.catalog.as_ref().map(|c| c.as_ref()),
+            namespace: &state.namespace,
+            batch,
+            signal_type: otlp2parquet_core::SignalType::Logs,
+            metric_type: None,
+            service_name: &completed.metadata.service_name,
+            timestamp_micros: completed.metadata.first_timestamp_nanos,
+            snapshot_timestamp_ms: None,
+            retry_policy: otlp2parquet_writer::RetryPolicy::default(),
+        })
+        .await
+        .context("Failed to write logs to storage")?;
 
-        uploaded_paths.push(result.path.clone());
+        uploaded_paths.push(path);
     }
 
-    // Return first write result for backward compatibility
-    // (caller expects single ParquetWriteResult)
-    // NOTE: Most fields are not populated since the new writer doesn't track them
+    // Return minimal ParquetWriteResult for backward compatibility
     let schema = completed
         .batches
         .first()
@@ -419,7 +429,7 @@ pub(crate) async fn persist_log_batch(
     use parquet::schema::types::Type;
     let parquet_schema = Type::group_type_builder("schema")
         .build()
-        .expect("Failed to build parquet schema");
+        .context("Failed to build parquet schema")?;
     let schema_descriptor = Arc::new(parquet::schema::types::SchemaDescriptor::new(Arc::new(
         parquet_schema,
     )));
@@ -449,43 +459,39 @@ pub(crate) async fn persist_log_batch(
     })
 }
 
-fn extract_service_name(batch: &RecordBatch) -> String {
-    let fallback = otlp::common::UNKNOWN_SERVICE_NAME;
-
-    if let Some(array) = batch.column(1).as_any().downcast_ref::<StringArray>() {
-        for idx in 0..array.len() {
-            if array.is_valid(idx) {
-                let value = array.value(idx);
-                if !value.is_empty() {
-                    return value.to_string();
-                }
-            }
-        }
-    }
-
-    fallback.to_string()
-}
-
 fn extract_first_timestamp(batch: &RecordBatch) -> i64 {
+    // Support both nanos and micros; always return microsecond precision.
+    let mut min_micros = i64::MAX;
+
     if let Some(array) = batch
         .column(0)
         .as_any()
         .downcast_ref::<TimestampNanosecondArray>()
     {
-        let mut min_value = i64::MAX;
         for idx in 0..array.len() {
             if array.is_valid(idx) {
-                let value = array.value(idx);
-                if value < min_value {
-                    min_value = value;
-                }
+                min_micros = min_micros.min(array.value(idx) / 1_000);
             }
-        }
-
-        if min_value != i64::MAX {
-            return min_value;
         }
     }
 
-    0
+    if min_micros == i64::MAX {
+        if let Some(array) = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::TimestampMicrosecondArray>()
+        {
+            for idx in 0..array.len() {
+                if array.is_valid(idx) {
+                    min_micros = min_micros.min(array.value(idx));
+                }
+            }
+        }
+    }
+
+    if min_micros == i64::MAX {
+        0
+    } else {
+        min_micros
+    }
 }

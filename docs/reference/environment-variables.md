@@ -47,10 +47,13 @@ These variables are automatically set by the runtime platform and used for auto-
 |----------|-----------|----------|---------|-------------|
 | `OTLP2PARQUET_R2_BUCKET` | Cloudflare | Yes* | - | R2 bucket name |
 | `OTLP2PARQUET_R2_ACCOUNT_ID` | Cloudflare | Yes* | - | Cloudflare account ID |
-| `OTLP2PARQUET_R2_ACCESS_KEY_ID` | Cloudflare | Yes* | - | R2 access key ID |
-| `OTLP2PARQUET_R2_SECRET_ACCESS_KEY` | Cloudflare | Yes* | - | R2 secret access key |
+| `AWS_ACCESS_KEY_ID` | Cloudflare | Yes* | - | R2 S3 API access key (AWS standard, no prefix) |
+| `AWS_SECRET_ACCESS_KEY` | Cloudflare | Yes* | - | R2 S3 API secret key (AWS standard, no prefix) |
+| `AWS_ENDPOINT_URL` | Cloudflare | No | `https://{account_id}.r2.cloudflarestorage.com` | R2 S3-compatible endpoint URL (AWS standard, no prefix) |
 
 *Required when using R2 storage backend
+
+**Note:** AWS credential variables use standard AWS naming without the `OTLP2PARQUET_` prefix for compatibility with AWS tooling and conventions.
 
 ### Filesystem Storage
 
@@ -192,8 +195,9 @@ OTLP2PARQUET_ICEBERG_NAMESPACE=otel
 OTLP2PARQUET_STORAGE_BACKEND=r2
 OTLP2PARQUET_R2_BUCKET=otlp-logs
 OTLP2PARQUET_R2_ACCOUNT_ID=abc123
-OTLP2PARQUET_R2_ACCESS_KEY_ID=***
-OTLP2PARQUET_R2_SECRET_ACCESS_KEY=***
+AWS_ACCESS_KEY_ID=***
+AWS_SECRET_ACCESS_KEY=***
+# AWS_ENDPOINT_URL=https://abc123.r2.cloudflarestorage.com  # Optional
 ```
 
 ### Cloudflare Workers with R2 Data Catalog
@@ -202,8 +206,9 @@ OTLP2PARQUET_R2_SECRET_ACCESS_KEY=***
 OTLP2PARQUET_STORAGE_BACKEND=r2
 OTLP2PARQUET_R2_BUCKET=otlp-data
 OTLP2PARQUET_R2_ACCOUNT_ID=abc123
-OTLP2PARQUET_R2_ACCESS_KEY_ID=***
-OTLP2PARQUET_R2_SECRET_ACCESS_KEY=***
+AWS_ACCESS_KEY_ID=***
+AWS_SECRET_ACCESS_KEY=***
+# AWS_ENDPOINT_URL=https://abc123.r2.cloudflarestorage.com  # Optional
 OTLP2PARQUET_CATALOG_TYPE=r2
 ```
 

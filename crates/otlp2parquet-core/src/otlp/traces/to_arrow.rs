@@ -1,4 +1,5 @@
 use std::convert::{TryFrom, TryInto};
+use std::mem;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -68,14 +69,33 @@ pub struct TraceMetadata {
 /// Converts OTLP trace data to Arrow record batches.
 pub struct TraceArrowConverter;
 
+// Upper bound to avoid unbounded buffer growth for very large trace requests.
+const TRACE_MAX_ROWS_PER_BATCH: usize = 65_536;
+
 impl TraceArrowConverter {
     /// Convert the supplied trace request into an Arrow record batch and metadata.
     pub fn convert(request: &TraceRequest) -> Result<(Vec<RecordBatch>, TraceMetadata)> {
         let span_count = estimate_span_count(request);
         let mut builder = TraceArrowBuilder::with_capacity(span_count.max(1));
-        builder.add_request(request)?;
-        let (batch, metadata) = builder.finish()?;
-        Ok((vec![batch], metadata))
+        let mut batches = Vec::new();
+        let mut agg = TraceAggregation::default();
+
+        builder.add_request_with_flush(request, &mut batches, &mut agg)?;
+        builder.flush_into(&mut batches, &mut agg)?;
+
+        if batches.is_empty() {
+            let (batch, meta) = builder.finish()?;
+            agg.observe(&meta);
+            batches.push(batch);
+        }
+
+        let metadata = TraceMetadata {
+            service_name: agg.service_name,
+            first_timestamp_nanos: agg.first_timestamp.unwrap_or(0),
+            span_count: agg.span_count,
+        };
+
+        Ok((batches, metadata))
     }
 }
 
@@ -91,6 +111,39 @@ fn estimate_span_count(request: &ExportTraceServiceRequest) -> usize {
                 .sum::<usize>()
         })
         .sum()
+}
+
+struct TraceAggregation {
+    service_name: Arc<str>,
+    first_timestamp: Option<i64>,
+    span_count: usize,
+}
+
+impl Default for TraceAggregation {
+    fn default() -> Self {
+        Self {
+            service_name: Arc::from(""),
+            first_timestamp: None,
+            span_count: 0,
+        }
+    }
+}
+
+impl TraceAggregation {
+    fn observe(&mut self, meta: &TraceMetadata) {
+        self.span_count += meta.span_count;
+
+        if let Some(ts) = (meta.first_timestamp_nanos > 0).then_some(meta.first_timestamp_nanos) {
+            self.first_timestamp = Some(match self.first_timestamp {
+                Some(existing) => existing.min(ts),
+                None => ts,
+            });
+        }
+
+        if self.service_name.is_empty() && !meta.service_name.is_empty() {
+            self.service_name = Arc::clone(&meta.service_name);
+        }
+    }
 }
 
 struct TraceArrowBuilder {
@@ -236,14 +289,24 @@ impl TraceArrowBuilder {
         }
     }
 
-    fn add_request(&mut self, request: &ExportTraceServiceRequest) -> Result<()> {
+    fn add_request_with_flush(
+        &mut self,
+        request: &ExportTraceServiceRequest,
+        batches: &mut Vec<RecordBatch>,
+        agg: &mut TraceAggregation,
+    ) -> Result<()> {
         for resource_spans in &request.resource_spans {
-            self.process_resource_spans(resource_spans)?;
+            self.process_resource_spans(resource_spans, batches, agg)?;
         }
         Ok(())
     }
 
-    fn process_resource_spans(&mut self, resource_spans: &ResourceSpans) -> Result<()> {
+    fn process_resource_spans(
+        &mut self,
+        resource_spans: &ResourceSpans,
+        batches: &mut Vec<RecordBatch>,
+        agg: &mut TraceAggregation,
+    ) -> Result<()> {
         let resource_ctx = self.build_resource_context(resource_spans);
 
         for scope_spans in &resource_spans.scope_spans {
@@ -251,6 +314,7 @@ impl TraceArrowBuilder {
 
             for span in &scope_spans.spans {
                 self.append_span(span, &resource_ctx, &scope_ctx)?;
+                self.maybe_flush(batches, agg)?;
             }
         }
 
@@ -462,6 +526,36 @@ impl TraceArrowBuilder {
         self.links_span_id_builder.append(true);
         self.links_trace_state_builder.append(true);
         self.links_attributes_builder.append(true);
+        Ok(())
+    }
+
+    fn maybe_flush(
+        &mut self,
+        batches: &mut Vec<RecordBatch>,
+        agg: &mut TraceAggregation,
+    ) -> Result<()> {
+        if self.span_count >= TRACE_MAX_ROWS_PER_BATCH {
+            self.flush_into(batches, agg)?;
+        }
+        Ok(())
+    }
+
+    fn flush_into(
+        &mut self,
+        batches: &mut Vec<RecordBatch>,
+        agg: &mut TraceAggregation,
+    ) -> Result<()> {
+        if self.span_count == 0 {
+            return Ok(());
+        }
+
+        let current = mem::replace(
+            self,
+            TraceArrowBuilder::with_capacity(TRACE_MAX_ROWS_PER_BATCH),
+        );
+        let (batch, meta) = current.finish()?;
+        agg.observe(&meta);
+        batches.push(batch);
         Ok(())
     }
 

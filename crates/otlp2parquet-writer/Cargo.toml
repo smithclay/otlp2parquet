@@ -4,19 +4,32 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icepick = { git = "https://github.com/smithclay/icepick.git", rev = "388286c31ebd8d9d8707dfb18fe0991541457ebd", default-features = false }
+icepick = { git = "https://github.com/smithclay/icepick.git", rev = "2c3031cf16be4100a871c924987358c8dd20db87", default-features = false }
 otlp2parquet-core = { path = "../otlp2parquet-core" }
-arrow = { version = "56.2", default-features = false }
+otlp2parquet-config = { path = "../otlp2parquet-config" }
+arrow = { workspace = true }
 anyhow = "1"
-chrono = "0.4"
 thiserror = "2"
 tracing = "0.1"
-tokio = { version = "1", features = ["sync"] }
 async-trait = "0.1"
-parquet = { version = "56.2", default-features = false }
-blake3 = "1.5"
+parquet = { workspace = true }
 serde_json = "1"
-opendal = { version = "0.54", default-features = false }
+opendal = { version = "0.54", default-features = false, features = ["services-s3"] }
+once_cell = "1.19"
+time = { version = "0.3", default-features = false, features = ["std"] }
+bytes = { version = "1", default-features = false }
+futures = { version = "0.3", default-features = false, features = ["std"] }
+uuid = { version = "1", default-features = false, features = ["v4", "js"] }
+# Ensure WASM builds have a JS RNG source for UUID v4 generation
+getrandom = { version = "0.2", features = ["js"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+opendal = { version = "0.54", default-features = false, features = ["services-fs", "services-s3"] }
+tokio = { version = "1", features = ["sync", "time"] }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+gloo-timers = { version = "0.3", features = ["futures"] }
+js-sys = "0.3"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

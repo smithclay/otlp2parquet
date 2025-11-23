@@ -99,17 +99,38 @@ Environment:
 
 ### Configuration Options
 
-The Lambda function supports two catalog modes:
+The Lambda function supports three catalog modes:
 
-**Local Development (REST Catalog with Nessie):**
+**Mode 1: Plain Parquet (No Catalog) - Simplest for Local Testing:**
 ```bash
-OTLP2PARQUET_ICEBERG_REST_URI=http://host.docker.internal:19120/iceberg
-OTLP2PARQUET_ICEBERG_NAMESPACE=otlp
-OTLP2PARQUET_S3_ENDPOINT=http://host.docker.internal:9000
+OTLP2PARQUET_CATALOG_MODE=none
+OTLP2PARQUET_STORAGE_S3_BUCKET=otlp-logs
+OTLP2PARQUET_STORAGE_S3_REGION=us-east-1
+OTLP2PARQUET_STORAGE_S3_ENDPOINT=http://host.docker.internal:9000
+AWS_ACCESS_KEY_ID=minioadmin
+AWS_SECRET_ACCESS_KEY=minioadmin
 ```
 
-**Production (AWS S3 Tables):**
+Use the provided `local-env.plain-parquet.json` configuration file for this mode:
 ```bash
+sam local invoke OtlpToParquetFunction \
+  --env-vars crates/otlp2parquet-lambda/local-env.plain-parquet.json \
+  --event event.json
+```
+
+**Mode 2: REST Catalog with Nessie - Full Iceberg Testing:**
+```bash
+OTLP2PARQUET_CATALOG_MODE=iceberg
+OTLP2PARQUET_ICEBERG_REST_URI=http://host.docker.internal:19120/iceberg
+OTLP2PARQUET_ICEBERG_NAMESPACE=otlp
+OTLP2PARQUET_STORAGE_S3_ENDPOINT=http://host.docker.internal:9000
+```
+
+Use the provided `local-env.json` configuration file for this mode (default).
+
+**Mode 3: AWS S3 Tables - Production Configuration:**
+```bash
+OTLP2PARQUET_CATALOG_MODE=iceberg
 OTLP2PARQUET_ICEBERG_BUCKET_ARN=arn:aws:s3tables:us-west-2:123456789012:bucket/my-bucket
 # No S3_ENDPOINT needed - uses native AWS S3
 ```

@@ -8,11 +8,12 @@ members = [
     "crates/otlp2parquet-cloudflare",
     "crates/otlp2parquet-lambda",
     "crates/otlp2parquet-server",
+    "crates/otlp2parquet-handlers",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["otlp2parquet Contributors"]
 license = "Apache-2.0"
@@ -46,7 +47,7 @@ opt-level = 3
 [workspace.dependencies]
 # Arrow/Parquet - MINIMAL features only
 arrow = { version = "56.2", default-features = false, features = ["ipc"] }
-parquet = { version = "56.2", default-features = false, features = ["snap"] }
+parquet = { version = "56.2", default-features = false, features = ["snap", "arrow", "async"] }
 
 # OTLP Protocol - minimal
 prost = { version = "0.13", default-features = false, features = ["std"] }
@@ -95,6 +96,10 @@ anyhow = { workspace = true }
 
 # Memory profiling (optional, enable with --features dhat-heap)
 dhat = { version = "0.3", optional = true }
+# Smoke test dependencies (optional, enabled by features)
+aws-sdk-cloudformation = { version = "1.55", default-features = false, features = ["rustls", "rt-tokio"], optional = true }
+aws-sdk-cloudwatchlogs = { version = "1.55", default-features = false, features = ["rustls", "rt-tokio"], optional = true }
+aws-sdk-s3tables = { version = "1.44", default-features = false, features = ["rustls", "rt-tokio"], optional = true }
 
 [dev-dependencies]
 # Benchmarking infrastructure
@@ -105,17 +110,28 @@ serde_json = { workspace = true }
 prost = { workspace = true }
 # Integration tests
 opendal = { version = "0.54", default-features = false, features = ["services-memory"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "process", "io-util", "fs"] }
 # Docker e2e tests
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 aws-config = { version = "1.5", default-features = false, features = ["rustls", "behavior-version-latest", "rt-tokio"] }
 aws-sdk-s3 = { version = "1.55", default-features = false, features = ["rustls", "rt-tokio"] }
 aws-credential-types = "1.2"
+# Smoke test dependencies
+async-trait = "0.1"
+uuid = { version = "1", features = ["v4"] }
+serde = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+chrono = { workspace = true }
+paste = "1.0"
 
 [features]
 default = []
 dhat-heap = ["dep:dhat"]
 docker-tests = []
+smoke-server = []
+smoke-lambda = ["dep:aws-sdk-cloudformation", "dep:aws-sdk-cloudwatchlogs", "dep:aws-sdk-s3tables"]
+smoke-workers = []
 
 [[bin]]
 name = "otlp2parquet"

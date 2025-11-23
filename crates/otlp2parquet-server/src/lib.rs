@@ -38,7 +38,8 @@ use init::{init_tracing, init_writer};
 /// Application state shared across all requests
 #[derive(Clone)]
 pub(crate) struct AppState {
-    pub writer: Arc<dyn otlp2parquet_writer::OtlpWriter>,
+    pub catalog: Option<Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>>,
+    pub namespace: String,
     pub batcher: Option<Arc<BatchManager>>,
     pub passthrough: PassthroughBatcher,
     pub max_payload_bytes: usize,
@@ -92,17 +93,21 @@ impl AppError {
 /// Graceful shutdown handler
 async fn shutdown_signal() {
     let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
+        if let Err(e) = signal::ctrl_c().await {
+            tracing::error!("Failed to install Ctrl+C handler: {}", e);
+        }
     };
 
     #[cfg(unix)]
     let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
-            .recv()
-            .await;
+        match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+            }
+            Err(e) => {
+                tracing::error!("Failed to install SIGTERM handler: {}", e);
+            }
+        }
     };
 
     #[cfg(not(unix))]
@@ -135,12 +140,12 @@ pub async fn run() -> Result<()> {
     let addr = config
         .server
         .as_ref()
-        .expect("server config required")
+        .ok_or_else(|| anyhow::anyhow!("server config required"))?
         .listen_addr
         .clone();
 
-    // Initialize writer (handles both storage and optional Iceberg catalog)
-    let writer = init_writer(&config).await?;
+    // Initialize catalog and namespace
+    let (catalog, namespace) = init_writer(&config).await?;
 
     // Configure batching
     let batch_config = BatchConfig {
@@ -167,7 +172,8 @@ pub async fn run() -> Result<()> {
 
     // Create app state
     let state = AppState {
-        writer: Arc::new(writer),
+        catalog,
+        namespace,
         batcher,
         passthrough: PassthroughBatcher::default(),
         max_payload_bytes,

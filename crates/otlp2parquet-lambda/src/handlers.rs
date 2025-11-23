@@ -3,15 +3,28 @@
 // Handles the core logic of processing OTLP requests and generating responses
 
 use anyhow::Result;
-use arrow::array::{Array, RecordBatch, StringArray, TimestampNanosecondArray};
 use base64::Engine;
-use otlp2parquet_core::otlp;
+use otlp2parquet_handlers::{
+    process_logs as process_logs_handler, process_metrics as process_metrics_handler,
+    process_traces as process_traces_handler, OtlpError, ProcessorConfig,
+};
 use serde_json::json;
 use std::borrow::Cow;
 
 use crate::{HttpResponseData, LambdaState};
 
 const HEALTHY_TEXT: &str = "Healthy";
+
+/// Convert OtlpError to HttpResponseData
+fn convert_to_http_response(err: OtlpError) -> HttpResponseData {
+    let status_code = err.status_code();
+    let response_body = json!({
+        "error": err.error_type(),
+        "message": err.message(),
+        "hint": err.hint(),
+    });
+    HttpResponseData::json(status_code, response_body.to_string())
+}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum SignalKind {
@@ -84,81 +97,40 @@ async fn process_logs(
     content_type: Option<&str>,
     state: &LambdaState,
 ) -> HttpResponseData {
-    let request = match otlp::parse_otlp_request(body, format) {
-        Ok(req) => req,
-        Err(err) => {
-            tracing::error!(
-                "Failed to parse OTLP logs (format: {:?}, content-type: {:?}): {}",
-                format,
-                content_type,
-                err
-            );
-            return HttpResponseData::json(
-                400,
-                json!({ "error": "invalid OTLP payload" }).to_string(),
-            );
-        }
-    };
-
-    let per_service_requests = otlp::logs::split_request_by_service(request);
-    let mut uploads = Vec::new();
-    let mut total_records = 0usize;
-
-    for subset in per_service_requests {
-        match state.passthrough.ingest(&subset) {
-            Ok(batch) => {
-                total_records += batch.metadata.record_count;
-                uploads.push(batch);
-            }
-            Err(err) => {
-                tracing::error!("Failed to convert OTLP to Arrow: {}", err);
-                return HttpResponseData::json(
-                    500,
-                    json!({ "error": "internal encoding failure" }).to_string(),
-                );
-            }
-        }
-    }
-
-    let mut uploaded_paths = Vec::new();
-    for batch in uploads {
-        // Write logs via new OtlpWriter trait
-        for record_batch in &batch.batches {
-            match state
-                .writer
-                .write_batch(
-                    record_batch,
-                    otlp2parquet_core::SignalType::Logs,
-                    None, // No metric type for logs
-                    &batch.metadata.service_name,
-                    batch.metadata.first_timestamp_nanos,
-                )
-                .await
-            {
-                Ok(result) => {
-                    uploaded_paths.push(result.path);
-                }
-                Err(err) => {
-                    tracing::error!("Failed to write logs: {}", err);
-                    return HttpResponseData::json(
-                        500,
-                        json!({ "error": "internal storage failure" }).to_string(),
-                    );
-                }
-            }
-        }
-    }
-
-    HttpResponseData::json(
-        200,
-        json!({
-            "status": "ok",
-            "records_processed": total_records,
-            "flush_count": uploaded_paths.len(),
-            "partitions": uploaded_paths,
-        })
-        .to_string(),
+    let result = process_logs_handler(
+        body,
+        format,
+        ProcessorConfig {
+            catalog: state.catalog.as_deref(),
+            namespace: &state.namespace,
+            snapshot_timestamp_ms: None,
+            retry_policy: otlp2parquet_writer::RetryPolicy::default(),
+        },
     )
+    .await
+    .map_err(|e| {
+        tracing::error!(
+            "Failed to process logs (format: {:?}, content-type: {:?}): {:?}",
+            format,
+            content_type,
+            e.message()
+        );
+        convert_to_http_response(e)
+    });
+
+    match result {
+        Ok(processing_result) => HttpResponseData::json(
+            200,
+            json!({
+                "status": "ok",
+                "records_processed": processing_result.records_processed,
+                "flush_count": processing_result.batches_flushed,
+                "partitions": processing_result.paths_written,
+            })
+            .to_string(),
+        ),
+        Err(response) => response,
+    }
 }
 
 async fn process_metrics(
@@ -167,108 +139,39 @@ async fn process_metrics(
     content_type: Option<&str>,
     state: &LambdaState,
 ) -> HttpResponseData {
-    // Parse OTLP metrics request
-    let request = match otlp::metrics::parse_otlp_request(body, format) {
-        Ok(req) => req,
-        Err(err) => {
-            tracing::error!(
-                "Failed to parse OTLP metrics (format: {:?}, content-type: {:?}): {}",
-                format,
-                content_type,
-                err
-            );
-            return HttpResponseData::json(
-                400,
-                json!({ "error": "invalid OTLP metrics payload" }).to_string(),
-            );
-        }
-    };
+    let result = process_metrics_handler(
+        body,
+        format,
+        ProcessorConfig {
+            catalog: state.catalog.as_deref(),
+            namespace: &state.namespace,
+            snapshot_timestamp_ms: None,
+            retry_policy: otlp2parquet_writer::RetryPolicy::default(),
+        },
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!(
+            "Failed to process metrics (format: {:?}, content-type: {:?}): {:?}",
+            format,
+            content_type,
+            e.message()
+        );
+        convert_to_http_response(e)
+    });
 
-    let per_service_requests = otlp::metrics::split_request_by_service(request);
-    let converter = otlp::metrics::ArrowConverter::new();
-    let mut aggregated = otlp::metrics::MetricsMetadata::default();
-    let mut uploaded_paths = Vec::new();
-
-    for subset in per_service_requests {
-        let (batches_by_type, subset_metadata) = match converter.convert(subset) {
-            Ok(result) => result,
-            Err(err) => {
-                tracing::error!("Failed to convert OTLP metrics to Arrow: {}", err);
-                return HttpResponseData::json(
-                    500,
-                    json!({ "error": "internal encoding failure" }).to_string(),
-                );
-            }
-        };
-
-        aggregated.resource_metrics_count += subset_metadata.resource_metrics_count;
-        aggregated.scope_metrics_count += subset_metadata.scope_metrics_count;
-        aggregated.gauge_count += subset_metadata.gauge_count;
-        aggregated.sum_count += subset_metadata.sum_count;
-        aggregated.histogram_count += subset_metadata.histogram_count;
-        aggregated.exponential_histogram_count += subset_metadata.exponential_histogram_count;
-        aggregated.summary_count += subset_metadata.summary_count;
-
-        for (metric_type, batch) in batches_by_type {
-            let service_name = extract_service_name(&batch);
-            let timestamp_nanos = extract_first_timestamp(&batch);
-
-            match state
-                .writer
-                .write_batch(
-                    &batch,
-                    otlp2parquet_core::SignalType::Metrics,
-                    Some(&metric_type),
-                    &service_name,
-                    timestamp_nanos,
-                )
-                .await
-            {
-                Ok(result) => {
-                    uploaded_paths.push(result.path);
-                }
-                Err(err) => {
-                    tracing::error!("Failed to write {} metrics: {}", metric_type, err);
-                    return HttpResponseData::json(
-                        500,
-                        json!({ "error": "internal storage failure" }).to_string(),
-                    );
-                }
-            }
-        }
-    }
-
-    if uploaded_paths.is_empty() {
-        return HttpResponseData::json(
+    match result {
+        Ok(processing_result) => HttpResponseData::json(
             200,
             json!({
                 "status": "ok",
-                "message": "No metrics data points to process",
+                "data_points_processed": processing_result.records_processed,
+                "partitions": processing_result.paths_written,
             })
             .to_string(),
-        );
+        ),
+        Err(response) => response,
     }
-
-    let total_data_points = aggregated.gauge_count
-        + aggregated.sum_count
-        + aggregated.histogram_count
-        + aggregated.exponential_histogram_count
-        + aggregated.summary_count;
-
-    HttpResponseData::json(
-        200,
-        json!({
-            "status": "ok",
-            "data_points_processed": total_data_points,
-            "gauge_count": aggregated.gauge_count,
-            "sum_count": aggregated.sum_count,
-            "histogram_count": aggregated.histogram_count,
-            "exponential_histogram_count": aggregated.exponential_histogram_count,
-            "summary_count": aggregated.summary_count,
-            "partitions": uploaded_paths,
-        })
-        .to_string(),
-    )
 }
 
 async fn process_traces(
@@ -277,125 +180,40 @@ async fn process_traces(
     content_type: Option<&str>,
     state: &LambdaState,
 ) -> HttpResponseData {
-    let request = match otlp::traces::parse_otlp_trace_request(body, format) {
-        Ok(req) => req,
-        Err(err) => {
-            tracing::error!(
-                "Failed to parse OTLP traces (format: {:?}, content-type: {:?}): {}",
-                format,
-                content_type,
-                err
-            );
-            return HttpResponseData::json(
-                400,
-                json!({ "error": "invalid OTLP traces payload" }).to_string(),
-            );
-        }
-    };
-
-    let per_service_requests = otlp::traces::split_request_by_service(request);
-    let mut uploads = Vec::new();
-    let mut total_spans = 0usize;
-
-    for subset in per_service_requests {
-        match otlp::traces::TraceArrowConverter::convert(&subset) {
-            Ok((batches, metadata)) => {
-                total_spans += metadata.span_count;
-                uploads.push((batches, metadata));
-            }
-            Err(err) => {
-                tracing::error!("Failed to convert OTLP traces to Arrow: {}", err);
-                return HttpResponseData::json(
-                    500,
-                    json!({ "error": "internal encoding failure" }).to_string(),
-                );
-            }
-        }
-    }
-
-    let mut uploaded_paths = Vec::new();
-    for (batches, _metadata) in uploads {
-        // Write traces via Writer (handles both Iceberg and PlainS3 modes)
-        for record_batch in &batches {
-            let service_name = extract_service_name(record_batch);
-            let timestamp_nanos = extract_first_timestamp(record_batch);
-
-            match state
-                .writer
-                .write_batch(
-                    record_batch,
-                    otlp2parquet_core::SignalType::Traces,
-                    None, // No metric type for traces
-                    &service_name,
-                    timestamp_nanos,
-                )
-                .await
-            {
-                Ok(result) => {
-                    uploaded_paths.push(result.path);
-                }
-                Err(err) => {
-                    tracing::error!("Failed to write traces: {}", err);
-                    return HttpResponseData::json(
-                        500,
-                        json!({ "error": "internal storage failure" }).to_string(),
-                    );
-                }
-            }
-        }
-    }
-
-    HttpResponseData::json(
-        200,
-        json!({
-            "status": "ok",
-            "spans_processed": total_spans,
-            "flush_count": uploaded_paths.len(),
-            "partitions": uploaded_paths,
-        })
-        .to_string(),
+    let result = process_traces_handler(
+        body,
+        format,
+        ProcessorConfig {
+            catalog: state.catalog.as_deref(),
+            namespace: &state.namespace,
+            snapshot_timestamp_ms: None,
+            retry_policy: otlp2parquet_writer::RetryPolicy::default(),
+        },
     )
-}
+    .await
+    .map_err(|e| {
+        tracing::error!(
+            "Failed to process traces (format: {:?}, content-type: {:?}): {:?}",
+            format,
+            content_type,
+            e.message()
+        );
+        convert_to_http_response(e)
+    });
 
-fn extract_service_name(batch: &RecordBatch) -> String {
-    let fallback = otlp::common::UNKNOWN_SERVICE_NAME;
-
-    if let Some(array) = batch.column(1).as_any().downcast_ref::<StringArray>() {
-        for idx in 0..array.len() {
-            if array.is_valid(idx) {
-                let value = array.value(idx);
-                if !value.is_empty() {
-                    return value.to_string();
-                }
-            }
-        }
+    match result {
+        Ok(processing_result) => HttpResponseData::json(
+            200,
+            json!({
+                "status": "ok",
+                "spans_processed": processing_result.records_processed,
+                "flush_count": processing_result.batches_flushed,
+                "partitions": processing_result.paths_written,
+            })
+            .to_string(),
+        ),
+        Err(response) => response,
     }
-
-    fallback.to_string()
-}
-
-fn extract_first_timestamp(batch: &RecordBatch) -> i64 {
-    if let Some(array) = batch
-        .column(0)
-        .as_any()
-        .downcast_ref::<TimestampNanosecondArray>()
-    {
-        let mut min_value = i64::MAX;
-        for idx in 0..array.len() {
-            if array.is_valid(idx) {
-                let value = array.value(idx);
-                if value < min_value {
-                    min_value = value;
-                }
-            }
-        }
-
-        if min_value != i64::MAX {
-            return min_value;
-        }
-    }
-
-    0
 }
 
 /// Handle GET requests - health checks

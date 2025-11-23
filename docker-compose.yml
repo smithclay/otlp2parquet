@@ -47,9 +47,8 @@ services:
     depends_on:
       minio:
         condition: service_healthy
-    container_name: iceberg-rest
     ports:
-      - 8181:8181
+      - "${REST_CATALOG_PORT:-8181}:8181"
     environment:
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin
@@ -94,8 +93,12 @@ services:
       # Batching (disable for tests to get immediate writes)
       OTLP2PARQUET_BATCHING_ENABLED: ${BATCHING_ENABLED:-false}
 
-      # Iceberg catalog (optional - enables Rest integration)
-      OTLP2PARQUET_ICEBERG_ENABLED: ${ICEBERG_ENABLED:-true}
+      # Catalog mode: "iceberg" (default) or "none" (plain Parquet)
+      # - "iceberg": Use Iceberg catalog for ACID transactions and schema evolution
+      # - "none": Write plain Parquet files directly to storage (simpler, no catalog required)
+      OTLP2PARQUET_CATALOG_MODE: ${CATALOG_MODE:-iceberg}
+
+      # Iceberg catalog configuration (only used when CATALOG_MODE=iceberg)
       OTLP2PARQUET_ICEBERG_REST_URI: ${ICEBERG_REST_URI:-http://rest:8181/}
       OTLP2PARQUET_ICEBERG_WAREHOUSE: ${ICEBERG_WAREHOUSE:-s3://otlp/}
       OTLP2PARQUET_ICEBERG_NAMESPACE: ${ICEBERG_NAMESPACE:-otel}
@@ -160,13 +163,20 @@ networks:
   iceberg_net:
 # Usage:
 #
-# Local (MinIO):
+# Local (MinIO + Iceberg catalog):
 #   docker-compose up
 #   OTLP endpoint: http://localhost:4318/v1/logs (OpenTelemetry HTTP)
 #   MinIO console: http://localhost:9001 (minioadmin/minioadmin)
 #
-# AWS S3:
+# Local (MinIO + plain Parquet, no catalog):
+#   CATALOG_MODE=none docker-compose up
+#   Writes plain Parquet files directly to MinIO without Iceberg catalog
+#
+# AWS S3 (with Iceberg):
 #   STORAGE_BACKEND=s3 S3_REGION=us-east-1 AWS_ACCESS_KEY_ID=xxx AWS_SECRET_ACCESS_KEY=xxx docker-compose up
+#
+# AWS S3 (plain Parquet, no catalog):
+#   CATALOG_MODE=none STORAGE_BACKEND=s3 S3_REGION=us-east-1 AWS_ACCESS_KEY_ID=xxx AWS_SECRET_ACCESS_KEY=xxx docker-compose up
 #
 # Cloudflare R2:
 #   STORAGE_BACKEND=s3 S3_ENDPOINT=https://ACCOUNT_ID.r2.cloudflarestorage.com AWS_ACCESS_KEY_ID=xxx AWS_SECRET_ACCESS_KEY=xxx docker-compose up

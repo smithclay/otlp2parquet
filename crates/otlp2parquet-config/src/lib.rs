@@ -32,6 +32,9 @@ pub struct RuntimeConfig {
 
     pub storage: StorageConfig,
 
+    #[serde(default)]
+    pub catalog_mode: CatalogMode,
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server: Option<ServerConfig>,
 
@@ -125,6 +128,39 @@ impl std::fmt::Display for StorageBackend {
     }
 }
 
+/// Catalog mode for Iceberg integration
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+#[derive(Default)]
+pub enum CatalogMode {
+    /// Use Iceberg catalog (R2 Data Catalog, S3 Tables, Nessie, etc.)
+    #[default]
+    Iceberg,
+    /// Write plain Parquet files without catalog integration
+    None,
+}
+
+impl std::fmt::Display for CatalogMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CatalogMode::Iceberg => write!(f, "iceberg"),
+            CatalogMode::None => write!(f, "none"),
+        }
+    }
+}
+
+impl std::str::FromStr for CatalogMode {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s.to_lowercase().as_str() {
+            "iceberg" => Ok(CatalogMode::Iceberg),
+            "none" => Ok(CatalogMode::None),
+            _ => anyhow::bail!("Unsupported catalog mode: {}. Supported: iceberg, none", s),
+        }
+    }
+}
+
 fn default_parquet_row_group_size() -> usize {
     32 * 1024
 }
@@ -169,6 +205,7 @@ pub struct R2Config {
     pub account_id: String,
     pub access_key_id: String,
     pub secret_access_key: String,
+    pub endpoint: Option<String>,
 }
 
 /// Server-specific configuration
@@ -424,6 +461,7 @@ impl RuntimeConfig {
         self.batch = other.batch;
         self.request = other.request;
         self.storage = other.storage;
+        self.catalog_mode = other.catalog_mode;
 
         if other.server.is_some() {
             self.server = other.server;
@@ -517,6 +555,7 @@ fn platform_defaults(platform: Platform) -> RuntimeConfig {
                 account_id: String::new(),
                 access_key_id: String::new(),
                 secret_access_key: String::new(),
+                endpoint: None,
             }),
         },
     };
@@ -532,6 +571,7 @@ fn platform_defaults(platform: Platform) -> RuntimeConfig {
             max_payload_bytes: defaults.max_payload_bytes,
         },
         storage,
+        catalog_mode: CatalogMode::default(),
         server: if platform == Platform::Server {
             Some(ServerConfig::default())
         } else {

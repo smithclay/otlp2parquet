@@ -1,24 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
 Description: 'otlp2parquet Lambda with S3 Tables (Apache Iceberg)'
 
 Parameters:
-  LambdaCodeBucket:
-    Type: String
-    Description: S3 bucket containing the Lambda deployment package
-
-  LambdaCodeKey:
-    Type: String
-    Description: S3 key for the Lambda zip file
-    Default: lambda/otlp2parquet-lambda.zip
-
-  LambdaArchitecture:
-    Type: String
-    Description: Lambda architecture (arm64 recommended for better price/performance)
-    Default: arm64
-    AllowedValues:
-      - arm64
-      - x86_64
-
   S3TablesBucketName:
     Type: String
     Description: Name for the S3 Tables bucket (must be globally unique)
@@ -28,6 +12,11 @@ Parameters:
     Type: String
     Description: Optional - Use an existing S3 Tables bucket ARN instead of creating a new one (format arn:aws:s3tables:region:account:bucket/name)
     Default: ''
+
+  IcebergNamespace:
+    Type: String
+    Description: Iceberg namespace for tables (e.g., otel_smoke)
+    Default: 'otel_smoke'
 
 Resources:
   # S3 Tables Bucket - Managed Iceberg tables with built-in catalog (only created if not using existing)
@@ -46,7 +35,7 @@ Resources:
     Condition: CreateNewBucket
     Properties:
       TableBucketARN: !GetAtt S3TablesBucket.TableBucketARN
-      Namespace: 'otlp'
+      Namespace: !Ref IcebergNamespace
 
   # Lambda execution role with S3 Tables permissions
   LambdaExecutionRole:
@@ -86,33 +75,32 @@ Resources:
 
   # Lambda function running otlp2parquet Rust binary
   OtlpIngestFunction:
-    Type: AWS::Lambda::Function
+    Type: AWS::Serverless::Function
     DependsOn: LambdaLogGroup
     Properties:
       FunctionName: !Sub '${AWS::StackName}-ingest'
       Runtime: provided.al2023
       Handler: bootstrap
-      Code:
-        S3Bucket: !Ref LambdaCodeBucket
-        S3Key: !Ref LambdaCodeKey
+      CodeUri: ../../target/lambda/bootstrap-arm64.zip
       Role: !GetAtt LambdaExecutionRole.Arn
       Architectures:
-        - !Ref LambdaArchitecture
+        - arm64
       MemorySize: 512
       Timeout: 60
       Environment:
         Variables:
           # S3 Tables Iceberg integration (ARN contains all needed config: region, bucket, etc.)
           OTLP2PARQUET_ICEBERG_BUCKET_ARN: !If [CreateNewBucket, !GetAtt S3TablesBucket.TableBucketARN, !Ref ExistingS3TablesBucketArn]
+          OTLP2PARQUET_ICEBERG_NAMESPACE: !Ref IcebergNamespace
 
           # Logging
-          RUST_LOG: 'debug'
+          RUST_LOG: 'info'
 
   # Lambda Function URL for HTTP ingestion
   OtlpFunctionUrl:
     Type: AWS::Lambda::Url
     Properties:
-      AuthType: AWS_IAM  # Requires AWS SigV4 signed requests
+      AuthType: NONE  # Public endpoint for smoke tests (not for production!)
       TargetFunctionArn: !GetAtt OtlpIngestFunction.Arn
 
   # Lambda permission for Function URL invocations

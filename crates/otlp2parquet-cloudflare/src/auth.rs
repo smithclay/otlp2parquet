@@ -4,6 +4,8 @@
 
 use worker::{console_error, Env, Request, Response};
 
+use crate::errors;
+
 /// Parse and validate Basic Auth header
 ///
 /// Returns Ok((username, password)) if valid, Err otherwise
@@ -49,7 +51,13 @@ pub fn validate_credentials(
 /// Check basic authentication if enabled via environment variables
 ///
 /// Returns Ok(()) if auth passes or is disabled, Err(Response) with 401 if auth fails
-pub fn check_basic_auth(req: &Request, env: &Env) -> std::result::Result<(), Response> {
+pub fn check_basic_auth(
+    req: &Request,
+    env: &Env,
+    request_id: Option<&str>,
+) -> std::result::Result<(), Response> {
+    let request_id = request_id.map(|s| s.to_string());
+
     // Check if basic auth is enabled
     let auth_enabled = env
         .var("OTLP2PARQUET_BASIC_AUTH_ENABLED")
@@ -73,22 +81,52 @@ pub fn check_basic_auth(req: &Request, env: &Env) -> std::result::Result<(), Res
         .ok()
         .map(|v| v.to_string());
 
-    // If auth is enabled but credentials not configured, deny access
+    // If auth is enabled but credentials not configured, return config error
     let (Some(expected_user), Some(expected_pass)) = (expected_username, expected_password) else {
-        console_error!("Basic auth enabled but credentials not configured");
-        return Err(Response::error("Unauthorized", 401).unwrap());
+        if let Some(ref rid) = request_id {
+            console_error!(
+                "[{}] Basic auth enabled but credentials not configured",
+                rid
+            );
+        } else {
+            console_error!("Basic auth enabled but credentials not configured");
+        }
+
+        let error = errors::OtlpErrorKind::ConfigError(errors::ConfigValidationError::MissingRequired {
+            component: "Authentication",
+            missing_vars: vec!["OTLP2PARQUET_BASIC_AUTH_USERNAME", "OTLP2PARQUET_BASIC_AUTH_PASSWORD"],
+            hint: "OTLP2PARQUET_BASIC_AUTH_ENABLED is 'true' but username and password are not set. Either disable auth (set to 'false') or provide both username and password.".to_string(),
+        });
+        let status_code = error.status_code();
+        let error_response = errors::ErrorResponse::from_error(error, request_id);
+        // into_response only fails if JSON serialization fails, which is extremely rare
+        // In that case, return a simple text error response
+        return Err(error_response
+            .into_response(status_code)
+            .unwrap_or_else(|_| {
+                Response::error("Authentication configuration error", status_code).unwrap()
+            }));
     };
 
     // Get Authorization header
     let auth_header = match req.headers().get("Authorization").ok().flatten() {
         Some(h) => h,
         None => {
-            return Err(Response::error("Unauthorized", 401).unwrap().with_headers(
-                worker::Headers::from_iter([(
-                    "WWW-Authenticate",
-                    "Basic realm=\"OTLP Ingestion\"",
-                )]),
-            ));
+            let error = errors::OtlpErrorKind::Unauthorized(
+                "Authentication required. Provide Basic authentication credentials.".to_string(),
+            );
+            let status_code = error.status_code();
+            let error_response = errors::ErrorResponse::from_error(error, request_id);
+            let mut response = error_response
+                .into_response(status_code)
+                .unwrap_or_else(|_| {
+                    Response::error("Authentication required", status_code).unwrap()
+                });
+            response = response.with_headers(worker::Headers::from_iter([(
+                "WWW-Authenticate",
+                "Basic realm=\"OTLP Ingestion\"",
+            )]));
+            return Err(response);
         }
     };
 
@@ -96,16 +134,42 @@ pub fn check_basic_auth(req: &Request, env: &Env) -> std::result::Result<(), Res
     let (username, password) = match parse_basic_auth_header(&auth_header) {
         Ok(creds) => creds,
         Err(e) => {
-            console_error!("Failed to parse auth header: {}", e);
-            return Err(Response::error("Unauthorized", 401).unwrap());
+            if let Some(ref rid) = request_id {
+                console_error!("[{}] Failed to parse auth header: {}", rid, e);
+            } else {
+                console_error!("Failed to parse auth header: {}", e);
+            }
+
+            let error = errors::OtlpErrorKind::Unauthorized(format!(
+                "Invalid authentication format: {}. Expected 'Basic <base64>' header.",
+                e
+            ));
+            let status_code = error.status_code();
+            let error_response = errors::ErrorResponse::from_error(error, request_id);
+            return Err(error_response
+                .into_response(status_code)
+                .unwrap_or_else(|_| {
+                    Response::error("Invalid authentication format", status_code).unwrap()
+                }));
         }
     };
 
     if validate_credentials(&username, &password, &expected_user, &expected_pass) {
         Ok(())
     } else {
-        console_error!("Invalid credentials provided");
-        Err(Response::error("Unauthorized", 401).unwrap())
+        if let Some(ref rid) = request_id {
+            console_error!("[{}] Invalid credentials provided", rid);
+        } else {
+            console_error!("Invalid credentials provided");
+        }
+
+        let error =
+            errors::OtlpErrorKind::Unauthorized("Invalid username or password.".to_string());
+        let status_code = error.status_code();
+        let error_response = errors::ErrorResponse::from_error(error, request_id);
+        Err(error_response
+            .into_response(status_code)
+            .unwrap_or_else(|_| Response::error("Invalid credentials", status_code).unwrap()))
     }
 }
 

@@ -86,7 +86,14 @@ fn validate_storage_config(config: &StorageConfig) -> Result<()> {
                 .ok_or_else(|| anyhow::anyhow!("fs storage backend requires 'fs' configuration"))?;
 
             if fs.path.is_empty() {
-                bail!("storage.fs.path must not be empty");
+                bail!(
+                    "Filesystem path is required\n\n\
+                    How to fix:\n\
+                      • Environment: export {}FS_PATH=/data/otlp\n\
+                      • TOML: [storage.fs]\n              path = \"/data/otlp\"\n\n\
+                    See: https://smithclay.github.io/otlp2parquet/concepts/configuration.html#storage",
+                    ENV_PREFIX
+                );
             }
         }
         StorageBackend::S3 => {
@@ -96,11 +103,25 @@ fn validate_storage_config(config: &StorageConfig) -> Result<()> {
                 .ok_or_else(|| anyhow::anyhow!("s3 storage backend requires 's3' configuration"))?;
 
             if s3.bucket.is_empty() {
-                bail!("storage.s3.bucket is required for S3 backend");
+                bail!(
+                    "S3 bucket name is required\n\n\
+                    How to fix:\n\
+                      • Environment: export {}S3_BUCKET=my-bucket\n\
+                      • TOML: [storage.s3]\n              bucket = \"my-bucket\"\n\n\
+                    See: https://smithclay.github.io/otlp2parquet/concepts/configuration.html#storage",
+                    ENV_PREFIX
+                );
             }
 
             if s3.region.is_empty() {
-                bail!("storage.s3.region is required for S3 backend");
+                bail!(
+                    "S3 region is required\n\n\
+                    How to fix:\n\
+                      • Environment: export {}S3_REGION=us-west-2\n\
+                      • TOML: [storage.s3]\n              region = \"us-west-2\"\n\n\
+                    See: https://smithclay.github.io/otlp2parquet/concepts/configuration.html#storage",
+                    ENV_PREFIX
+                );
             }
         }
         StorageBackend::R2 => {
@@ -110,19 +131,50 @@ fn validate_storage_config(config: &StorageConfig) -> Result<()> {
                 .ok_or_else(|| anyhow::anyhow!("r2 storage backend requires 'r2' configuration"))?;
 
             if r2.bucket.is_empty() {
-                bail!("storage.r2.bucket is required for R2 backend");
+                bail!(
+                    "R2 bucket name is required\n\n\
+                    How to fix:\n\
+                      • Environment: export {}R2_BUCKET=my-bucket\n\
+                      • TOML: [storage.r2]\n              bucket = \"my-bucket\"\n\n\
+                    See: https://smithclay.github.io/otlp2parquet/setup/cloudflare.html",
+                    ENV_PREFIX
+                );
             }
 
             if r2.account_id.is_empty() {
-                bail!("storage.r2.account_id is required for R2 backend");
+                bail!(
+                    "R2 account ID is required\n\n\
+                    How to fix:\n\
+                      • Environment: export {}R2_ACCOUNT_ID=<your-account-id>\n\
+                      • TOML: [storage.r2]\n              account_id = \"<your-account-id>\"\n\
+                      • Find your account ID: Cloudflare Dashboard → R2\n\n\
+                    See: https://smithclay.github.io/otlp2parquet/setup/cloudflare.html",
+                    ENV_PREFIX
+                );
             }
 
             if r2.access_key_id.is_empty() {
-                bail!("storage.r2.access_key_id is required for R2 backend");
+                bail!(
+                    "R2 access key ID is required\n\n\
+                    How to fix:\n\
+                      • Environment: export {}R2_ACCESS_KEY_ID=<your-key>\n\
+                      • TOML: [storage.r2]\n              access_key_id = \"<your-key>\"\n\
+                      • Create API token: Cloudflare Dashboard → R2 → Manage R2 API Tokens\n\n\
+                    See: https://smithclay.github.io/otlp2parquet/setup/cloudflare.html",
+                    ENV_PREFIX
+                );
             }
 
             if r2.secret_access_key.is_empty() {
-                bail!("storage.r2.secret_access_key is required for R2 backend");
+                bail!(
+                    "R2 secret access key is required\n\n\
+                    How to fix:\n\
+                      • Environment: export {}R2_SECRET_ACCESS_KEY=<your-secret>\n\
+                      • TOML: [storage.r2]\n              secret_access_key = \"<your-secret>\"\n\
+                      • Create API token: Cloudflare Dashboard → R2 → Manage R2 API Tokens\n\n\
+                    See: https://smithclay.github.io/otlp2parquet/setup/cloudflare.html",
+                    ENV_PREFIX
+                );
             }
         }
     }
