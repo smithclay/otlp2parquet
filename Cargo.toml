@@ -47,7 +47,7 @@ opt-level = 3
 [workspace.dependencies]
 # Arrow/Parquet - MINIMAL features only
 arrow = { version = "56.2", default-features = false, features = ["ipc"] }
-parquet = { version = "56.2", default-features = false, features = ["snap"] }
+parquet = { version = "56.2", default-features = false, features = ["snap", "arrow", "async"] }
 
 # OTLP Protocol - minimal
 prost = { version = "0.13", default-features = false, features = ["std"] }

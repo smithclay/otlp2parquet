@@ -100,8 +100,8 @@ AWS S3 Tables provides a fully-managed Iceberg catalog service with simplified A
 
 **Plain Parquet Alternative:**
 - `OTLP2PARQUET_CATALOG_MODE=none` - No catalog, writes plain Parquet to S3
-- `OTLP2PARQUET_STORAGE_S3_BUCKET` - S3 bucket for Parquet files
-- `OTLP2PARQUET_STORAGE_S3_REGION` - S3 region
+- `OTLP2PARQUET_S3_BUCKET` - S3 bucket for Parquet files
+- `OTLP2PARQUET_S3_REGION` - S3 region
 - Simpler deployment, lower cost, no ACID/schema evolution
 
 **IAM Permissions Required:**

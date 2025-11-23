@@ -8,7 +8,7 @@
 //! - Server + Iceberg (Nessie REST catalog)
 //! - Server + Plain Parquet
 //! - Lambda + S3 Tables
-//! - Lambda + Plain Parquet (TODO)
+//! - Lambda + Plain Parquet
 //! - Workers + R2 Data Catalog
 //! - Workers + Plain Parquet
 //!
@@ -95,15 +95,15 @@ macro_rules! smoke_test {
                 #[tokio::test]
                 async fn with_catalog() -> Result<()> {
                     init_tracing();
-                    let harness = harness::lambda::LambdaHarness::from_env().await?;
+                    let harness = harness::lambda::LambdaHarness::with_catalog_mode(harness::CatalogMode::Enabled).await?;
                     $test_fn(&harness).await
                 }
 
                 #[tokio::test]
-                #[ignore = "Plain Parquet mode not yet implemented for Lambda"]
                 async fn without_catalog() -> Result<()> {
-                    // TODO: Implement plain Parquet mode for Lambda
-                    Ok(())
+                    init_tracing();
+                    let harness = harness::lambda::LambdaHarness::with_catalog_mode(harness::CatalogMode::None).await?;
+                    $test_fn(&harness).await
                 }
             }
 

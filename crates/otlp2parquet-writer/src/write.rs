@@ -10,11 +10,51 @@
 use crate::error::{Result, WriterError};
 use crate::table_mapping::table_name_for_signal;
 use arrow::array::RecordBatch;
+use bytes::Bytes;
+use futures::future::BoxFuture;
 use icepick::catalog::Catalog;
 use icepick::error::Error as CatalogError;
 use icepick::spec::NamespaceIdent;
 use icepick::{AppendOnlyTableWriter, AppendResult, TableWriterOptions};
 use otlp2parquet_core::SignalType;
+use parquet::arrow::{async_writer::AsyncFileWriter, AsyncArrowWriter};
+use parquet::errors::{ParquetError, Result as ParquetResult};
+use parquet::file::properties::WriterProperties;
+use std::borrow::Cow;
+use std::sync::atomic::{AtomicU64, Ordering};
+use time::OffsetDateTime;
+
+static FILE_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+struct OpendalAsyncWriter(opendal::Writer);
+
+impl OpendalAsyncWriter {
+    fn new(inner: opendal::Writer) -> Self {
+        Self(inner)
+    }
+}
+
+impl AsyncFileWriter for OpendalAsyncWriter {
+    fn write(&mut self, bs: Bytes) -> BoxFuture<'_, ParquetResult<()>> {
+        Box::pin(async move {
+            self.0
+                .write(bs)
+                .await
+                .map_err(|e| ParquetError::External(Box::new(e)))?;
+            Ok(())
+        })
+    }
+
+    fn complete(&mut self) -> BoxFuture<'_, ParquetResult<()>> {
+        Box::pin(async move {
+            self.0
+                .close()
+                .await
+                .map_err(|e| ParquetError::External(Box::new(e)))?;
+            Ok(())
+        })
+    }
+}
 
 /// Request parameters for writing a batch to storage
 pub struct WriteBatchRequest<'a> {
@@ -326,14 +366,32 @@ async fn write_plain_parquet(
 
     tracing::debug!("Writing plain Parquet to path: {}", file_path);
 
-    // Convert RecordBatch to Parquet bytes
-    let parquet_bytes = write_batch_to_parquet_bytes(batch)?;
-    let bytes_written = parquet_bytes.len();
+    // Initialize streaming writer
+    let op_writer = op.writer(&file_path).await.map_err(|e| {
+        WriterError::WriteFailure(format!("Failed to open writer for '{}': {}", file_path, e))
+    })?;
+    let async_writer = OpendalAsyncWriter::new(op_writer);
 
-    // Write to storage using OpenDAL operator
-    op.write(&file_path, parquet_bytes)
+    let props = WriterProperties::builder()
+        .set_compression(parquet::basic::Compression::SNAPPY)
+        .build();
+
+    let mut parquet_writer = AsyncArrowWriter::try_new(async_writer, batch.schema(), Some(props))
+        .map_err(|e| {
+        WriterError::WriteFailure(format!("Failed to create Parquet writer: {}", e))
+    })?;
+
+    parquet_writer
+        .write(batch)
         .await
-        .map_err(|e| WriterError::WriteFailure(format!("Failed to write to storage: {}", e)))?;
+        .map_err(|e| WriterError::WriteFailure(format!("Failed to write RecordBatch: {}", e)))?;
+
+    parquet_writer
+        .finish()
+        .await
+        .map_err(|e| WriterError::WriteFailure(format!("Failed to close Parquet writer: {}", e)))?;
+
+    let bytes_written = parquet_writer.bytes_written();
 
     let row_count = batch.num_rows();
     tracing::info!(
@@ -397,91 +455,73 @@ pub async fn write_batch(req: WriteBatchRequest<'_>) -> Result<String> {
 
 /// Generate a partitioned file path for plain Parquet files
 ///
-/// Format: {signal_type}/{service}/year={year}/month={month}/day={day}/hour={hour}/{timestamp}-{random}.parquet
-/// Example: logs/my-service/year=2025/month=01/day=15/hour=10/1736938800000000000-a1b2c3d4.parquet
+/// Format: {signal_type}/{service}/year={year}/month={month}/day={day}/hour={hour}/{timestamp}-{counter}.parquet
+/// Example: logs/my-service/year=2025/month=01/day=15/hour=10/1736938800000000-00000001.parquet
 fn generate_parquet_path(
     signal_type: SignalType,
     metric_type: Option<&str>,
     service_name: &str,
-    timestamp_nanos: i64,
+    timestamp_micros: i64,
 ) -> Result<String> {
-    use chrono::{DateTime, Datelike, Timelike, Utc};
+    let (year, month, day, hour) = partition_from_timestamp(timestamp_micros);
 
-    // Convert nanoseconds to DateTime
-    let dt = DateTime::from_timestamp(
-        timestamp_nanos / 1_000_000_000,
-        (timestamp_nanos % 1_000_000_000) as u32,
-    )
-    .unwrap_or_else(Utc::now);
-
-    // Build signal prefix (e.g., "logs", "traces", "metrics/gauge")
-    let signal_prefix = match signal_type {
-        SignalType::Logs => "logs".to_string(),
-        SignalType::Traces => "traces".to_string(),
+    let signal_prefix: Cow<'_, str> = match signal_type {
+        SignalType::Logs => Cow::Borrowed("logs"),
+        SignalType::Traces => Cow::Borrowed("traces"),
         SignalType::Metrics => {
             if let Some(mtype) = metric_type {
-                format!("metrics/{}", mtype)
+                Cow::Owned(format!("metrics/{}", mtype))
             } else {
-                "metrics".to_string()
+                Cow::Borrowed("metrics")
             }
         }
     };
 
-    // Sanitize service name (replace invalid path characters)
-    let safe_service = service_name.replace(['/', '\\', ' '], "_");
+    let safe_service = sanitize_service_name(service_name);
+    let suffix = next_suffix();
 
-    // Generate random suffix for uniqueness
-    let random_suffix = blake3::hash(format!("{}{}", timestamp_nanos, service_name).as_bytes())
-        .to_hex()
-        .chars()
-        .take(8)
-        .collect::<String>();
-
-    // Build partitioned path
-    let path = format!(
-        "{}/{}/year={}/month={:02}/day={:02}/hour={:02}/{}-{}.parquet",
-        signal_prefix,
-        safe_service,
-        dt.year(),
-        dt.month(),
-        dt.day(),
-        dt.hour(),
-        timestamp_nanos,
-        random_suffix
-    );
-
-    Ok(path)
+    Ok(format!(
+        "{}/{}/year={}/month={:02}/day={:02}/hour={:02}/{}-{:08x}.parquet",
+        signal_prefix, safe_service, year, month, day, hour, timestamp_micros, suffix
+    ))
 }
 
-/// Convert a RecordBatch to Parquet bytes
-fn write_batch_to_parquet_bytes(batch: &RecordBatch) -> Result<Vec<u8>> {
-    use parquet::arrow::ArrowWriter;
-    use parquet::file::properties::WriterProperties;
+fn next_suffix() -> u32 {
+    FILE_COUNTER.fetch_add(1, Ordering::Relaxed) as u32
+}
 
-    // Create in-memory buffer
-    let mut buffer = Vec::new();
+fn sanitize_service_name(service_name: &str) -> Cow<'_, str> {
+    const INVALID: [char; 3] = ['/', '\\', ' '];
 
-    // Create Parquet writer with compression
-    let props = WriterProperties::builder()
-        .set_compression(parquet::basic::Compression::SNAPPY)
-        .build();
+    if service_name.is_empty() {
+        return Cow::Borrowed("unknown-service");
+    }
 
-    let mut writer =
-        ArrowWriter::try_new(&mut buffer, batch.schema(), Some(props)).map_err(|e| {
-            WriterError::WriteFailure(format!("Failed to create Parquet writer: {}", e))
-        })?;
+    if service_name.chars().any(|c| INVALID.contains(&c)) {
+        let sanitized = service_name
+            .chars()
+            .map(|c| if INVALID.contains(&c) { '_' } else { c })
+            .collect::<String>();
+        Cow::Owned(sanitized)
+    } else {
+        Cow::Borrowed(service_name)
+    }
+}
 
-    // Write the batch
-    writer
-        .write(batch)
-        .map_err(|e| WriterError::WriteFailure(format!("Failed to write RecordBatch: {}", e)))?;
+fn partition_from_timestamp(timestamp_micros: i64) -> (i32, u8, u8, u8) {
+    if timestamp_micros <= 0 {
+        let now = OffsetDateTime::now_utc();
+        return (now.year(), u8::from(now.month()), now.day(), now.hour());
+    }
 
-    // Close writer to flush data
-    writer
-        .close()
-        .map_err(|e| WriterError::WriteFailure(format!("Failed to close Parquet writer: {}", e)))?;
-
-    Ok(buffer)
+    let nanos = i128::from(timestamp_micros).saturating_mul(1_000);
+    match OffsetDateTime::from_unix_timestamp_nanos(nanos) {
+        Ok(dt) => (dt.year(), u8::from(dt.month()), dt.day(), dt.hour()),
+        Err(_) => {
+            let now = OffsetDateTime::now_utc();
+            (now.year(), u8::from(now.month()), now.day(), now.hour())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -740,5 +780,15 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn path_generation_sanitizes_service() {
+        let path =
+            generate_parquet_path(SignalType::Logs, None, "svc /name", 1_736_938_800_000_000)
+                .unwrap();
+        assert!(path.starts_with("logs/svc__name/year="));
+        assert!(path.contains("/month="));
+        assert!(path.ends_with(".parquet"));
     }
 }

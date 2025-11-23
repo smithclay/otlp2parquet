@@ -3,9 +3,9 @@
     "RUST_LOG": "debug,otlp2parquet_lambda=trace,otlp2parquet_writer=trace",
     "RUST_BACKTRACE": "full",
     "OTLP2PARQUET_CATALOG_MODE": "none",
-    "OTLP2PARQUET_STORAGE_S3_BUCKET": "otlp-logs",
-    "OTLP2PARQUET_STORAGE_S3_REGION": "us-east-1",
-    "OTLP2PARQUET_STORAGE_S3_ENDPOINT": "http://host.docker.internal:9000",
+    "OTLP2PARQUET_S3_BUCKET": "otlp-logs",
+    "OTLP2PARQUET_S3_REGION": "us-east-1",
+    "OTLP2PARQUET_S3_ENDPOINT": "http://host.docker.internal:9000",
     "AWS_ACCESS_KEY_ID": "minioadmin",
     "AWS_SECRET_ACCESS_KEY": "minioadmin",
     "OTLP2PARQUET_BATCHING_ENABLED": "false"

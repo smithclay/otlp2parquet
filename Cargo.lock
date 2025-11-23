@@ -2756,8 +2756,8 @@ dependencies = [
  "anyhow",
  "arrow",
  "async-trait",
- "blake3",
- "chrono",
+ "bytes",
+ "futures",
  "gloo-timers",
  "icepick",
  "js-sys",
@@ -2768,6 +2768,7 @@ dependencies = [
  "parquet",
  "serde_json",
  "thiserror 2.0.17",
+ "time",
  "tokio",
  "tracing",
 ]
@@ -2818,6 +2819,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "chrono",
+ "futures",
  "half",
  "hashbrown 0.16.1",
  "num",
@@ -2826,6 +2828,7 @@ dependencies = [
  "seq-macro",
  "snap",
  "thrift",
+ "tokio",
  "twox-hash",
 ]
 

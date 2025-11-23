@@ -193,50 +193,13 @@ pub async fn process_metrics(
             + metadata.exponential_histogram_count
             + metadata.summary_count;
 
+        let service_name = metadata.service_name().to_string();
+
         // Write each metric type
         for (metric_type, batch) in batches_by_type {
-            // Extract service name and timestamp from batch
-            use arrow::array::{Array, StringArray, TimestampNanosecondArray};
-
-            let service_name =
-                if let Some(array) = batch.column(1).as_any().downcast_ref::<StringArray>() {
-                    let mut name = otlp::common::UNKNOWN_SERVICE_NAME.to_string();
-                    for idx in 0..array.len() {
-                        if array.is_valid(idx) {
-                            let value = array.value(idx);
-                            if !value.is_empty() {
-                                name = value.to_string();
-                                break;
-                            }
-                        }
-                    }
-                    name
-                } else {
-                    otlp::common::UNKNOWN_SERVICE_NAME.to_string()
-                };
-
-            let timestamp_nanos = if let Some(array) = batch
-                .column(0)
-                .as_any()
-                .downcast_ref::<TimestampNanosecondArray>()
-            {
-                let mut min_value = i64::MAX;
-                for idx in 0..array.len() {
-                    if array.is_valid(idx) {
-                        let value = array.value(idx);
-                        if value < min_value {
-                            min_value = value;
-                        }
-                    }
-                }
-                if min_value != i64::MAX {
-                    min_value
-                } else {
-                    0
-                }
-            } else {
-                0
-            };
+            let timestamp_micros = metadata
+                .first_timestamp_for(&metric_type)
+                .unwrap_or_default();
 
             let path = otlp2parquet_writer::write_batch(WriteBatchRequest {
                 catalog: config.catalog,
@@ -245,7 +208,7 @@ pub async fn process_metrics(
                 signal_type: SignalType::Metrics,
                 metric_type: Some(&metric_type),
                 service_name: &service_name,
-                timestamp_micros: timestamp_nanos,
+                timestamp_micros,
                 snapshot_timestamp_ms: config.snapshot_timestamp_ms,
                 retry_policy: config.retry_policy,
             })

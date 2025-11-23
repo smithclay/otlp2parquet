@@ -86,11 +86,10 @@ pub fn initialize_storage(config: &RuntimeConfig) -> crate::Result<()> {
         }
     };
 
-    OPERATOR.set(operator).map_err(|_| {
-        crate::WriterError::WriteFailure("Failed to set global operator".to_string())
-    })?;
-
-    Ok(())
+    match OPERATOR.set(operator) {
+        Ok(_) => Ok(()),
+        Err(_) => Ok(()), // another thread initialized first
+    }
 }
 
 /// Get the global storage operator

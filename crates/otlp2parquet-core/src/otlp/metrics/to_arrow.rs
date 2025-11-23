@@ -19,9 +19,12 @@ use otlp2parquet_proto::opentelemetry::proto::{
 };
 use std::sync::Arc;
 
+use std::collections::HashMap;
+
 use crate::otlp::common::{
     any_value_builder::{any_value_string, any_value_to_json_value},
     field_names::semconv,
+    UNKNOWN_SERVICE_NAME,
 };
 use crate::schema::metrics::*;
 
@@ -87,6 +90,44 @@ pub struct MetricsMetadata {
     pub histogram_count: usize,
     pub exponential_histogram_count: usize,
     pub summary_count: usize,
+    /// First timestamp per metric type (in microseconds)
+    #[allow(clippy::derivable_impls)]
+    pub metric_first_timestamps: HashMap<String, i64>,
+    /// Service name associated with the converted batches
+    pub service_name: String,
+}
+
+impl MetricsMetadata {
+    /// Effective service name, falling back to UNKNOWN_SERVICE_NAME.
+    pub fn service_name(&self) -> &str {
+        if self.service_name.is_empty() {
+            UNKNOWN_SERVICE_NAME
+        } else {
+            &self.service_name
+        }
+    }
+
+    /// Retrieve the first timestamp for a given metric type (microseconds).
+    pub fn first_timestamp_for(&self, metric_type: &str) -> Option<i64> {
+        self.metric_first_timestamps.get(metric_type).copied()
+    }
+
+    fn observe_service_name(&mut self, candidate: &str) {
+        if self.service_name.is_empty() && !candidate.is_empty() {
+            self.service_name = candidate.to_string();
+        }
+    }
+
+    fn finalize_service_name(&mut self) {
+        if self.service_name.is_empty() {
+            self.service_name = UNKNOWN_SERVICE_NAME.to_string();
+        }
+    }
+
+    fn record_metric_timestamp(&mut self, metric_type: &str, timestamp: Option<i64>) {
+        self.metric_first_timestamps
+            .insert(metric_type.to_string(), timestamp.unwrap_or(0));
+    }
 }
 
 /// Arrow converter for OTLP metrics data
@@ -142,6 +183,7 @@ impl ArrowConverter {
         // Process all resource metrics
         for resource_metrics in &request.resource_metrics {
             let resource_ctx = extract_resource_context(resource_metrics);
+            metadata.observe_service_name(&resource_ctx.service_name);
 
             for scope_metrics in &resource_metrics.scope_metrics {
                 metadata.scope_metrics_count += 1;
@@ -162,11 +204,14 @@ impl ArrowConverter {
             }
         }
 
+        metadata.finalize_service_name();
+
         // Build record batches for each metric type
         let mut batches = Vec::new();
 
         if gauge_builder.len() > 0 {
             metadata.gauge_count = gauge_builder.len();
+            metadata.record_metric_timestamp("gauge", gauge_builder.first_timestamp());
             batches.push((
                 "gauge".to_string(),
                 gauge_builder.finish(Arc::clone(&self.schema_gauge))?,
@@ -175,6 +220,7 @@ impl ArrowConverter {
 
         if sum_builder.len() > 0 {
             metadata.sum_count = sum_builder.len();
+            metadata.record_metric_timestamp("sum", sum_builder.first_timestamp());
             batches.push((
                 "sum".to_string(),
                 sum_builder.finish(Arc::clone(&self.schema_sum))?,
@@ -183,6 +229,7 @@ impl ArrowConverter {
 
         if histogram_builder.len() > 0 {
             metadata.histogram_count = histogram_builder.len();
+            metadata.record_metric_timestamp("histogram", histogram_builder.first_timestamp());
             batches.push((
                 "histogram".to_string(),
                 histogram_builder.finish(Arc::clone(&self.schema_histogram))?,
@@ -191,6 +238,10 @@ impl ArrowConverter {
 
         if exp_histogram_builder.len() > 0 {
             metadata.exponential_histogram_count = exp_histogram_builder.len();
+            metadata.record_metric_timestamp(
+                "exponential_histogram",
+                exp_histogram_builder.first_timestamp(),
+            );
             batches.push((
                 "exponential_histogram".to_string(),
                 exp_histogram_builder.finish(Arc::clone(&self.schema_exponential_histogram))?,
@@ -199,6 +250,7 @@ impl ArrowConverter {
 
         if summary_builder.len() > 0 {
             metadata.summary_count = summary_builder.len();
+            metadata.record_metric_timestamp("summary", summary_builder.first_timestamp());
             batches.push((
                 "summary".to_string(),
                 summary_builder.finish(Arc::clone(&self.schema_summary))?,
@@ -342,6 +394,7 @@ struct BaseColumnsBuilder {
     scope_version_builder: StringBuilder,
     attributes_builder: StringBuilder,
     count: usize,
+    first_timestamp: Option<i64>,
 }
 
 impl BaseColumnsBuilder {
@@ -357,6 +410,7 @@ impl BaseColumnsBuilder {
             scope_version_builder: StringBuilder::new(),
             attributes_builder: StringBuilder::new(),
             count: 0,
+            first_timestamp: None,
         }
     }
 
@@ -370,6 +424,7 @@ impl BaseColumnsBuilder {
     ) -> Result<()> {
         // Timestamp
         self.timestamp_builder.append_value(timestamp_nanos);
+        self.record_timestamp(timestamp_nanos);
 
         // Service name
         self.service_name_builder
@@ -417,6 +472,17 @@ impl BaseColumnsBuilder {
     fn len(&self) -> usize {
         self.count
     }
+
+    fn first_timestamp(&self) -> Option<i64> {
+        self.first_timestamp
+    }
+
+    fn record_timestamp(&mut self, timestamp: i64) {
+        match self.first_timestamp {
+            Some(existing) if existing <= timestamp => {}
+            _ => self.first_timestamp = Some(timestamp),
+        }
+    }
 }
 
 // Gauge builder
@@ -458,6 +524,10 @@ impl GaugeBuilder {
 
     fn len(&self) -> usize {
         self.base.len()
+    }
+
+    fn first_timestamp(&self) -> Option<i64> {
+        self.base.first_timestamp()
     }
 
     fn finish(mut self, schema: Arc<arrow::datatypes::Schema>) -> Result<RecordBatch> {
@@ -530,6 +600,10 @@ impl SumBuilder {
 
     fn len(&self) -> usize {
         self.base.len()
+    }
+
+    fn first_timestamp(&self) -> Option<i64> {
+        self.base.first_timestamp()
     }
 
     fn finish(mut self, schema: Arc<arrow::datatypes::Schema>) -> Result<RecordBatch> {
@@ -646,6 +720,10 @@ impl HistogramBuilder {
 
     fn len(&self) -> usize {
         self.base.len()
+    }
+
+    fn first_timestamp(&self) -> Option<i64> {
+        self.base.first_timestamp()
     }
 
     fn finish(mut self, schema: Arc<arrow::datatypes::Schema>) -> Result<RecordBatch> {
@@ -810,6 +888,10 @@ impl ExponentialHistogramBuilder {
         self.base.len()
     }
 
+    fn first_timestamp(&self) -> Option<i64> {
+        self.base.first_timestamp()
+    }
+
     fn finish(mut self, schema: Arc<arrow::datatypes::Schema>) -> Result<RecordBatch> {
         // Get list element fields from schema (with field_id metadata)
         let positive_bucket_counts_field =
@@ -939,6 +1021,10 @@ impl SummaryBuilder {
         self.base.len()
     }
 
+    fn first_timestamp(&self) -> Option<i64> {
+        self.base.first_timestamp()
+    }
+
     fn finish(mut self, schema: Arc<arrow::datatypes::Schema>) -> Result<RecordBatch> {
         // Get list element fields from schema (with field_id metadata)
         let quantile_values_field = if let DataType::List(field) = schema.field(11).data_type() {
@@ -1006,7 +1092,7 @@ mod tests {
     use super::*;
     use crate::otlp::common::InputFormat;
     use crate::otlp::metrics::parse_otlp_request;
-    use arrow::array::{ListArray, StringArray};
+    use arrow::array::{ListArray, StringArray, TimestampMicrosecondArray};
     use arrow::record_batch::RecordBatch;
 
     #[test]
@@ -1328,6 +1414,7 @@ mod tests {
         assert_eq!(metadata.scope_metrics_count, 1);
         assert_eq!(metadata.gauge_count, 3);
         assert_eq!(metadata.sum_count, 0);
+        assert_eq!(metadata.service_name(), "demo-service");
 
         let batch = find_batch(&batches, "gauge");
         assert_eq!(batch.num_rows(), 3);
@@ -1339,6 +1426,15 @@ mod tests {
         for row in 0..service_names.len() {
             assert_eq!(service_names.value(row), "demo-service");
         }
+        let timestamps = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<TimestampMicrosecondArray>()
+            .unwrap();
+        assert_eq!(
+            metadata.first_timestamp_for("gauge"),
+            Some(timestamps.value(0))
+        );
     }
 
     #[test]
@@ -1353,6 +1449,7 @@ mod tests {
         assert_eq!(metadata.scope_metrics_count, 1);
         assert_eq!(metadata.sum_count, 4);
         assert_eq!(metadata.gauge_count, 0);
+        assert_eq!(metadata.service_name(), "api-gateway");
 
         let batch = find_batch(&batches, "sum");
         assert_eq!(batch.num_rows(), 4);
@@ -1364,6 +1461,15 @@ mod tests {
         for row in 0..service_names.len() {
             assert_eq!(service_names.value(row), "api-gateway");
         }
+        let timestamps = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<TimestampMicrosecondArray>()
+            .unwrap();
+        assert_eq!(
+            metadata.first_timestamp_for("sum"),
+            Some(timestamps.value(0))
+        );
     }
 
     #[test]
@@ -1376,6 +1482,7 @@ mod tests {
 
         assert_eq!(metadata.histogram_count, 3);
         assert_eq!(metadata.resource_metrics_count, 1);
+        assert_eq!(metadata.service_name(), "api-gateway");
 
         let batch = find_batch(&batches, "histogram");
         assert_eq!(batch.num_rows(), 3);
@@ -1399,6 +1506,7 @@ mod tests {
 
         assert_eq!(metadata.exponential_histogram_count, 2);
         assert_eq!(metadata.resource_metrics_count, 1);
+        assert_eq!(metadata.service_name(), "payment-service");
 
         let batch = find_batch(&batches, "exponential_histogram");
         assert_eq!(batch.num_rows(), 2);
@@ -1422,6 +1530,7 @@ mod tests {
 
         assert_eq!(metadata.summary_count, 2);
         assert_eq!(metadata.resource_metrics_count, 1);
+        assert_eq!(metadata.service_name(), "analytics-service");
 
         let batch = find_batch(&batches, "summary");
         assert_eq!(batch.num_rows(), 2);

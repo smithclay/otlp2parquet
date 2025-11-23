@@ -3,7 +3,7 @@
 // Implements OTLP ingestion and health check endpoints
 
 use anyhow::Context;
-use arrow::array::{Array, RecordBatch, StringArray, TimestampNanosecondArray};
+use arrow::array::{Array, RecordBatch, TimestampNanosecondArray};
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
@@ -314,9 +314,12 @@ async fn process_metrics(
         aggregated.exponential_histogram_count += subset_metadata.exponential_histogram_count;
         aggregated.summary_count += subset_metadata.summary_count;
 
+        let service_name = subset_metadata.service_name().to_string();
+
         for (metric_type, batch) in batches_by_type {
-            let service_name = extract_service_name(&batch);
-            let timestamp_nanos = extract_first_timestamp(&batch);
+            let timestamp_nanos = subset_metadata
+                .first_timestamp_for(&metric_type)
+                .unwrap_or_else(|| extract_first_timestamp(&batch));
 
             let partition_path =
                 otlp2parquet_writer::write_batch(otlp2parquet_writer::WriteBatchRequest {
@@ -454,23 +457,6 @@ pub(crate) async fn persist_log_batch(
         parquet_metadata,
         completed_at: chrono::Utc::now(),
     })
-}
-
-fn extract_service_name(batch: &RecordBatch) -> String {
-    let fallback = otlp::common::UNKNOWN_SERVICE_NAME;
-
-    if let Some(array) = batch.column(1).as_any().downcast_ref::<StringArray>() {
-        for idx in 0..array.len() {
-            if array.is_valid(idx) {
-                let value = array.value(idx);
-                if !value.is_empty() {
-                    return value.to_string();
-                }
-            }
-        }
-    }
-
-    fallback.to_string()
 }
 
 fn extract_first_timestamp(batch: &RecordBatch) -> i64 {
