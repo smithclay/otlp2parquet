@@ -10,6 +10,7 @@ members = [
     "crates/otlp2parquet-server",
     "crates/otlp2parquet-handlers",
 ]
+exclude = ["examples/generate-parquet-testdata"]
 resolver = "2"
 
 [workspace.package]
