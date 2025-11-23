@@ -10,30 +10,38 @@
 use crate::error::{Result, WriterError};
 use crate::table_mapping::table_name_for_signal;
 use arrow::array::RecordBatch;
+#[cfg(not(target_family = "wasm"))]
+#[cfg(not(target_family = "wasm"))]
 use bytes::Bytes;
+#[cfg(not(target_family = "wasm"))]
 use futures::future::BoxFuture;
 use icepick::catalog::Catalog;
 use icepick::error::Error as CatalogError;
 use icepick::spec::NamespaceIdent;
 use icepick::{AppendOnlyTableWriter, AppendResult, TableWriterOptions};
 use otlp2parquet_core::SignalType;
+#[cfg(target_family = "wasm")]
+use parquet::arrow::ArrowWriter;
+#[cfg(not(target_family = "wasm"))]
 use parquet::arrow::{async_writer::AsyncFileWriter, AsyncArrowWriter};
+#[cfg(not(target_family = "wasm"))]
 use parquet::errors::{ParquetError, Result as ParquetResult};
 use parquet::file::properties::WriterProperties;
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicU64, Ordering};
 use time::OffsetDateTime;
+use uuid::Uuid;
 
-static FILE_COUNTER: AtomicU64 = AtomicU64::new(1);
-
+#[cfg(not(target_family = "wasm"))]
 struct OpendalAsyncWriter(opendal::Writer);
 
+#[cfg(not(target_family = "wasm"))]
 impl OpendalAsyncWriter {
     fn new(inner: opendal::Writer) -> Self {
         Self(inner)
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl AsyncFileWriter for OpendalAsyncWriter {
     fn write(&mut self, bs: Bytes) -> BoxFuture<'_, ParquetResult<()>> {
         Box::pin(async move {
@@ -259,7 +267,7 @@ async fn write_with_catalog(
             }
             Err(err) => {
                 if !retry_policy.should_retry(attempt, &err) {
-                    return Err(WriterError::WriteFailure(format!(
+                    return Err(WriterError::write_failure(format!(
                         "table '{}': {} (attempt {}/{})",
                         table_name, err, attempt, max_attempts
                     )));
@@ -344,6 +352,7 @@ fn is_retryable_error(err: &CatalogError) -> bool {
 }
 
 /// Write a batch as plain Parquet file (no catalog)
+#[cfg(not(target_family = "wasm"))]
 async fn write_plain_parquet(
     signal_type: SignalType,
     metric_type: Option<&str>,
@@ -353,9 +362,9 @@ async fn write_plain_parquet(
 ) -> Result<()> {
     // Get global storage operator
     let op = crate::storage::get_operator().ok_or_else(|| {
-        WriterError::WriteFailure(
+        WriterError::write_failure(
             "Storage operator not initialized. Call initialize_storage() with RuntimeConfig before writing. \
-             For catalog mode, ensure catalog is provided in WriteBatchRequest.".to_string()
+             For catalog mode, ensure catalog is provided in WriteBatchRequest.".to_string(),
         )
     })?;
 
@@ -368,7 +377,7 @@ async fn write_plain_parquet(
 
     // Initialize streaming writer
     let op_writer = op.writer(&file_path).await.map_err(|e| {
-        WriterError::WriteFailure(format!("Failed to open writer for '{}': {}", file_path, e))
+        WriterError::write_failure(format!("Failed to open writer for '{}': {}", file_path, e))
     })?;
     let async_writer = OpendalAsyncWriter::new(op_writer);
 
@@ -378,24 +387,81 @@ async fn write_plain_parquet(
 
     let mut parquet_writer = AsyncArrowWriter::try_new(async_writer, batch.schema(), Some(props))
         .map_err(|e| {
-        WriterError::WriteFailure(format!("Failed to create Parquet writer: {}", e))
+        WriterError::write_failure(format!("Failed to create Parquet writer: {}", e))
     })?;
 
     parquet_writer
         .write(batch)
         .await
-        .map_err(|e| WriterError::WriteFailure(format!("Failed to write RecordBatch: {}", e)))?;
+        .map_err(|e| WriterError::write_failure(format!("Failed to write RecordBatch: {}", e)))?;
 
-    parquet_writer
-        .finish()
-        .await
-        .map_err(|e| WriterError::WriteFailure(format!("Failed to close Parquet writer: {}", e)))?;
+    parquet_writer.finish().await.map_err(|e| {
+        WriterError::write_failure(format!("Failed to close Parquet writer: {}", e))
+    })?;
 
     let bytes_written = parquet_writer.bytes_written();
 
     let row_count = batch.num_rows();
     tracing::info!(
         "✓ Wrote {} rows to '{}' (plain Parquet, no catalog, {} bytes)",
+        row_count,
+        file_path,
+        bytes_written
+    );
+
+    Ok(())
+}
+
+/// WASM plain Parquet path: write into an in-memory buffer synchronously to avoid Send bounds.
+#[cfg(target_family = "wasm")]
+async fn write_plain_parquet(
+    signal_type: SignalType,
+    metric_type: Option<&str>,
+    service_name: &str,
+    timestamp_micros: i64,
+    batch: &RecordBatch,
+) -> Result<()> {
+    let op = crate::storage::get_operator().ok_or_else(|| {
+        WriterError::write_failure(
+            "Storage operator not initialized. Call initialize_storage() with RuntimeConfig before writing. \
+             For catalog mode, ensure catalog is provided in WriteBatchRequest.".to_string(),
+        )
+    })?;
+
+    let file_path =
+        generate_parquet_path(signal_type, metric_type, service_name, timestamp_micros)?;
+
+    tracing::debug!("Writing plain Parquet (WASM) to path: {}", file_path);
+
+    let props = WriterProperties::builder()
+        .set_compression(parquet::basic::Compression::SNAPPY)
+        .build();
+
+    let mut buffer = Vec::new();
+    {
+        let mut writer =
+            ArrowWriter::try_new(&mut buffer, batch.schema(), Some(props)).map_err(|e| {
+                WriterError::write_failure(format!("Failed to create Parquet writer: {}", e))
+            })?;
+        writer.write(batch).map_err(|e| {
+            WriterError::write_failure(format!("Failed to write RecordBatch: {}", e))
+        })?;
+        writer.close().map_err(|e| {
+            WriterError::write_failure(format!("Failed to close Parquet writer: {}", e))
+        })?;
+    }
+
+    let bytes_written = buffer.len();
+    op.write(&file_path, buffer).await.map_err(|e| {
+        WriterError::write_failure(format!(
+            "Failed to upload Parquet to '{}': {}",
+            file_path, e
+        ))
+    })?;
+
+    let row_count = batch.num_rows();
+    tracing::info!(
+        "✓ Wrote {} rows to '{}' (plain Parquet, no catalog, {} bytes, wasm buffer)",
         row_count,
         file_path,
         bytes_written
@@ -455,8 +521,8 @@ pub async fn write_batch(req: WriteBatchRequest<'_>) -> Result<String> {
 
 /// Generate a partitioned file path for plain Parquet files
 ///
-/// Format: {signal_type}/{service}/year={year}/month={month}/day={day}/hour={hour}/{timestamp}-{counter}.parquet
-/// Example: logs/my-service/year=2025/month=01/day=15/hour=10/1736938800000000-00000001.parquet
+/// Format: {signal_type}/{service}/year={year}/month={month}/day={day}/hour={hour}/{timestamp}-{uuid}.parquet
+/// Example: logs/my-service/year=2025/month=01/day=15/hour=10/1736938800000000-<uuid>.parquet
 fn generate_parquet_path(
     signal_type: SignalType,
     metric_type: Option<&str>,
@@ -478,16 +544,12 @@ fn generate_parquet_path(
     };
 
     let safe_service = sanitize_service_name(service_name);
-    let suffix = next_suffix();
+    let suffix = Uuid::new_v4().simple();
 
     Ok(format!(
-        "{}/{}/year={}/month={:02}/day={:02}/hour={:02}/{}-{:08x}.parquet",
+        "{}/{}/year={}/month={:02}/day={:02}/hour={:02}/{}-{}.parquet",
         signal_prefix, safe_service, year, month, day, hour, timestamp_micros, suffix
     ))
-}
-
-fn next_suffix() -> u32 {
-    FILE_COUNTER.fetch_add(1, Ordering::Relaxed) as u32
 }
 
 fn sanitize_service_name(service_name: &str) -> Cow<'_, str> {
@@ -790,5 +852,7 @@ mod tests {
         assert!(path.starts_with("logs/svc__name/year="));
         assert!(path.contains("/month="));
         assert!(path.ends_with(".parquet"));
+        // UUID suffix should provide uniqueness; ensure it's present.
+        assert!(path.split('-').next_back().unwrap().ends_with(".parquet"));
     }
 }

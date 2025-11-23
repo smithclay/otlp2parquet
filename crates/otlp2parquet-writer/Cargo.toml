@@ -19,6 +19,9 @@ once_cell = "1.19"
 time = { version = "0.3", default-features = false, features = ["std"] }
 bytes = { version = "1", default-features = false }
 futures = { version = "0.3", default-features = false, features = ["std"] }
+uuid = { version = "1", default-features = false, features = ["v4", "js"] }
+# Ensure WASM builds have a JS RNG source for UUID v4 generation
+getrandom = { version = "0.2", features = ["js"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 opendal = { version = "0.54", default-features = false, features = ["services-fs", "services-s3"] }

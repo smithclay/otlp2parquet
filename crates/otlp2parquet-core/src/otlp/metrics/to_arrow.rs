@@ -17,9 +17,9 @@ use otlp2parquet_proto::opentelemetry::proto::{
         ScopeMetrics,
     },
 };
-use std::sync::Arc;
-
 use std::collections::HashMap;
+use std::mem;
+use std::sync::Arc;
 
 use crate::otlp::common::{
     any_value_builder::{any_value_string, any_value_to_json_value},
@@ -125,8 +125,16 @@ impl MetricsMetadata {
     }
 
     fn record_metric_timestamp(&mut self, metric_type: &str, timestamp: Option<i64>) {
-        self.metric_first_timestamps
-            .insert(metric_type.to_string(), timestamp.unwrap_or(0));
+        if let Some(ts) = timestamp {
+            self.metric_first_timestamps
+                .entry(metric_type.to_string())
+                .and_modify(|existing| {
+                    if ts < *existing {
+                        *existing = ts;
+                    }
+                })
+                .or_insert(ts);
+        }
     }
 }
 
@@ -141,6 +149,9 @@ pub struct ArrowConverter {
     schema_exponential_histogram: Arc<arrow::datatypes::Schema>,
     schema_summary: Arc<arrow::datatypes::Schema>,
 }
+
+// Upper bound to cap memory when ingesting very large metric payloads.
+const METRIC_MAX_ROWS_PER_BATCH: usize = 65_536;
 
 impl Default for ArrowConverter {
     fn default() -> Self {
@@ -179,6 +190,7 @@ impl ArrowConverter {
         let mut histogram_builder = HistogramBuilder::new();
         let mut exp_histogram_builder = ExponentialHistogramBuilder::new();
         let mut summary_builder = SummaryBuilder::new();
+        let mut batches = Vec::new();
 
         // Process all resource metrics
         for resource_metrics in &request.resource_metrics {
@@ -199,6 +211,8 @@ impl ArrowConverter {
                         &mut histogram_builder,
                         &mut exp_histogram_builder,
                         &mut summary_builder,
+                        &mut metadata,
+                        &mut batches,
                     )?;
                 }
             }
@@ -206,56 +220,37 @@ impl ArrowConverter {
 
         metadata.finalize_service_name();
 
-        // Build record batches for each metric type
-        let mut batches = Vec::new();
-
-        if gauge_builder.len() > 0 {
-            metadata.gauge_count = gauge_builder.len();
-            metadata.record_metric_timestamp("gauge", gauge_builder.first_timestamp());
-            batches.push((
-                "gauge".to_string(),
-                gauge_builder.finish(Arc::clone(&self.schema_gauge))?,
-            ));
-        }
-
-        if sum_builder.len() > 0 {
-            metadata.sum_count = sum_builder.len();
-            metadata.record_metric_timestamp("sum", sum_builder.first_timestamp());
-            batches.push((
-                "sum".to_string(),
-                sum_builder.finish(Arc::clone(&self.schema_sum))?,
-            ));
-        }
-
-        if histogram_builder.len() > 0 {
-            metadata.histogram_count = histogram_builder.len();
-            metadata.record_metric_timestamp("histogram", histogram_builder.first_timestamp());
-            batches.push((
-                "histogram".to_string(),
-                histogram_builder.finish(Arc::clone(&self.schema_histogram))?,
-            ));
-        }
-
-        if exp_histogram_builder.len() > 0 {
-            metadata.exponential_histogram_count = exp_histogram_builder.len();
-            metadata.record_metric_timestamp(
-                "exponential_histogram",
-                exp_histogram_builder.first_timestamp(),
-            );
-            batches.push((
-                "exponential_histogram".to_string(),
-                exp_histogram_builder.finish(Arc::clone(&self.schema_exponential_histogram))?,
-            ));
-        }
-
-        if summary_builder.len() > 0 {
-            metadata.summary_count = summary_builder.len();
-            metadata.record_metric_timestamp("summary", summary_builder.first_timestamp());
-            batches.push((
-                "summary".to_string(),
-                summary_builder.finish(Arc::clone(&self.schema_summary))?,
-            ));
-        }
+        // Flush any remaining rows for each metric type
+        flush_gauge_builder(
+            &mut gauge_builder,
+            Arc::clone(&self.schema_gauge),
+            &mut metadata,
+            &mut batches,
+        )?;
+        flush_sum_builder(
+            &mut sum_builder,
+            Arc::clone(&self.schema_sum),
+            &mut metadata,
+            &mut batches,
+        )?;
+        flush_histogram_builder(
+            &mut histogram_builder,
+            Arc::clone(&self.schema_histogram),
+            &mut metadata,
+            &mut batches,
+        )?;
+        flush_exp_histogram_builder(
+            &mut exp_histogram_builder,
+            Arc::clone(&self.schema_exponential_histogram),
+            &mut metadata,
+            &mut batches,
+        )?;
+        flush_summary_builder(
+            &mut summary_builder,
+            Arc::clone(&self.schema_summary),
+            &mut metadata,
+            &mut batches,
+        )?;
 
         Ok((batches, metadata))
     }
@@ -271,6 +266,8 @@ impl ArrowConverter {
         histogram_builder: &mut HistogramBuilder,
         exp_histogram_builder: &mut ExponentialHistogramBuilder,
         summary_builder: &mut SummaryBuilder,
+        metadata: &mut MetricsMetadata,
+        batches: &mut Vec<(String, RecordBatch)>,
     ) -> Result<()> {
         let data = metric.data.as_ref().context("Metric has no data")?;
 
@@ -278,6 +275,14 @@ impl ArrowConverter {
             Data::Gauge(gauge) => {
                 for point in &gauge.data_points {
                     gauge_builder.add_data_point(metric, point, resource_ctx, scope_ctx)?;
+                    if gauge_builder.len() >= METRIC_MAX_ROWS_PER_BATCH {
+                        flush_gauge_builder(
+                            gauge_builder,
+                            Arc::clone(&self.schema_gauge),
+                            metadata,
+                            batches,
+                        )?;
+                    }
                 }
             }
             Data::Sum(sum) => {
@@ -290,21 +295,53 @@ impl ArrowConverter {
                         resource_ctx,
                         scope_ctx,
                     )?;
+                    if sum_builder.len() >= METRIC_MAX_ROWS_PER_BATCH {
+                        flush_sum_builder(
+                            sum_builder,
+                            Arc::clone(&self.schema_sum),
+                            metadata,
+                            batches,
+                        )?;
+                    }
                 }
             }
             Data::Histogram(histogram) => {
                 for point in &histogram.data_points {
                     histogram_builder.add_data_point(metric, point, resource_ctx, scope_ctx)?;
+                    if histogram_builder.len() >= METRIC_MAX_ROWS_PER_BATCH {
+                        flush_histogram_builder(
+                            histogram_builder,
+                            Arc::clone(&self.schema_histogram),
+                            metadata,
+                            batches,
+                        )?;
+                    }
                 }
             }
             Data::ExponentialHistogram(exp_histogram) => {
                 for point in &exp_histogram.data_points {
                     exp_histogram_builder.add_data_point(metric, point, resource_ctx, scope_ctx)?;
+                    if exp_histogram_builder.len() >= METRIC_MAX_ROWS_PER_BATCH {
+                        flush_exp_histogram_builder(
+                            exp_histogram_builder,
+                            Arc::clone(&self.schema_exponential_histogram),
+                            metadata,
+                            batches,
+                        )?;
+                    }
                 }
             }
             Data::Summary(summary) => {
                 for point in &summary.data_points {
                     summary_builder.add_data_point(metric, point, resource_ctx, scope_ctx)?;
+                    if summary_builder.len() >= METRIC_MAX_ROWS_PER_BATCH {
+                        flush_summary_builder(
+                            summary_builder,
+                            Arc::clone(&self.schema_summary),
+                            metadata,
+                            batches,
+                        )?;
+                    }
                 }
             }
         }
@@ -323,6 +360,101 @@ impl ArrowConverter {
             _ => None,
         }
     }
+}
+
+fn flush_gauge_builder(
+    builder: &mut GaugeBuilder,
+    schema: Arc<arrow::datatypes::Schema>,
+    metadata: &mut MetricsMetadata,
+    batches: &mut Vec<(String, RecordBatch)>,
+) -> Result<()> {
+    if builder.len() == 0 {
+        return Ok(());
+    }
+
+    let current = mem::replace(builder, GaugeBuilder::new());
+    let len = current.len();
+    metadata.gauge_count += len;
+    metadata.record_metric_timestamp("gauge", current.first_timestamp());
+    let batch = current.finish(schema)?;
+    batches.push(("gauge".to_string(), batch));
+    Ok(())
+}
+
+fn flush_sum_builder(
+    builder: &mut SumBuilder,
+    schema: Arc<arrow::datatypes::Schema>,
+    metadata: &mut MetricsMetadata,
+    batches: &mut Vec<(String, RecordBatch)>,
+) -> Result<()> {
+    if builder.len() == 0 {
+        return Ok(());
+    }
+
+    let current = mem::replace(builder, SumBuilder::new());
+    let len = current.len();
+    metadata.sum_count += len;
+    metadata.record_metric_timestamp("sum", current.first_timestamp());
+    let batch = current.finish(schema)?;
+    batches.push(("sum".to_string(), batch));
+    Ok(())
+}
+
+fn flush_histogram_builder(
+    builder: &mut HistogramBuilder,
+    schema: Arc<arrow::datatypes::Schema>,
+    metadata: &mut MetricsMetadata,
+    batches: &mut Vec<(String, RecordBatch)>,
+) -> Result<()> {
+    if builder.len() == 0 {
+        return Ok(());
+    }
+
+    let current = mem::replace(builder, HistogramBuilder::new());
+    let len = current.len();
+    metadata.histogram_count += len;
+    metadata.record_metric_timestamp("histogram", current.first_timestamp());
+    let batch = current.finish(schema)?;
+    batches.push(("histogram".to_string(), batch));
+    Ok(())
+}
+
+fn flush_exp_histogram_builder(
+    builder: &mut ExponentialHistogramBuilder,
+    schema: Arc<arrow::datatypes::Schema>,
+    metadata: &mut MetricsMetadata,
+    batches: &mut Vec<(String, RecordBatch)>,
+) -> Result<()> {
+    if builder.len() == 0 {
+        return Ok(());
+    }
+
+    let current = mem::replace(builder, ExponentialHistogramBuilder::new());
+    let len = current.len();
+    metadata.exponential_histogram_count += len;
+    metadata.record_metric_timestamp("exponential_histogram", current.first_timestamp());
+    let batch = current.finish(schema)?;
+    batches.push(("exponential_histogram".to_string(), batch));
+    Ok(())
+}
+
+fn flush_summary_builder(
+    builder: &mut SummaryBuilder,
+    schema: Arc<arrow::datatypes::Schema>,
+    metadata: &mut MetricsMetadata,
+    batches: &mut Vec<(String, RecordBatch)>,
+) -> Result<()> {
+    if builder.len() == 0 {
+        return Ok(());
+    }
+
+    let current = mem::replace(builder, SummaryBuilder::new());
+    let len = current.len();
+    metadata.summary_count += len;
+    metadata.record_metric_timestamp("summary", current.first_timestamp());
+    let batch = current.finish(schema)?;
+    batches.push(("summary".to_string(), batch));
+    Ok(())
 }
 
 // Context structures for resource and scope information

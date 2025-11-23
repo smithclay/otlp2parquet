@@ -89,8 +89,9 @@ pub async fn initialize_catalog(config: CatalogConfig) -> Result<Arc<dyn Catalog
             #[cfg(target_family = "wasm")]
             {
                 let _ = bucket_arn;
-                Err(WriterError::UnsupportedPlatform(
-                    "S3 Tables not available on WASM".into(),
+                Err(WriterError::unsupported_platform(
+                    "S3 Tables not available on WASM".to_string(),
+                    "Server, Lambda (native only)".to_string(),
                 ))
             }
 
@@ -101,7 +102,11 @@ pub async fn initialize_catalog(config: CatalogConfig) -> Result<Arc<dyn Catalog
                 let catalog = icepick::S3TablesCatalog::from_arn("otlp2parquet", &bucket_arn)
                     .await
                     .map_err(|e| {
-                        WriterError::CatalogInit(format!("S3 Tables ARN '{}': {}", bucket_arn, e))
+                        WriterError::catalog_init(
+                            "S3 Tables".to_string(),
+                            bucket_arn.to_string(),
+                            e.to_string(),
+                        )
                     })?;
 
                 tracing::info!("✓ Connected to S3 Tables catalog: {}", bucket_arn);
@@ -150,9 +155,9 @@ pub async fn initialize_catalog(config: CatalogConfig) -> Result<Arc<dyn Catalog
                 builder = builder.with_bearer_token("");
             }
 
-            let catalog = builder
-                .build()
-                .map_err(|e| WriterError::CatalogInit(format!("REST catalog '{}': {}", uri, e)))?;
+            let catalog = builder.build().map_err(|e| {
+                WriterError::catalog_init("REST".to_string(), uri.to_string(), e.to_string())
+            })?;
 
             tracing::info!(
                 "✓ Connected to REST catalog: {} (warehouse: {})",
@@ -186,10 +191,11 @@ pub async fn initialize_catalog(config: CatalogConfig) -> Result<Arc<dyn Catalog
             )
             .await
             .map_err(|e| {
-                WriterError::CatalogInit(format!(
-                    "R2 catalog account={}, bucket={}: {}",
-                    account_id, bucket_name, e
-                ))
+                WriterError::catalog_init(
+                    "R2 Data Catalog".to_string(),
+                    format!("account={}, bucket={}", account_id, bucket_name),
+                    e.to_string(),
+                )
             })?;
 
             tracing::info!(

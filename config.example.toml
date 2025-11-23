@@ -1,88 +1,226 @@
 # otlp2parquet Configuration File Example
+# ==========================================
 # Copy this file to config.toml or .otlp2parquet.toml and customize for your environment
-# Alternatively, use environment variables with the OTLP2PARQUET_ prefix
+# Alternatively, use environment variables with the OTLP2PARQUET_ prefix (see config.example.env)
+#
+# Configuration Priority (highest to lowest):
+#   1. Environment variables (OTLP2PARQUET_*)
+#   2. This TOML file (config.toml or .otlp2parquet.toml)
+#   3. Platform-specific defaults (Server, Lambda, Cloudflare Workers)
+#
+# Quick Start:
+#   1. Copy this file: cp config.example.toml config.toml
+#   2. Uncomment and customize sections for your platform
+#   3. Start server: cargo run
+#
+# Platform Detection:
+#   - Server (default): Neither AWS_LAMBDA_FUNCTION_NAME nor CF_WORKER present
+#   - Lambda: AWS_LAMBDA_FUNCTION_NAME environment variable present (automatic)
+#   - Cloudflare Workers: CF_WORKER environment variable present (automatic)
 
 # ==============================================================================
 # Batch Configuration (All Platforms)
 # ==============================================================================
+# Controls in-memory batching to create optimal Parquet file sizes.
+# Larger batches = fewer files = better query performance & lower storage costs.
+#
+# Important:
+#   - Server: Batching enabled by default (recommended for continuous ingestion)
+#   - Lambda: Batching disabled by default (event-driven, process per request)
+#   - Workers: Batching disabled by default (memory constraints)
+#
+# Trade-offs:
+#   - Larger batches = more memory usage, longer flush intervals
+#   - Smaller batches = more files, higher storage costs, slower queries
 [batch]
-# Maximum number of rows per batch before flushing
+# Maximum number of rows per batch before flushing to storage
+# Trigger: Flush occurs when batch reaches this row count
+# Recommended: 10,000 - 1,000,000 rows depending on schema size
+# Platform defaults: Server=200,000, Lambda=N/A (batching disabled), Workers=N/A
 max_rows = 200_000
 
 # Maximum bytes per batch before flushing (128 MB default)
-max_bytes = 134_217_728
+# Trigger: Flush occurs when batch size exceeds this limit
+# Recommended: 64 MB - 512 MB depending on available memory
+# Platform defaults: Server=128MB, Lambda=N/A, Workers=N/A
+max_bytes = 134_217_728  # 128 MB
 
-# Maximum age of batch in seconds before flushing
+# Maximum age of batch in seconds before flushing (time-based trigger)
+# Trigger: Flush occurs after this duration, even if batch is small
+# Recommended: 5-60 seconds depending on latency requirements
+# Purpose: Ensures data is not buffered indefinitely during low-traffic periods
+# Platform defaults: Server=10s, Lambda=N/A, Workers=N/A
 max_age_secs = 10
 
 # Enable or disable batching entirely
+# true = Batch data in memory before writing (recommended for server)
+# false = Write immediately per request (required for Lambda/Workers)
+# Platform defaults: Server=true, Lambda=false, Workers=false
 enabled = true
 
 
 # ==============================================================================
 # Request Handling Configuration (All Platforms)
 # ==============================================================================
+# Controls HTTP request validation and size limits
 [request]
-# Maximum payload size in bytes (8 MB default)
-max_payload_bytes = 8_388_608
+# Maximum HTTP payload size in bytes
+# Purpose: Prevents out-of-memory errors from extremely large requests
+# Recommendation: Set based on available memory and expected batch sizes
+#   - Server: 8-100 MB (plenty of memory available)
+#   - Lambda: 6 MB max (AWS Lambda payload limit)
+#   - Workers: 1-10 MB (Cloudflare Workers 128 MB memory limit)
+# Platform defaults: Server=8MB, Lambda=6MB, Workers=10MB
+max_payload_bytes = 8_388_608  # 8 MB
 
 
 # ==============================================================================
 # Catalog Mode Configuration (All Platforms)
 # ==============================================================================
-# catalog_mode = "iceberg"  # Use Iceberg catalog for ACID transactions and schema evolution (default)
-# catalog_mode = "none"     # Write plain Parquet files without catalog integration
+# Determines whether to use Apache Iceberg catalog or write plain Parquet files
 #
-# When catalog_mode="none":
-# - No Iceberg catalog is required
-# - Writes plain Parquet files directly to storage
-# - No ACID transactions or schema evolution
-# - Simpler setup, useful for testing or non-production workloads
+# catalog_mode = "iceberg"  # Use Iceberg catalog (default)
+# catalog_mode = "none"     # Write plain Parquet files
 #
-# When catalog_mode="iceberg":
-# - Requires [iceberg] section configuration
-# - Provides ACID transactions and schema evolution
-# - Recommended for production workloads
+# 📊 Comparison Table:
+# ┌─────────────────────────┬──────────────────┬─────────────────────┐
+# │ Feature                 │ iceberg          │ none (plain)        │
+# ├─────────────────────────┼──────────────────┼─────────────────────┤
+# │ Setup Complexity        │ Moderate         │ Simple              │
+# │ ACID Transactions       │ ✅ Yes           │ ❌ No               │
+# │ Schema Evolution        │ ✅ Automatic     │ ❌ Manual           │
+# │ Time Travel Queries     │ ✅ Yes           │ ❌ No               │
+# │ Query Performance       │ Excellent        │ Good (with pruning) │
+# │ Cost                    │ Higher           │ Lower               │
+# │ Tool Compatibility      │ Iceberg-aware    │ Universal (Parquet) │
+# │ Production Ready        │ ✅ Yes           │ ✅ Yes              │
+# └─────────────────────────┴──────────────────┴─────────────────────┘
+#
+# When to use "iceberg" mode:
+#   ✓ Production workloads requiring data consistency
+#   ✓ Need schema evolution over time
+#   ✓ Want time travel / point-in-time queries
+#   ✓ Using tools optimized for Iceberg (Snowflake, Databricks, Trino)
+#   ✓ Requires catalog service (Nessie, Glue, S3 Tables, etc.)
+#
+# When to use "none" mode:
+#   ✓ Quick testing or development
+#   ✓ Lower cost requirements (no catalog API calls)
+#   ✓ Query with tools that read Parquet directly (DuckDB, Athena, Spark)
+#   ✓ Simpler deployment (just object storage, no catalog)
+#   ✓ Don't need ACID guarantees
+#
+# Default: "iceberg"
 
 
 # ==============================================================================
 # Storage Configuration
 # ==============================================================================
+# Configures where Parquet files are written
+#
+# Supported backends:
+#   - "fs": Local filesystem (development, testing)
+#   - "s3": AWS S3 or S3-compatible storage (production)
+#   - "r2": Cloudflare R2 (Cloudflare Workers)
+#
+# Platform defaults (auto-detected):
+#   - Server (default): "fs"
+#   - Lambda: "s3" (required, event-driven constraint)
+#   - Cloudflare Workers: "r2" (required, WASM constraint)
 [storage]
-# Storage backend type: "fs", "s3", or "r2"
-# Platform defaults: Server=fs, Lambda=s3, Cloudflare=r2
+# Storage backend type
+# Options: "fs" | "s3" | "r2"
 backend = "fs"
 
+# Parquet row group size (advanced tuning)
+# Controls internal Parquet file structure for optimal compression and query performance
+# Recommended: 32,768 - 1,048,576 rows per group
+# Default: 32,768 rows
+# Larger values = better compression, slower random access
+# parquet_row_group_size = 32768
+
 # --- Filesystem Storage (backend="fs") ---
+# Best for: Local development, testing, single-machine deployments
+# Limitations: No distributed access, not suitable for serverless
 [storage.fs]
+# Local directory path for storing Parquet files
+# Path structure (Hive-style partitioning):
+#   logs/{service}/year={year}/month={month}/day={day}/hour={hour}/file.parquet
+# Example: ./data/logs/my-service/year=2025/month=01/day=15/hour=10/abc123.parquet
 path = "./data"
 
 # --- S3 Storage (backend="s3") ---
+# Best for: Production deployments, AWS ecosystem integration
+# Supports: AWS S3, MinIO, LocalStack, any S3-compatible storage
 # [storage.s3]
+# # Required: S3 bucket name
 # bucket = "my-otlp-bucket"
+#
+# # Required: AWS region
 # region = "us-east-1"
-# # Optional custom S3 endpoint (for S3-compatible services like MinIO)
-# endpoint = "https://s3.custom-endpoint.com"
+#
+# # Optional: Custom S3 endpoint for S3-compatible services
+# # Leave unset for standard AWS S3
+# # Examples:
+# #   - MinIO: "http://localhost:9000"
+# #   - LocalStack: "http://localhost:4566"
+# #   - DigitalOcean Spaces: "https://nyc3.digitaloceanspaces.com"
+# # endpoint = "http://localhost:9000"
+#
+# # Credentials: Auto-discovered from environment or IAM role
+# # Priority: AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY env vars > IAM role
+# # For Lambda: Automatically uses Lambda execution role (no explicit credentials needed)
 
 # --- R2 Storage (backend="r2") ---
+# Best for: Cloudflare Workers, edge deployments, cost-effective storage
+# Requirements: Cloudflare account with R2 enabled
 # [storage.r2]
+# # Required: R2 bucket name
 # bucket = "my-r2-bucket"
+#
+# # Required: Cloudflare account ID
+# # Find at: Cloudflare Dashboard → R2 → Overview
 # account_id = "your_account_id"
-# access_key_id = "your_access_key"
-# secret_access_key = "your_secret_key"
+#
+# # Required: R2 API credentials (uses AWS S3 API compatibility)
+# # Generate at: Cloudflare Dashboard → R2 → Manage R2 API Tokens
+# access_key_id = "your_r2_access_key"
+# secret_access_key = "your_r2_secret_key"
+#
+# # Optional: Custom R2 endpoint (auto-generated if not specified)
+# # Default: https://{account_id}.r2.cloudflarestorage.com
+# # endpoint = "https://your_account_id.r2.cloudflarestorage.com"
 
 
 # ==============================================================================
 # Server-Specific Configuration (Server Platform Only)
 # ==============================================================================
+# These settings only apply when running as a long-lived HTTP server
+# Not used for Lambda or Cloudflare Workers deployments
 [server]
 # HTTP server listen address
+# Format: "host:port"
+# Use 0.0.0.0 to listen on all interfaces (recommended for containers)
+# Use 127.0.0.1 to listen only on localhost (more secure for local dev)
+# Default port: 4318 (OTLP HTTP standard port)
 listen_addr = "0.0.0.0:4318"
 
-# Log level: trace, debug, info, warn, error
+# Log level: Controls verbosity of application logs
+# Options: "trace" | "debug" | "info" | "warn" | "error"
+#   - trace: Very verbose, includes all internal operations (debugging only)
+#   - debug: Verbose, includes request/response details
+#   - info: Normal operational messages (recommended for production)
+#   - warn: Only warnings and errors
+#   - error: Only errors
+# Default: "info"
 log_level = "info"
 
-# Log format: "text" (human-readable) or "json" (structured)
+# Log format: Output format for logs
+# Options: "text" | "json"
+#   - text: Human-readable, colorized output (best for local development)
+#   - json: Structured JSON output (best for log aggregation services)
+# Default: "text"
+# Recommendation: Use "json" for production/container environments
 log_format = "text"
 
 
@@ -109,43 +247,104 @@ integrated_iceberg = false
 # for your OTLP data. When enabled, Parquet files are committed to an Iceberg
 # catalog after being written to object storage.
 #
-# Note: Iceberg is NOT available in Cloudflare Workers to keep WASM binary size minimal.
+# Platform Support:
+#   ✅ Server: Full support (Nessie, Glue REST catalogs)
+#   ✅ Lambda: Full support (S3 Tables ARN-based, Glue, Nessie REST catalogs)
+#   ✅ Cloudflare Workers: Full support (R2 Data Catalog)
+#
+# Required: Set catalog_mode = "iceberg" to enable (see Catalog Mode section above)
+#
+# Catalog Options:
+#   1. AWS S3 Tables (Lambda only - simplest)
+#      - Managed catalog service with automatic compaction
+#      - Use bucket_arn instead of rest_uri
+#      - Example: bucket_arn = "arn:aws:s3tables:us-west-2:123456:bucket/my-bucket"
+#
+#   2. AWS Glue (Server, Lambda)
+#      - Managed REST catalog via AWS Glue Data Catalog
+#      - Requires rest_uri, warehouse, namespace, data_location
+#
+#   3. Nessie (Server, Lambda)
+#      - Open-source Git-like catalog with versioning
+#      - Requires rest_uri, warehouse, namespace
+#      - Popular for local development
 #
 # [iceberg]
+# # ┌─────────────────────────────────────────────────────────────────────┐
+# # │ Option 1: AWS S3 Tables (Lambda only - Recommended for AWS)        │
+# # └─────────────────────────────────────────────────────────────────────┘
+# # Required: S3 Tables bucket ARN
+# # Format: arn:aws:s3tables:region:account-id:bucket/bucket-name
+# # Find in: AWS Console → S3 Tables → Your bucket → Properties
+# # bucket_arn = "arn:aws:s3tables:us-west-2:123456789012:bucket/my-otlp-bucket"
+#
+# # ┌─────────────────────────────────────────────────────────────────────┐
+# # │ Option 2: REST Catalog (Nessie, Glue - Server/Lambda)              │
+# # └─────────────────────────────────────────────────────────────────────┘
 # # Required: REST catalog endpoint URI
 # # Examples:
-# #   - AWS S3 Tables: "https://s3tables.us-east-1.amazonaws.com/iceberg"
+# #   - Nessie (local): "http://nessie:19120/iceberg"
 # #   - AWS Glue: "https://glue.us-east-1.amazonaws.com/iceberg"
-# rest_uri = "https://s3tables.us-east-1.amazonaws.com/iceberg"
+# #   - Custom: "https://my-catalog.example.com/v1"
+# # rest_uri = "http://nessie:19120/iceberg"
 #
-# # Optional: Warehouse location (required for some catalogs like S3 Tables)
-# warehouse = "s3://my-iceberg-warehouse"
+# # Optional: Warehouse location
+# # Purpose: Base S3 path where table metadata is stored
+# # Format: s3://bucket-name/ or s3://bucket-name/prefix/
+# # Required for: Nessie, optional for Glue
+# # warehouse = "s3://my-iceberg-warehouse/"
 #
-# # Optional: Explicit data location for table storage (required for AWS Glue)
-# # data_location = "s3://my-iceberg-warehouse"
+# # Optional: Namespace for tables
+# # Purpose: Logical grouping of tables (like database name)
+# # Format: Single name or dot-separated path (e.g., "otel" or "otel.production")
+# # Default: Tables created in root namespace if not specified
+# # Recommendation: Use "otel" for simplicity
+# # namespace = "otel"
 #
-# # Optional: Namespace for tables (dot-separated, e.g., "otel.production")
-# # If not specified, tables will be created in the default namespace
-# namespace = "otel.production"
+# # Optional: Explicit data location for table storage
+# # Purpose: Override default table storage location
+# # Required for: AWS Glue
+# # Format: s3://bucket-name/path/
+# # Example: data_location = "s3://my-data-bucket/otlp/"
 #
-# # Optional: Catalog name (default: "rest")
-# catalog_name = "rest"
+# # ┌─────────────────────────────────────────────────────────────────────┐
+# # │ Advanced Options (Usually not needed)                               │
+# # └─────────────────────────────────────────────────────────────────────┘
 #
-# # Optional: Staging prefix for data files (default: "data/incoming")
-# staging_prefix = "data/incoming"
+# # Catalog name identifier
+# # Default: "rest"
+# # Purpose: Identifies the catalog in multi-catalog setups
+# # catalog_name = "rest"
 #
-# # Optional: Target file size in bytes (default: 536870912 = 512 MB)
-# target_file_size_bytes = 536_870_912
+# # Staging prefix for temporary data files
+# # Default: "data/incoming"
+# # Purpose: Subdirectory for staging files before commit
+# # staging_prefix = "data/incoming"
 #
-# # Optional: Iceberg format version (default: 2)
-# format_version = 2
+# # Target Parquet file size in bytes
+# # Default: 536,870,912 (512 MB)
+# # Purpose: Iceberg will attempt to create files near this size
+# # Recommendation: 256 MB - 1 GB depending on query patterns
+# # Larger files = fewer files, better compression, slower random access
+# # target_file_size_bytes = 536_870_912  # 512 MB
 #
-# # Optional: Custom table names (defaults shown)
-# [iceberg.tables]
-# logs = "otel_logs"
-# traces = "otel_traces"
-# metrics_gauge = "otel_metrics_gauge"
-# metrics_sum = "otel_metrics_sum"
-# metrics_histogram = "otel_metrics_histogram"
-# metrics_exponential_histogram = "otel_metrics_exponential_histogram"
-# metrics_summary = "otel_metrics_summary"
+# # Iceberg table format version
+# # Options: 1 | 2
+# # Default: 2 (recommended)
+# # Version 2 features: Row-level deletes, partition evolution, sort order
+# # Version 1: For compatibility with older Iceberg clients
+# # format_version = 2
+#
+# # ┌─────────────────────────────────────────────────────────────────────┐
+# # │ Custom Table Names (Optional)                                       │
+# # └─────────────────────────────────────────────────────────────────────┘
+# # Override default table names for Iceberg tables
+# # Default naming shown below - uncomment to customize
+# # [iceberg.tables]
+# # logs = "otel_logs"
+# # traces = "otel_traces"
+# # metrics_gauge = "otel_metrics_gauge"
+# # metrics_sum = "otel_metrics_sum"
+# # metrics_histogram = "otel_metrics_histogram"
+# # metrics_exponential_histogram = "otel_metrics_exponential_histogram"
+# # metrics_summary = "otel_metrics_summary"

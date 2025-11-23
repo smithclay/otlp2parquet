@@ -460,25 +460,38 @@ pub(crate) async fn persist_log_batch(
 }
 
 fn extract_first_timestamp(batch: &RecordBatch) -> i64 {
+    // Support both nanos and micros; always return microsecond precision.
+    let mut min_micros = i64::MAX;
+
     if let Some(array) = batch
         .column(0)
         .as_any()
         .downcast_ref::<TimestampNanosecondArray>()
     {
-        let mut min_value = i64::MAX;
         for idx in 0..array.len() {
             if array.is_valid(idx) {
-                let value = array.value(idx);
-                if value < min_value {
-                    min_value = value;
-                }
+                min_micros = min_micros.min(array.value(idx) / 1_000);
             }
-        }
-
-        if min_value != i64::MAX {
-            return min_value;
         }
     }
 
-    0
+    if min_micros == i64::MAX {
+        if let Some(array) = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::TimestampMicrosecondArray>()
+        {
+            for idx in 0..array.len() {
+                if array.is_valid(idx) {
+                    min_micros = min_micros.min(array.value(idx));
+                }
+            }
+        }
+    }
+
+    if min_micros == i64::MAX {
+        0
+    } else {
+        min_micros
+    }
 }

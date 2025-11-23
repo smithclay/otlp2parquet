@@ -25,6 +25,8 @@ pub struct ServerHarness {
     minio_console_port: u16,
     rest_catalog_port: u16,
     http_port: u16,
+    // Track if we've been cleaned up already to avoid double cleanup
+    cleaned_up: std::sync::Arc<std::sync::Mutex<bool>>,
 }
 
 impl ServerHarness {
@@ -61,6 +63,7 @@ impl ServerHarness {
             minio_console_port,
             rest_catalog_port,
             http_port,
+            cleaned_up: std::sync::Arc::new(std::sync::Mutex::new(false)),
         })
     }
 
@@ -422,6 +425,19 @@ impl SmokeTestHarness for ServerHarness {
     }
 
     async fn cleanup(&self) -> Result<()> {
+        // Check if already cleaned up
+        {
+            let mut cleaned = self.cleaned_up.lock().unwrap();
+            if *cleaned {
+                tracing::debug!(
+                    "Docker Compose project {} already cleaned up, skipping",
+                    self.compose_project_name
+                );
+                return Ok(());
+            }
+            *cleaned = true;
+        }
+
         tracing::info!(
             "Cleaning up Docker Compose project: {}",
             self.compose_project_name
@@ -445,6 +461,49 @@ impl SmokeTestHarness for ServerHarness {
             Err(e) => {
                 tracing::warn!("Failed to run docker compose down: {}", e);
                 Ok(()) // Don't fail on cleanup errors
+            }
+        }
+    }
+}
+
+impl Drop for ServerHarness {
+    fn drop(&mut self) {
+        // Check if cleanup has already been run
+        let already_cleaned = {
+            let cleaned = self.cleaned_up.lock().unwrap();
+            *cleaned
+        };
+
+        if already_cleaned {
+            return;
+        }
+
+        // Mark as cleaned up before running cleanup to avoid recursion
+        {
+            let mut cleaned = self.cleaned_up.lock().unwrap();
+            *cleaned = true;
+        }
+
+        tracing::info!(
+            "Drop: Cleaning up Docker Compose project: {}",
+            self.compose_project_name
+        );
+
+        // Use blocking command since Drop can't be async
+        let output = std::process::Command::new("docker")
+            .args(["compose", "-p", &self.compose_project_name, "down", "-v"])
+            .output();
+
+        match output {
+            Ok(out) if out.status.success() => {
+                tracing::info!("Docker Compose cleanup successful (Drop)");
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                tracing::warn!("Docker Compose cleanup had issues (Drop): {}", stderr);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to run docker compose down (Drop): {}", e);
             }
         }
     }

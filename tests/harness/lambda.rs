@@ -50,11 +50,6 @@ pub struct LambdaHarness {
 }
 
 impl LambdaHarness {
-    /// Create harness from environment variables with S3 Tables catalog (default)
-    pub async fn from_env() -> Result<Self> {
-        Self::with_catalog_mode(CatalogMode::Enabled).await
-    }
-
     /// Create harness with specific catalog mode
     pub async fn with_catalog_mode(catalog_mode: CatalogMode) -> Result<Self> {
         let stack_prefix =

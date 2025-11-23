@@ -334,18 +334,18 @@ test-smoke: ## Run smoke tests for all platforms (requires Docker + cloud creden
 	@echo "==> Running unified smoke tests for all platforms..."
 	@cargo test --test smoke --features smoke-server,smoke-lambda,smoke-workers
 
-.PHONY: test-smoke-server
-test-smoke-server: ## Run server smoke tests only (requires Docker)
+.PHONY: smoke-server
+smoke-server: ## Run server smoke tests only (requires Docker)
 	@echo "==> Running server smoke tests (both catalog modes)..."
 	@cargo test --test smoke --features smoke-server
 
-.PHONY: test-smoke-server-verbose
-test-smoke-server-verbose: ## Run server smoke tests with verbose output
+.PHONY: smoke-server-verbose
+smoke-server-verbose: ## Run server smoke tests with verbose output
 	@echo "==> Running server smoke tests (verbose mode)..."
 	cargo test --test smoke --features smoke-server -- --nocapture
 
 .PHONY: test-all
-test-all: test test-smoke-server ## Run unit tests + server smoke tests
+test-all: test smoke-server ## Run unit tests + server smoke tests
 
 #
 # Platform Smoke Tests (requires cloud credentials)
@@ -373,7 +373,7 @@ smoke-workers: wasm-compress ## Run Workers + R2 Catalog smoke tests (requires C
 smoke-all: smoke-lambda smoke-workers ## Run all platform smoke tests (requires all cloud credentials)
 
 .PHONY: test-full
-test-full: test test-smoke-server ## Run unit tests + server smoke tests (no cloud required)
+test-full: test smoke-server ## Run unit tests + server smoke tests (no cloud required)
 
 .PHONY: test-ci
 test-ci: test-full smoke-all ## Run complete test suite including cloud smoke tests

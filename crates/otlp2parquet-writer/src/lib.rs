@@ -10,7 +10,7 @@ mod table_mapping;
 mod write;
 
 pub use catalog::{ensure_namespace, initialize_catalog, CatalogConfig, CatalogType};
-pub use error::{Result, WriterError};
+pub use error::{ErrorCode, Result, WriterError};
 pub use storage::initialize_storage;
 pub use table_mapping::table_name_for_signal;
 pub use write::{write_batch, RetryPolicy, WriteBatchRequest};

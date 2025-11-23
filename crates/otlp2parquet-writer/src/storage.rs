@@ -20,7 +20,7 @@ pub fn initialize_storage(config: &RuntimeConfig) -> crate::Result<()> {
         #[cfg(not(target_arch = "wasm32"))]
         StorageBackend::Fs => {
             let fs = config.storage.fs.as_ref().ok_or_else(|| {
-                crate::WriterError::WriteFailure(
+                crate::WriterError::write_failure(
                     "fs config required for filesystem backend".to_string(),
                 )
             })?;
@@ -28,7 +28,7 @@ pub fn initialize_storage(config: &RuntimeConfig) -> crate::Result<()> {
             let fs_builder = opendal::services::Fs::default().root(&fs.path);
             opendal::Operator::new(fs_builder)
                 .map_err(|e| {
-                    crate::WriterError::WriteFailure(format!(
+                    crate::WriterError::write_failure(format!(
                         "Failed to create filesystem operator: {}",
                         e
                     ))
@@ -37,13 +37,13 @@ pub fn initialize_storage(config: &RuntimeConfig) -> crate::Result<()> {
         }
         #[cfg(target_arch = "wasm32")]
         StorageBackend::Fs => {
-            return Err(crate::WriterError::WriteFailure(
+            return Err(crate::WriterError::write_failure(
                 "Filesystem storage backend not supported in WASM environments".to_string(),
             ));
         }
         StorageBackend::S3 => {
             let s3 = config.storage.s3.as_ref().ok_or_else(|| {
-                crate::WriterError::WriteFailure("s3 config required for S3 backend".to_string())
+                crate::WriterError::write_failure("s3 config required for S3 backend".to_string())
             })?;
 
             let mut s3_builder = opendal::services::S3::default()
@@ -56,13 +56,16 @@ pub fn initialize_storage(config: &RuntimeConfig) -> crate::Result<()> {
 
             opendal::Operator::new(s3_builder)
                 .map_err(|e| {
-                    crate::WriterError::WriteFailure(format!("Failed to create S3 operator: {}", e))
+                    crate::WriterError::write_failure(format!(
+                        "Failed to create S3 operator: {}",
+                        e
+                    ))
                 })?
                 .finish()
         }
         StorageBackend::R2 => {
             let r2 = config.storage.r2.as_ref().ok_or_else(|| {
-                crate::WriterError::WriteFailure("r2 config required for R2 backend".to_string())
+                crate::WriterError::write_failure("r2 config required for R2 backend".to_string())
             })?;
 
             // Use endpoint from config if provided, otherwise construct from account_id
@@ -80,7 +83,10 @@ pub fn initialize_storage(config: &RuntimeConfig) -> crate::Result<()> {
 
             opendal::Operator::new(r2_builder)
                 .map_err(|e| {
-                    crate::WriterError::WriteFailure(format!("Failed to create R2 operator: {}", e))
+                    crate::WriterError::write_failure(format!(
+                        "Failed to create R2 operator: {}",
+                        e
+                    ))
                 })?
                 .finish()
         }
