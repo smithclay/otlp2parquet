@@ -41,6 +41,9 @@ impl ServerHarness {
             project_name
         );
 
+        // Cleanup any stale Docker containers first
+        Self::cleanup_stale_containers().await;
+
         // Use OS-assigned ports to avoid conflicts
         let minio_api_port = Self::allocate_port().await?;
         let minio_console_port = Self::allocate_port().await?;
@@ -65,6 +68,56 @@ impl ServerHarness {
             http_port,
             cleaned_up: std::sync::Arc::new(std::sync::Mutex::new(false)),
         })
+    }
+
+    /// Cleanup stale Docker containers from previous test runs
+    async fn cleanup_stale_containers() {
+        tracing::info!("Checking for stale Docker containers...");
+
+        // List all compose projects matching our test pattern
+        let output = Command::new("docker")
+            .args([
+                "ps",
+                "-a",
+                "--filter",
+                "name=otlp2parquet-test-",
+                "--format",
+                "{{.Names}}",
+            ])
+            .output()
+            .await;
+
+        if let Ok(output) = output {
+            let containers = String::from_utf8_lossy(&output.stdout);
+            if !containers.is_empty() {
+                tracing::info!("Found stale containers, cleaning up...");
+
+                // Extract unique project names from container names
+                let mut projects = std::collections::HashSet::new();
+                for line in containers.lines() {
+                    if line.starts_with("otlp2parquet-test-") {
+                        // Extract project name: otlp2parquet-test-{uuid}
+                        let parts: Vec<&str> = line.splitn(4, '-').collect();
+                        if parts.len() >= 3 {
+                            let project_name = format!("{}-{}-{}", parts[0], parts[1], parts[2]);
+                            projects.insert(project_name);
+                        }
+                    }
+                }
+
+                // Clean up each stale project
+                for project in projects {
+                    tracing::debug!("Cleaning up stale project: {}", project);
+                    let _ = Command::new("docker")
+                        .args(["compose", "-p", &project, "down", "-v", "--remove-orphans"])
+                        .output()
+                        .await;
+                }
+
+                // Give Docker a moment to release ports
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        }
     }
 
     /// Allocate a random available port by binding to port 0
@@ -177,33 +230,75 @@ impl SmokeTestHarness for ServerHarness {
 
         tracing::info!("Starting services: {:?}", services);
 
-        // Start services with unique project name
-        let mut cmd = Command::new("docker");
-        cmd.args(["compose", "-p", &self.compose_project_name, "up", "-d"]);
+        // Retry logic for port binding issues
+        let max_retries = 3;
+        let mut last_error = None;
 
-        // Add environment variables for port configuration
-        for (key, value) in self.compose_env() {
-            tracing::debug!("Setting env: {}={}", key, value);
-            cmd.env(key, value);
-        }
+        for attempt in 1..=max_retries {
+            if attempt > 1 {
+                tracing::info!("Retry attempt {} of {}", attempt, max_retries);
+                // Clean up previous attempt
+                let _ = Command::new("docker")
+                    .args(["compose", "-p", &self.compose_project_name, "down", "-v"])
+                    .output()
+                    .await;
+                // Wait for ports to be released
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
 
-        // Add services
-        cmd.args(&services);
+            // Start services with unique project name
+            let mut cmd = Command::new("docker");
+            cmd.args(["compose", "-p", &self.compose_project_name, "up", "-d"]);
 
-        tracing::info!(
-            "Executing: docker compose -p {} up -d {:?}",
-            self.compose_project_name,
-            services
-        );
+            // Add environment variables for port configuration
+            for (key, value) in self.compose_env() {
+                tracing::debug!("Setting env: {}={}", key, value);
+                cmd.env(key, value);
+            }
 
-        let output = cmd
-            .output()
-            .await
-            .context("Failed to start docker compose")?;
+            // Add services
+            cmd.args(&services);
 
-        if !output.status.success() {
+            tracing::info!(
+                "Executing: docker compose -p {} up -d {:?} (attempt {})",
+                self.compose_project_name,
+                services,
+                attempt
+            );
+
+            let output = cmd
+                .output()
+                .await
+                .context("Failed to start docker compose")?;
+
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                tracing::debug!("Docker compose output:\n{}", stdout);
+                tracing::info!("Docker Compose services started successfully");
+                break;
+            }
+
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
+
+            // Check if it's a port binding error
+            if stderr.contains("address already in use")
+                || stderr.contains("port is already allocated")
+            {
+                tracing::warn!(
+                    "Port binding conflict on attempt {}: {}",
+                    attempt,
+                    stderr
+                        .lines()
+                        .find(|l| l.contains("address already in use")
+                            || l.contains("port is already allocated"))
+                        .unwrap_or("")
+                );
+                last_error = Some(format!("Port binding conflict: {}", stderr));
+                continue;
+            }
+
+            // Other error - fail immediately
             tracing::error!(
                 "Docker compose failed.\nSTDOUT:\n{}\nSTDERR:\n{}",
                 stdout,
@@ -212,9 +307,14 @@ impl SmokeTestHarness for ServerHarness {
             anyhow::bail!("Docker compose up failed: {}", stderr);
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        tracing::debug!("Docker compose output:\n{}", stdout);
-        tracing::info!("Docker Compose services started successfully");
+        // If we exhausted all retries, fail with the last error
+        if let Some(error) = last_error {
+            anyhow::bail!(
+                "Docker compose failed after {} retries: {}",
+                max_retries,
+                error
+            );
+        }
 
         // Build endpoint URLs with dynamic ports
         let minio_endpoint = format!("http://localhost:{}", self.minio_api_port);

@@ -143,9 +143,9 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
-  # End-to-end integration tests with Docker
-  e2e:
-    name: E2E Tests
+  # Server smoke tests with Docker (no cloud credentials required)
+  smoke-server:
+    name: Server Smoke Tests
     runs-on: ubuntu-latest
     # Skip on draft PRs to save CI resources
     if: github.event.pull_request.draft == false || github.ref == 'refs/heads/main'
@@ -156,17 +156,11 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          cache-prefix: e2e
+          cache-prefix: smoke-server
           cache-key: docker-tests
 
-      - name: Build Docker image
-        run: docker compose build otlp2parquet
-
-      - name: Run core pipeline tests
-        run: make test-e2e
-
-      - name: Run Iceberg integration tests
-        run: make test-e2e-iceberg
+      - name: Run server smoke tests
+        run: make smoke-server
 
       - name: Docker logs on failure
         if: failure()
@@ -182,7 +176,7 @@ jobs:
       - wasm-size
       - audit
       - docs
-      - e2e
+      - smoke-server
     if: startsWith(github.ref, 'refs/tags/v')
     uses: ./.github/workflows/build-artifacts.yml
     secrets: inherit
