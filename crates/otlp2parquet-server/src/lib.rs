@@ -123,11 +123,14 @@ async fn shutdown_signal() {
     }
 }
 
-/// Entry point for server mode
+/// Entry point for server mode (loads config automatically)
 pub async fn run() -> Result<()> {
-    // Load configuration
     let config = RuntimeConfig::load().context("Failed to load configuration")?;
+    run_with_config(config).await
+}
 
+/// Entry point for server mode with pre-loaded configuration (for CLI usage)
+pub async fn run_with_config(config: RuntimeConfig) -> Result<()> {
     // Initialize tracing with config
     init_tracing(&config);
 
