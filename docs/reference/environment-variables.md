@@ -46,7 +46,7 @@ These variables are automatically set by the runtime platform and used for auto-
 | Variable | Platforms | Required | Default | Description |
 |----------|-----------|----------|---------|-------------|
 | `OTLP2PARQUET_R2_BUCKET` | Cloudflare | Yes* | - | R2 bucket name |
-| `OTLP2PARQUET_R2_ACCOUNT_ID` | Cloudflare | Yes* | - | Cloudflare account ID |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare | Yes* | - | Cloudflare account ID |
 | `AWS_ACCESS_KEY_ID` | Cloudflare | Yes* | - | R2 S3 API access key (AWS standard, no prefix) |
 | `AWS_SECRET_ACCESS_KEY` | Cloudflare | Yes* | - | R2 S3 API secret key (AWS standard, no prefix) |
 | `AWS_ENDPOINT_URL` | Cloudflare | No | `https://{account_id}.r2.cloudflarestorage.com` | R2 S3-compatible endpoint URL (AWS standard, no prefix) |
@@ -194,7 +194,7 @@ OTLP2PARQUET_ICEBERG_NAMESPACE=otel
 ```bash
 OTLP2PARQUET_STORAGE_BACKEND=r2
 OTLP2PARQUET_R2_BUCKET=otlp-logs
-OTLP2PARQUET_R2_ACCOUNT_ID=abc123
+CLOUDFLARE_ACCOUNT_ID=abc123
 AWS_ACCESS_KEY_ID=***
 AWS_SECRET_ACCESS_KEY=***
 # AWS_ENDPOINT_URL=https://abc123.r2.cloudflarestorage.com  # Optional

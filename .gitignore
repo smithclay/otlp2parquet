@@ -30,6 +30,7 @@ optimized.wasm
 .wrangler/
 worker-build/
 build/
+wrangler.toml
 
 # AWS
 .aws-sam/
