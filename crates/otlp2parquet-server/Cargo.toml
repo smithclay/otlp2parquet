@@ -5,6 +5,10 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "otlp2parquet"
+path = "src/main.rs"
+
 [dependencies]
 otlp2parquet-core = { path = "../otlp2parquet-core" }
 otlp2parquet-batch = { path = "../otlp2parquet-batch" }
@@ -32,3 +36,4 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["e
 anyhow = { workspace = true }
 serde_json = { workspace = true }
 metrics = { version = "0.21", default-features = false }
+clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
