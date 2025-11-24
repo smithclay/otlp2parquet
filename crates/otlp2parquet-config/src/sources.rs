@@ -56,6 +56,35 @@ fn load_from_file() -> Result<Option<RuntimeConfig>> {
     Ok(None)
 }
 
+/// Load configuration from a specific file path (for CLI --config flag).
+/// Returns error if file doesn't exist or can't be parsed.
+pub fn load_from_file_path(path: impl AsRef<Path>) -> Result<RuntimeConfig> {
+    let path = path.as_ref();
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read config file: {}", path.display()))?;
+    let config: RuntimeConfig = toml::from_str(&content)
+        .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
+    Ok(config)
+}
+
+/// Load configuration with graceful fallback to defaults.
+/// Tries standard config file locations, returns platform defaults if none found.
+pub fn load_or_default(platform: Platform) -> Result<RuntimeConfig> {
+    let mut config = RuntimeConfig::from_platform_defaults(platform);
+
+    // Try to load from file, but don't fail if not found
+    if let Ok(Some(file_config)) = load_from_file() {
+        config.merge(file_config);
+    }
+
+    // Apply environment overrides
+    let env_source = StdEnvSource;
+    env_overrides::apply_env_overrides(&mut config, &env_source)?;
+
+    config.validate()?;
+    Ok(config)
+}
+
 struct StdEnvSource;
 
 impl EnvSource for StdEnvSource {

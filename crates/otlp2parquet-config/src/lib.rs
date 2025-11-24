@@ -451,6 +451,19 @@ impl RuntimeConfig {
         sources::load_config(platform)
     }
 
+    /// Load configuration from a specific file path (for CLI usage).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load_from_path(path: impl AsRef<std::path::Path>) -> Result<Self> {
+        sources::load_from_file_path(path)
+    }
+
+    /// Load configuration with graceful fallback to defaults.
+    /// Does not fail if config file is missing - uses platform defaults instead.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load_or_default() -> Result<Self> {
+        sources::load_or_default(Platform::detect())
+    }
+
     /// Construct a config that contains only platform defaults (no env or files).
     pub fn from_platform_defaults(platform: Platform) -> Self {
         platform_defaults(platform)
