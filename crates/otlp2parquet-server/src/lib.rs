@@ -33,7 +33,8 @@ mod handlers;
 mod init;
 
 use handlers::{handle_logs, handle_metrics, handle_traces, health_check, ready_check};
-use init::{init_tracing, init_writer};
+pub use init::init_tracing;
+use init::init_writer;
 
 /// Application state shared across all requests
 #[derive(Clone)]

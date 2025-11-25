@@ -165,7 +165,7 @@ pub(crate) async fn init_writer(
 }
 
 /// Initialize tracing/logging from RuntimeConfig
-pub(crate) fn init_tracing(config: &RuntimeConfig) {
+pub fn init_tracing(config: &RuntimeConfig) {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
     let Some(server) = config.server.as_ref() else {
@@ -179,12 +179,11 @@ pub(crate) fn init_tracing(config: &RuntimeConfig) {
 
     let registry = tracing_subscriber::registry().with(env_filter);
 
-    match server.log_format {
+    // Try to set the global subscriber; ignore error if already set (idempotent)
+    let _ = match server.log_format {
         LogFormat::Json => {
-            registry.with(fmt::layer().json()).init();
+            tracing::subscriber::set_global_default(registry.with(fmt::layer().json()))
         }
-        LogFormat::Text => {
-            registry.with(fmt::layer()).init();
-        }
-    }
+        LogFormat::Text => tracing::subscriber::set_global_default(registry.with(fmt::layer())),
+    };
 }

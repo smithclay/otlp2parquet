@@ -54,10 +54,18 @@ async fn async_main(cli: Cli) -> Result<()> {
     // Step 3: Apply desktop-friendly defaults
     apply_desktop_defaults(&mut config);
 
-    // Step 4: Validate configuration early (creates directories, tests write permissions)
+    // Step 4: Initialize tracing early so validation logs show up
+    // Note: run_with_config will also call init_tracing, but that's idempotent
+    use otlp2parquet_server::init_tracing;
+    init_tracing(&config);
+
+    // Step 5: Validate configuration early (creates directories, tests write permissions)
     validate_config(&config).await?;
 
-    // Step 5: Run server with resolved config
+    // Step 6: Display startup info
+    display_startup_info(&config);
+
+    // Step 7: Run server with resolved config
     otlp2parquet_server::run_with_config(config).await
 }
 
@@ -111,6 +119,54 @@ fn apply_desktop_defaults(config: &mut RuntimeConfig) {
     if config.catalog_mode == CatalogMode::Iceberg && config.iceberg.is_none() {
         config.catalog_mode = CatalogMode::None;
     }
+}
+
+fn display_startup_info(config: &RuntimeConfig) {
+    use otlp2parquet_config::StorageBackend;
+    use tracing::info;
+
+    let server = config.server.as_ref().expect("server config validated");
+
+    info!("╭─────────────────────────────────────────────────");
+    info!("│ otlp2parquet server starting");
+    info!("├─────────────────────────────────────────────────");
+    info!("│ Listen address: http://{}", server.listen_addr);
+    info!("│ Storage backend: {}", config.storage.backend);
+
+    if config.storage.backend == StorageBackend::Fs {
+        if let Some(fs) = &config.storage.fs {
+            info!("│ Output directory: {}", fs.path);
+        }
+    } else if config.storage.backend == StorageBackend::S3 {
+        if let Some(s3) = &config.storage.s3 {
+            info!("│ S3 bucket: {}", s3.bucket);
+            info!("│ S3 region: {}", s3.region);
+        }
+    } else if config.storage.backend == StorageBackend::R2 {
+        if let Some(r2) = &config.storage.r2 {
+            info!("│ R2 bucket: {}", r2.bucket);
+            info!("│ R2 account: {}", r2.account_id);
+        }
+    }
+
+    info!("│ Log level: {}", server.log_level);
+    info!("│ Catalog mode: {}", config.catalog_mode);
+    info!(
+        "│ Batching: {}",
+        if config.batch.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+
+    if config.batch.enabled {
+        info!("│   - Max rows: {}", config.batch.max_rows);
+        info!("│   - Max bytes: {} MB", config.batch.max_bytes / 1_048_576);
+        info!("│   - Max age: {}s", config.batch.max_age_secs);
+    }
+
+    info!("╰─────────────────────────────────────────────────");
 }
 
 async fn validate_config(config: &RuntimeConfig) -> Result<()> {
