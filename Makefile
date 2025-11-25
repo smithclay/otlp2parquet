@@ -93,6 +93,22 @@ build-cloudflare: ## Build Cloudflare Workers with worker-build
 	@SIZE=$$(stat -f%z crates/otlp2parquet-cloudflare/build/index_bg.wasm 2>/dev/null || stat -c%s crates/otlp2parquet-cloudflare/build/index_bg.wasm 2>/dev/null); \
 	python3 -c "import sys; size=int(sys.argv[1]); print(f\"==> WASM size: {size/1024:.1f} KB ({size/1024/1024:.3f} MB)\")" $$SIZE
 
+.PHONY: build-cli
+build-cli: ## Build CLI binary in release mode
+	@echo "==> Building otlp2parquet CLI binary..."
+	@cargo build --release --bin otlp2parquet
+	@echo "==> Binary available at: target/release/otlp2parquet"
+
+.PHONY: install-cli
+install-cli: build-cli ## Install CLI binary to /usr/local/bin (requires sudo)
+	@echo "==> Installing otlp2parquet to /usr/local/bin..."
+	@cp target/release/otlp2parquet /usr/local/bin/
+	@echo "==> Installed successfully. Run 'otlp2parquet --help' to get started."
+
+.PHONY: run-cli
+run-cli: ## Run CLI binary in development mode
+	@cargo run --bin otlp2parquet
+
 #
 # WASM-Specific Commands
 #
