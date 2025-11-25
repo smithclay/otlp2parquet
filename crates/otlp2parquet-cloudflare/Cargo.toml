@@ -16,7 +16,7 @@ otlp2parquet-writer = { path = "../otlp2parquet-writer" }
 otlp2parquet-handlers = { path = "../otlp2parquet-handlers", default-features = false }
 
 # Cloudflare Workers runtime
-worker = "0.6"
+worker = "0.7"
 wasm-bindgen = "0.2"
 
 # Utilities
