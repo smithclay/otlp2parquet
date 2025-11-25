@@ -19,7 +19,7 @@
 
 ## Platform & Feature Matrix
 
-| Feature / Platform | Docker (Server) | Cloudflare Workers | AWS Lambda |
+| Feature / Platform | CLI / Server | Cloudflare Workers | AWS Lambda |
 | :----------------- | :----------------- | :----------------- | :--------- |
 | **OTLP Protocol Support** | | | |
 | OTLP/HTTP-JSON | ✅ | ✅ | ✅ |
@@ -51,6 +51,36 @@
 
 ---
 
+## Quick Start
+
+### macOS/Linux CLI
+
+**Install from source:**
+```bash
+git clone https://github.com/smithclay/otlp2parquet
+cd otlp2parquet
+make build-cli
+./target/release/otlp2parquet
+```
+
+Server starts on http://localhost:4318 with data written to `./data`.
+
+**Common options:**
+```bash
+# Custom port and output directory
+otlp2parquet --port 8080 --output ./my-data
+
+# Enable debug logging
+otlp2parquet --log-level debug
+
+# Use custom config file
+otlp2parquet --config prod.toml
+```
+
+**Need help?** Run `otlp2parquet --help`
+
+---
+
 ## How It Works
 
 ```
@@ -72,6 +102,7 @@ OTLP Client → otlp2parquet → Parquet files ⬅ Query Engines
 
 ### Getting Started
 
+- [CLI Deployment](docs/setup/cli.md) - Local development with native binary
 - [AWS Lambda Deployment](docs/setup/aws-lambda.md) - 3-minute serverless deployment
 - [Docker Deployment](docs/setup/docker.md) - Self-hosted server
 - [Cloudflare Workers Deployment](docs/setup/cloudflare.md) - Edge deployment
