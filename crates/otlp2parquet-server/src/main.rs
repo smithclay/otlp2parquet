@@ -116,6 +116,7 @@ fn apply_desktop_defaults(config: &mut RuntimeConfig) {
 async fn validate_config(config: &RuntimeConfig) -> Result<()> {
     use otlp2parquet_config::StorageBackend;
     use std::fs;
+    use tracing::info;
 
     // Validate filesystem output directory if using fs backend
     if config.storage.backend == StorageBackend::Fs {
@@ -127,6 +128,7 @@ async fn validate_config(config: &RuntimeConfig) -> Result<()> {
 
         // Create directory if it doesn't exist
         if !output_path.exists() {
+            info!("Creating output directory: {}", fs_config.path);
             fs::create_dir_all(&output_path).with_context(|| {
                 format!("Failed to create output directory: {}", fs_config.path)
             })?;
@@ -141,6 +143,7 @@ async fn validate_config(config: &RuntimeConfig) -> Result<()> {
             )
         })?;
         fs::remove_file(&test_file).context("Failed to remove test file")?;
+        info!("Output directory validated: {}", fs_config.path);
     }
 
     // Validate server config exists
