@@ -128,7 +128,7 @@ fn display_startup_info(config: &RuntimeConfig) {
     let server = config.server.as_ref().expect("server config validated");
 
     info!("╭─────────────────────────────────────────────────");
-    info!("│ otlp2parquet server starting");
+    info!("│ otlp2parquet v{}", env!("CARGO_PKG_VERSION"));
     info!("├─────────────────────────────────────────────────");
     info!("│ Listen address: http://{}", server.listen_addr);
     info!("│ Storage backend: {}", config.storage.backend);
