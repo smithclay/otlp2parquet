@@ -54,7 +54,10 @@ async fn async_main(cli: Cli) -> Result<()> {
     // Step 3: Apply desktop-friendly defaults
     apply_desktop_defaults(&mut config);
 
-    // Step 4: Run server with resolved config
+    // Step 4: Validate configuration early (creates directories, tests write permissions)
+    validate_config(&config).await?;
+
+    // Step 5: Run server with resolved config
     otlp2parquet_server::run_with_config(config).await
 }
 
@@ -108,4 +111,43 @@ fn apply_desktop_defaults(config: &mut RuntimeConfig) {
     if config.catalog_mode == CatalogMode::Iceberg && config.iceberg.is_none() {
         config.catalog_mode = CatalogMode::None;
     }
+}
+
+async fn validate_config(config: &RuntimeConfig) -> Result<()> {
+    use otlp2parquet_config::StorageBackend;
+    use std::fs;
+
+    // Validate filesystem output directory if using fs backend
+    if config.storage.backend == StorageBackend::Fs {
+        let fs_config = config.storage.fs.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("filesystem backend requires storage.fs configuration")
+        })?;
+
+        let output_path = PathBuf::from(&fs_config.path);
+
+        // Create directory if it doesn't exist
+        if !output_path.exists() {
+            fs::create_dir_all(&output_path).with_context(|| {
+                format!("Failed to create output directory: {}", fs_config.path)
+            })?;
+        }
+
+        // Validate writability by creating a test file
+        let test_file = output_path.join(".otlp2parquet-write-test");
+        fs::write(&test_file, b"test").with_context(|| {
+            format!(
+                "Output directory '{}' is not writable. Check permissions.",
+                fs_config.path
+            )
+        })?;
+        fs::remove_file(&test_file).context("Failed to remove test file")?;
+    }
+
+    // Validate server config exists
+    config
+        .server
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("server configuration required"))?;
+
+    Ok(())
 }
