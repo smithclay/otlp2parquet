@@ -1,5 +1,9 @@
 # otlp2parquet
 
+[![CI](https://github.com/smithclay/otlp2parquet/actions/workflows/ci.yml/badge.svg)](https://github.com/smithclay/otlp2parquet/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/otlp2parquet)](https://crates.io/crates/otlp2parquet)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 What if your observability data was just Parquet files?
 
 This tool receives OpenTelemetry logs, metrics, and traces over HTTP and writes them as Parquet to local disk or cloud storage. Query with DuckDB, Spark, or anything that reads Parquet.
