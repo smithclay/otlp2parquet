@@ -55,31 +55,11 @@ markdown_extensions:
       permalink: true
 
 nav:
-  - 'Overview': 'index.md'
-  - 'Concepts':
-    - 'Architecture': 'concepts/architecture.md'
-    - 'Schema': 'concepts/schema.md'
-    - 'Configuration': 'concepts/configuration.md'
-    - 'Storage': 'concepts/storage.md'
-  - 'Setup':
-    - 'Overview': 'setup/overview.md'
-    - 'Docker': 'setup/docker.md'
-    - 'AWS Lambda': 'setup/aws-lambda.md'
-    - 'Cloudflare Workers': 'setup/cloudflare.md'
-  - 'Guides':
-    - 'Overview': 'guides/index.md'
-    - 'Sending Data': 'guides/sending-data.md'
-    - 'Troubleshooting': 'guides/troubleshooting.md'
-    - 'Lambda Local Development': 'guides/lambda-local-development.md'
-    - 'Plain S3 Storage': 'guides/plain-s3.md'
-    - 'Building from Source': 'guides/building-from-source.md'
-  - 'Reference':
-    - 'Environment Variables': 'reference/environment-variables.md'
-    - 'Catalog Types': 'reference/catalog-types.md'
-  - 'Contributing':
-    - 'Overview': 'contributing/overview.md'
-    - 'Performance': 'contributing/performance.md'
-    - 'Style Guide': 'contributing/style-guide.md'
+  - 'Home': 'index.md'
+  - 'Deploy': 'deploying.md'
+  - 'Send Data': 'sending-data.md'
+  - 'Query Data': 'querying.md'
+  - 'Reference': 'reference.md'
   - 'Query Demo ↗': 'https://smithclay.github.io/otlp2parquet/query-demo/'
 
 plugins:
