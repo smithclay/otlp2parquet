@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use otlp2parquet_config::RuntimeConfig;
 use std::path::PathBuf;
 
@@ -9,26 +9,47 @@ use std::path::PathBuf;
 #[command(version)]
 #[command(about = "OTLP HTTP server writing Parquet files to object storage", long_about = None)]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     /// Path to configuration file
-    #[arg(short, long, value_name = "FILE")]
+    #[arg(short, long, value_name = "FILE", global = true)]
     config: Option<PathBuf>,
 
     /// HTTP listen port (overrides config file)
-    #[arg(short, long, value_name = "PORT")]
+    #[arg(short, long, value_name = "PORT", global = true)]
     port: Option<u16>,
 
     /// Output directory for Parquet files (filesystem backend only)
-    #[arg(short, long, value_name = "DIR")]
+    #[arg(short, long, value_name = "DIR", global = true)]
     output: Option<PathBuf>,
 
     /// Log level: trace, debug, info, warn, error
-    #[arg(short = 'v', long, value_name = "LEVEL")]
+    #[arg(short = 'v', long, value_name = "LEVEL", global = true)]
     log_level: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Generate deployment configuration for cloud platforms
+    Deploy {
+        #[command(subcommand)]
+        platform: otlp2parquet_server::deploy::DeployCommand,
+    },
+    /// Start the HTTP server (default if no subcommand given)
+    Serve,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    match cli.command {
+        Some(Commands::Deploy { platform }) => platform.run(),
+        Some(Commands::Serve) | None => run_server(cli),
+    }
+}
+
+fn run_server(cli: Cli) -> Result<()> {
     // Build tokio runtime and run async server
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
