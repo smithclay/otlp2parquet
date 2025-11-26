@@ -149,7 +149,7 @@ impl WorkersHarness {
     /// Generate wrangler config from template
     fn generate_config(&self) -> Result<PathBuf> {
         let wrangler_dir =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/otlp2parquet-cloudflare");
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../otlp2parquet-cloudflare");
         let template_path = wrangler_dir.join("wrangler.template.toml");
         let template =
             fs::read_to_string(&template_path).context("Failed to read wrangler.template.toml")?;
@@ -297,7 +297,7 @@ impl SmokeTestHarness for WorkersHarness {
 
         // Deploy using wrangler CLI with generated config
         let wrangler_dir =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/otlp2parquet-cloudflare");
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../otlp2parquet-cloudflare");
         let deploy_cmd = format!(
             "cd {} && npx wrangler deploy --config {}",
             wrangler_dir.display(),
@@ -514,7 +514,7 @@ impl SmokeTestHarness for WorkersHarness {
 
         // Cleanup generated config file (gitignored via pattern)
         let wrangler_dir =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/otlp2parquet-cloudflare");
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../otlp2parquet-cloudflare");
         let config_path = wrangler_dir.join(format!("wrangler-{}.toml", self.worker_name));
         let _ = fs::remove_file(config_path);
 

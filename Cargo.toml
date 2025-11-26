@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/otlp2parquet",
     "crates/otlp2parquet-core",
     "crates/otlp2parquet-batch",
     "crates/otlp2parquet-config",
@@ -7,7 +8,6 @@ members = [
     "crates/otlp2parquet-proto",
     "crates/otlp2parquet-cloudflare",
     "crates/otlp2parquet-lambda",
-    "crates/otlp2parquet-cli",
     "crates/otlp2parquet-handlers",
 ]
 exclude = ["examples/generate-parquet-testdata"]
@@ -42,7 +42,7 @@ opt-level = "z"
 [profile.release.package.otlp2parquet-lambda]
 opt-level = 3
 
-[profile.release.package.otlp2parquet-cli]
+[profile.release.package.otlp2parquet]
 opt-level = 3
 
 [workspace.dependencies]
@@ -75,81 +75,3 @@ aws-config = { version = "1.8", default-features = false, features = ["rustls", 
 
 # Build dependencies
 prost-build = "0.13"
-
-[package]
-name = "otlp2parquet"
-version.workspace = true
-edition.workspace = true
-authors.workspace = true
-license.workspace = true
-repository.workspace = true
-
-[dependencies]
-otlp2parquet-core = { path = "crates/otlp2parquet-core" }
-otlp2parquet-batch = { path = "crates/otlp2parquet-batch" }
-otlp2parquet-cli = { path = "crates/otlp2parquet-cli" }
-
-# Runtime
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-
-# Utilities
-anyhow = { workspace = true }
-
-# Memory profiling (optional, enable with --features dhat-heap)
-dhat = { version = "0.3", optional = true }
-# Smoke test dependencies (optional, enabled by features)
-aws-sdk-cloudformation = { version = "1.55", default-features = false, features = ["rustls", "rt-tokio"], optional = true }
-aws-sdk-cloudwatchlogs = { version = "1.55", default-features = false, features = ["rustls", "rt-tokio"], optional = true }
-aws-sdk-s3tables = { version = "1.44", default-features = false, features = ["rustls", "rt-tokio"], optional = true }
-
-[dev-dependencies]
-# Benchmarking infrastructure
-criterion = { version = "0.5", default-features = false, features = ["html_reports"] }
-otlp2parquet-proto = { path = "crates/otlp2parquet-proto" }
-flate2 = "1.0"
-serde_json = { workspace = true }
-prost = { workspace = true }
-# Integration tests
-opendal = { version = "0.54", default-features = false, features = ["services-memory"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "process", "io-util", "fs"] }
-# Docker e2e tests
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-aws-config = { version = "1.5", default-features = false, features = ["rustls", "behavior-version-latest", "rt-tokio"] }
-aws-sdk-s3 = { version = "1.55", default-features = false, features = ["rustls", "rt-tokio"] }
-aws-credential-types = "1.2"
-# Smoke test dependencies
-async-trait = "0.1"
-uuid = { version = "1", features = ["v4"] }
-serde = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-chrono = { workspace = true }
-paste = "1.0"
-
-[features]
-default = []
-dhat-heap = ["dep:dhat"]
-docker-tests = []
-smoke-server = []
-smoke-lambda = ["dep:aws-sdk-cloudformation", "dep:aws-sdk-cloudwatchlogs", "dep:aws-sdk-s3tables"]
-smoke-workers = []
-
-[[bin]]
-name = "otlp2parquet"
-path = "src/main.rs"
-
-[lib]
-path = "src/lib.rs"
-
-[build-dependencies]
-prost-build = { workspace = true }
-
-# Benchmark targets
-# TODO: Rewrite e2e_pipeline and parquet_write benchmarks for new otlp2parquet-writer architecture
-[[bench]]
-name = "decode_otlp"
-harness = false
-
-[[bench]]
-name = "transform_arrow"
-harness = false

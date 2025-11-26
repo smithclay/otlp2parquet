@@ -1,0 +1,86 @@
+[package]
+name = "otlp2parquet"
+description = "Stream OpenTelemetry logs, metrics, and traces to Parquet files"
+readme = "../../README.md"
+keywords = ["opentelemetry", "otlp", "parquet", "observability", "telemetry"]
+categories = ["command-line-utilities", "database"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "otlp2parquet"
+path = "src/main.rs"
+
+[dependencies]
+otlp2parquet-core = { path = "../otlp2parquet-core" }
+otlp2parquet-batch = { path = "../otlp2parquet-batch" }
+otlp2parquet-config = { path = "../otlp2parquet-config" }
+otlp2parquet-writer = { path = "../otlp2parquet-writer" }
+arrow = { workspace = true }
+parquet = { workspace = true }
+prost = { workspace = true }
+opendal = { version = "0.54", default-features = false, features = ["services-fs", "services-s3"] }
+chrono = { workspace = true }
+
+# HTTP server
+axum = { version = "0.7", default-features = false, features = ["tokio", "http1", "http2", "json"] }
+tower = { version = "0.4", default-features = false }
+tower-http = { version = "0.5", default-features = false, features = ["trace"] }
+
+# Async runtime
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros", "signal"] }
+
+# Structured logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "json"] }
+
+# Utilities
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+metrics = { version = "0.21", default-features = false }
+clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+dialoguer = { version = "0.12", default-features = false, features = ["password"] }
+rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
+
+# Optional dependencies for smoke tests
+dhat = { version = "0.3", optional = true }
+aws-sdk-cloudformation = { version = "1.55", default-features = false, features = ["rustls", "rt-tokio"], optional = true }
+aws-sdk-cloudwatchlogs = { version = "1.55", default-features = false, features = ["rustls", "rt-tokio"], optional = true }
+aws-sdk-s3tables = { version = "1.44", default-features = false, features = ["rustls", "rt-tokio"], optional = true }
+
+[dev-dependencies]
+tempfile = "3.13"
+# Benchmarking infrastructure
+criterion = { version = "0.5", default-features = false, features = ["html_reports"] }
+otlp2parquet-proto = { path = "../otlp2parquet-proto" }
+flate2 = "1.0"
+# Integration tests
+opendal = { version = "0.54", default-features = false, features = ["services-memory"] }
+# Docker e2e tests
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+aws-config = { version = "1.5", default-features = false, features = ["rustls", "behavior-version-latest", "rt-tokio"] }
+aws-sdk-s3 = { version = "1.55", default-features = false, features = ["rustls", "rt-tokio"] }
+aws-credential-types = "1.2"
+# Smoke test dependencies
+async-trait = "0.1"
+uuid = { version = "1", features = ["v4"] }
+serde = { workspace = true }
+paste = "1.0"
+
+[features]
+default = []
+dhat-heap = ["dep:dhat"]
+docker-tests = []
+smoke-server = []
+smoke-lambda = ["dep:aws-sdk-cloudformation", "dep:aws-sdk-cloudwatchlogs", "dep:aws-sdk-s3tables"]
+smoke-workers = []
+
+[[bench]]
+name = "decode_otlp"
+harness = false
+
+[[bench]]
+name = "transform_arrow"
+harness = false

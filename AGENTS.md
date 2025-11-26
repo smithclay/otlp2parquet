@@ -17,7 +17,7 @@ Ingest OTLP logs/metrics/traces over HTTP (protobuf/JSON/JSONL), convert to Arro
 - `otlp2parquet-config`: Config parsing/defaults and platform detection.
 - `otlp2parquet-writer`: `OtlpWriter` + `IcepickWriter`; plain Parquet + optional Iceberg via icepick; warn-and-succeed on catalog failures.
 - `otlp2parquet-handlers`: Shared HTTP/signal processing (parse -> convert -> write) reused by Cloudflare/Lambda/Server.
-- Platform crates: `otlp2parquet-cloudflare` (WASM, R2-only, optional R2 catalog), `otlp2parquet-lambda` (S3/S3 Tables), `otlp2parquet-cli` (Axum, multi-backend). `otlp2parquet-proto` holds generated OTLP protos.
+- Platform crates: `otlp2parquet-cloudflare` (WASM, R2-only, optional R2 catalog), `otlp2parquet-lambda` (S3/S3 Tables), `otlp2parquet` (Axum, multi-backend CLI). `otlp2parquet-proto` holds generated OTLP protos.
 
 ## Signals & Partitioning
 - **Logs**: single schema; `logs/{service}/year={year}/month={month}/day={day}/hour={hour}/{timestamp}-{uuid}.parquet`.

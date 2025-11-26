@@ -79,7 +79,7 @@ impl LambdaHarness {
             CatalogMode::None => "lambda-template-plain-parquet.yaml",
         };
         let template_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("scripts/smoke")
+            .join("../../scripts/smoke")
             .join(template_filename);
 
         Ok(Self {

@@ -3,11 +3,20 @@
 // These tests verify the full pipeline from OTLP ingestion to Parquet storage
 
 use std::fs;
+use std::path::PathBuf;
+
+/// Get path to workspace root testdata directory
+fn testdata_path(file: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("testdata")
+        .join(file)
+}
 
 #[tokio::test]
 async fn test_logs_ingestion_protobuf() {
     // Load test payload from testdata
-    let payload = fs::read("testdata/logs.pb").expect("Failed to read logs.pb test file");
+    let payload = fs::read(testdata_path("logs.pb")).expect("Failed to read logs.pb test file");
 
     // Use the core library to process the data directly
     let result =
@@ -29,7 +38,7 @@ async fn test_logs_ingestion_protobuf() {
 
 #[tokio::test]
 async fn test_logs_ingestion_json() {
-    let payload = fs::read("testdata/log.json").expect("Failed to read log.json test file");
+    let payload = fs::read(testdata_path("log.json")).expect("Failed to read log.json test file");
 
     let result =
         otlp2parquet_core::parse_otlp_to_arrow(&payload, otlp2parquet_core::InputFormat::Json);
@@ -59,7 +68,7 @@ async fn test_logs_ingestion_json() {
 //     let writer = Arc::new(ParquetWriter::new(op.clone()));
 //
 //     // Load and parse test data
-//     let payload = fs::read("testdata/logs.pb").expect("Failed to read logs.pb");
+//     let payload = fs::read(testdata_path("logs.pb")).expect("Failed to read logs.pb");
 //     let (batch, metadata) =
 //         otlp2parquet_core::parse_otlp_to_arrow(&payload, otlp2parquet_core::InputFormat::Protobuf)
 //             .expect("Failed to parse logs");
@@ -90,7 +99,7 @@ async fn test_logs_ingestion_json() {
 
 #[tokio::test]
 async fn test_logs_jsonl_format() {
-    let payload = fs::read("testdata/logs.jsonl").expect("Failed to read logs.jsonl");
+    let payload = fs::read(testdata_path("logs.jsonl")).expect("Failed to read logs.jsonl");
 
     let result =
         otlp2parquet_core::parse_otlp_to_arrow(&payload, otlp2parquet_core::InputFormat::Jsonl);
@@ -114,7 +123,8 @@ async fn test_logs_jsonl_format() {
 async fn test_metrics_gauge_protobuf() {
     use otlp2parquet_core::otlp::metrics;
 
-    let payload = fs::read("testdata/metrics_gauge.pb").expect("Failed to read metrics_gauge.pb");
+    let payload =
+        fs::read(testdata_path("metrics_gauge.pb")).expect("Failed to read metrics_gauge.pb");
 
     let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Protobuf)
         .expect("Failed to parse metrics request");
@@ -137,7 +147,7 @@ async fn test_metrics_gauge_protobuf() {
 async fn test_metrics_sum_protobuf() {
     use otlp2parquet_core::otlp::metrics;
 
-    let payload = fs::read("testdata/metrics_sum.pb").expect("Failed to read metrics_sum.pb");
+    let payload = fs::read(testdata_path("metrics_sum.pb")).expect("Failed to read metrics_sum.pb");
 
     let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Protobuf)
         .expect("Failed to parse metrics request");
@@ -160,8 +170,8 @@ async fn test_metrics_sum_protobuf() {
 async fn test_metrics_histogram_protobuf() {
     use otlp2parquet_core::otlp::metrics;
 
-    let payload =
-        fs::read("testdata/metrics_histogram.pb").expect("Failed to read metrics_histogram.pb");
+    let payload = fs::read(testdata_path("metrics_histogram.pb"))
+        .expect("Failed to read metrics_histogram.pb");
 
     let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Protobuf)
         .expect("Failed to parse metrics request");
@@ -184,7 +194,7 @@ async fn test_metrics_histogram_protobuf() {
 async fn test_metrics_exponential_histogram_protobuf() {
     use otlp2parquet_core::otlp::metrics;
 
-    let payload = fs::read("testdata/metrics_exponential_histogram.pb")
+    let payload = fs::read(testdata_path("metrics_exponential_histogram.pb"))
         .expect("Failed to read metrics_exponential_histogram.pb");
 
     let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Protobuf)
@@ -212,7 +222,7 @@ async fn test_metrics_summary_protobuf() {
     use otlp2parquet_core::otlp::metrics;
 
     let payload =
-        fs::read("testdata/metrics_summary.pb").expect("Failed to read metrics_summary.pb");
+        fs::read(testdata_path("metrics_summary.pb")).expect("Failed to read metrics_summary.pb");
 
     let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Protobuf)
         .expect("Failed to parse metrics request");
@@ -240,7 +250,7 @@ async fn test_metrics_gauge_json() {
     use otlp2parquet_core::otlp::metrics;
 
     let payload =
-        fs::read("testdata/metrics_gauge.json").expect("Failed to read metrics_gauge.json");
+        fs::read(testdata_path("metrics_gauge.json")).expect("Failed to read metrics_gauge.json");
 
     let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Json)
         .expect("Failed to parse metrics JSON request");
@@ -263,7 +273,8 @@ async fn test_metrics_gauge_json() {
 async fn test_metrics_sum_json() {
     use otlp2parquet_core::otlp::metrics;
 
-    let payload = fs::read("testdata/metrics_sum.json").expect("Failed to read metrics_sum.json");
+    let payload =
+        fs::read(testdata_path("metrics_sum.json")).expect("Failed to read metrics_sum.json");
 
     let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Json)
         .expect("Failed to parse metrics JSON request");
@@ -286,8 +297,8 @@ async fn test_metrics_sum_json() {
 async fn test_metrics_histogram_json() {
     use otlp2parquet_core::otlp::metrics;
 
-    let payload =
-        fs::read("testdata/metrics_histogram.json").expect("Failed to read metrics_histogram.json");
+    let payload = fs::read(testdata_path("metrics_histogram.json"))
+        .expect("Failed to read metrics_histogram.json");
 
     let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Json)
         .expect("Failed to parse metrics JSON request");
@@ -310,7 +321,7 @@ async fn test_metrics_histogram_json() {
 async fn test_metrics_exponential_histogram_json() {
     use otlp2parquet_core::otlp::metrics;
 
-    let payload = fs::read("testdata/metrics_exponential_histogram.json")
+    let payload = fs::read(testdata_path("metrics_exponential_histogram.json"))
         .expect("Failed to read metrics_exponential_histogram.json");
 
     let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Json)
@@ -337,8 +348,8 @@ async fn test_metrics_exponential_histogram_json() {
 async fn test_metrics_summary_json() {
     use otlp2parquet_core::otlp::metrics;
 
-    let payload =
-        fs::read("testdata/metrics_summary.json").expect("Failed to read metrics_summary.json");
+    let payload = fs::read(testdata_path("metrics_summary.json"))
+        .expect("Failed to read metrics_summary.json");
 
     let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Json)
         .expect("Failed to parse metrics JSON request");
@@ -362,7 +373,7 @@ async fn test_metrics_mixed_json() {
     use otlp2parquet_core::otlp::metrics;
 
     let payload =
-        fs::read("testdata/metrics_mixed.json").expect("Failed to read metrics_mixed.json");
+        fs::read(testdata_path("metrics_mixed.json")).expect("Failed to read metrics_mixed.json");
 
     let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Json)
         .expect("Failed to parse metrics JSON request");
@@ -390,7 +401,7 @@ async fn test_metrics_gauge_jsonl() {
     use otlp2parquet_core::otlp::metrics;
 
     let payload =
-        fs::read("testdata/metrics_gauge.jsonl").expect("Failed to read metrics_gauge.jsonl");
+        fs::read(testdata_path("metrics_gauge.jsonl")).expect("Failed to read metrics_gauge.jsonl");
 
     let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Jsonl)
         .expect("Failed to parse metrics JSONL request");
@@ -413,7 +424,8 @@ async fn test_metrics_gauge_jsonl() {
 async fn test_metrics_sum_jsonl() {
     use otlp2parquet_core::otlp::metrics;
 
-    let payload = fs::read("testdata/metrics_sum.jsonl").expect("Failed to read metrics_sum.jsonl");
+    let payload =
+        fs::read(testdata_path("metrics_sum.jsonl")).expect("Failed to read metrics_sum.jsonl");
 
     let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Jsonl)
         .expect("Failed to parse metrics JSONL request");
@@ -436,7 +448,7 @@ async fn test_metrics_sum_jsonl() {
 async fn test_metrics_histogram_jsonl() {
     use otlp2parquet_core::otlp::metrics;
 
-    let payload = fs::read("testdata/metrics_histogram.jsonl")
+    let payload = fs::read(testdata_path("metrics_histogram.jsonl"))
         .expect("Failed to read metrics_histogram.jsonl");
 
     let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Jsonl)
@@ -460,7 +472,7 @@ async fn test_metrics_histogram_jsonl() {
 async fn test_metrics_exponential_histogram_jsonl() {
     use otlp2parquet_core::otlp::metrics;
 
-    let payload = fs::read("testdata/metrics_exponential_histogram.jsonl")
+    let payload = fs::read(testdata_path("metrics_exponential_histogram.jsonl"))
         .expect("Failed to read metrics_exponential_histogram.jsonl");
 
     let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Jsonl)
@@ -487,8 +499,8 @@ async fn test_metrics_exponential_histogram_jsonl() {
 async fn test_metrics_summary_jsonl() {
     use otlp2parquet_core::otlp::metrics;
 
-    let payload =
-        fs::read("testdata/metrics_summary.jsonl").expect("Failed to read metrics_summary.jsonl");
+    let payload = fs::read(testdata_path("metrics_summary.jsonl"))
+        .expect("Failed to read metrics_summary.jsonl");
 
     let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Jsonl)
         .expect("Failed to parse metrics JSONL request");
@@ -512,7 +524,7 @@ async fn test_metrics_mixed_jsonl() {
     use otlp2parquet_core::otlp::metrics;
 
     let payload =
-        fs::read("testdata/metrics_mixed.jsonl").expect("Failed to read metrics_mixed.jsonl");
+        fs::read(testdata_path("metrics_mixed.jsonl")).expect("Failed to read metrics_mixed.jsonl");
 
     let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Jsonl)
         .expect("Failed to parse metrics JSONL request");
@@ -543,7 +555,7 @@ async fn test_metrics_mixed_jsonl() {
 async fn test_traces_protobuf() {
     use otlp2parquet_core::otlp::traces;
 
-    let payload = fs::read("testdata/trace.pb").expect("Failed to read trace.pb");
+    let payload = fs::read(testdata_path("trace.pb")).expect("Failed to read trace.pb");
 
     let request =
         traces::parse_otlp_trace_request(&payload, otlp2parquet_core::InputFormat::Protobuf)
@@ -572,7 +584,7 @@ async fn test_traces_protobuf() {
 async fn test_traces_json_format() {
     use otlp2parquet_core::otlp::traces;
 
-    let payload = fs::read("testdata/trace.json").expect("Failed to read trace.json");
+    let payload = fs::read(testdata_path("trace.json")).expect("Failed to read trace.json");
 
     let request = traces::parse_otlp_trace_request(&payload, otlp2parquet_core::InputFormat::Json)
         .expect("Failed to parse trace request");
@@ -605,7 +617,7 @@ async fn test_traces_json_format() {
 //     let writer = Arc::new(ParquetWriter::new(op.clone()));
 //
 //     // Load and parse test data
-//     let payload = fs::read("testdata/traces.pb").expect("Failed to read traces.pb");
+//     let payload = fs::read(testdata_path("traces.pb")).expect("Failed to read traces.pb");
 //     let request =
 //         traces::parse_otlp_trace_request(&payload, otlp2parquet_core::InputFormat::Protobuf)
 //             .expect("Failed to parse trace request");
@@ -649,7 +661,7 @@ async fn test_traces_json_format() {
 
 #[tokio::test]
 async fn test_invalid_severity_number() {
-    let payload = fs::read("testdata/invalid/log_invalid_severity.json")
+    let payload = fs::read(testdata_path("invalid/log_invalid_severity.json"))
         .expect("Failed to read invalid test file");
 
     let result =
@@ -666,7 +678,7 @@ async fn test_invalid_severity_number() {
 
 #[tokio::test]
 async fn test_invalid_base64_trace_id() {
-    let payload = fs::read("testdata/invalid/trace_invalid_base64.json")
+    let payload = fs::read(testdata_path("invalid/trace_invalid_base64.json"))
         .expect("Failed to read invalid test file");
 
     let result =
@@ -683,7 +695,7 @@ async fn test_invalid_base64_trace_id() {
 
 #[tokio::test]
 async fn test_invalid_aggregation_temporality() {
-    let payload = fs::read("testdata/invalid/metrics_invalid_temporality.json")
+    let payload = fs::read(testdata_path("invalid/metrics_invalid_temporality.json"))
         .expect("Failed to read invalid test file");
 
     let result =
@@ -699,8 +711,8 @@ async fn test_invalid_aggregation_temporality() {
 
 #[tokio::test]
 async fn test_malformed_json() {
-    let payload =
-        fs::read("testdata/invalid/malformed.json").expect("Failed to read invalid test file");
+    let payload = fs::read(testdata_path("invalid/malformed.json"))
+        .expect("Failed to read invalid test file");
 
     let result =
         otlp2parquet_core::parse_otlp_to_arrow(&payload, otlp2parquet_core::InputFormat::Json);
@@ -722,7 +734,7 @@ async fn test_malformed_json() {
 
 #[tokio::test]
 async fn test_invalid_span_kind() {
-    let payload = fs::read("testdata/invalid/trace_invalid_kind.json")
+    let payload = fs::read(testdata_path("invalid/trace_invalid_kind.json"))
         .expect("Failed to read invalid test file");
 
     let result =
@@ -738,7 +750,7 @@ async fn test_invalid_span_kind() {
 
 #[tokio::test]
 async fn test_invalid_trace_id_encoding() {
-    let payload = fs::read("testdata/invalid/trace_mixed_encoding.json")
+    let payload = fs::read(testdata_path("invalid/trace_mixed_encoding.json"))
         .expect("Failed to read invalid test file");
 
     let result =

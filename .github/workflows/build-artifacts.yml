@@ -51,7 +51,7 @@ jobs:
       - name: Build CLI binary
         env:
           TARGET: ${{ matrix.target }}
-        run: cargo build --release --target "$TARGET" -p otlp2parquet-cli --bin otlp2parquet
+        run: cargo build --release --target "$TARGET" -p otlp2parquet --bin otlp2parquet
 
       - name: Package binary
         run: |

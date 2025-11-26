@@ -2635,6 +2635,7 @@ name = "otlp2parquet"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "arrow",
  "async-trait",
  "aws-config",
  "aws-credential-types",
@@ -2642,22 +2643,31 @@ dependencies = [
  "aws-sdk-cloudwatchlogs",
  "aws-sdk-s3",
  "aws-sdk-s3tables",
+ "axum",
  "chrono",
+ "clap",
  "criterion",
  "dhat",
+ "dialoguer",
  "flate2",
+ "metrics",
  "opendal",
  "otlp2parquet-batch",
- "otlp2parquet-cli",
+ "otlp2parquet-config",
  "otlp2parquet-core",
  "otlp2parquet-proto",
+ "otlp2parquet-writer",
+ "parquet",
  "paste",
  "prost",
- "prost-build",
+ "rand 0.8.5",
  "reqwest",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
+ "tower 0.4.13",
+ "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -2673,34 +2683,6 @@ dependencies = [
  "otlp2parquet-proto",
  "parking_lot",
  "prost",
-]
-
-[[package]]
-name = "otlp2parquet-cli"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "arrow",
- "axum",
- "chrono",
- "clap",
- "dialoguer",
- "metrics",
- "opendal",
- "otlp2parquet-batch",
- "otlp2parquet-config",
- "otlp2parquet-core",
- "otlp2parquet-writer",
- "parquet",
- "prost",
- "rand 0.8.5",
- "serde_json",
- "tempfile",
- "tokio",
- "tower 0.4.13",
- "tower-http 0.5.2",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -4296,17 +4278,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-log"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee855f1f400bd0e5c02d150ae5de3840039a3f54b025156404e34c23c03f47c3"
-dependencies = [
- "log",
- "once_cell",
- "tracing-core",
-]
-
-[[package]]
 name = "tracing-serde"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4329,11 +4300,9 @@ dependencies = [
  "serde",
  "serde_json",
  "sharded-slab",
- "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
- "tracing-log",
  "tracing-serde",
 ]
 
