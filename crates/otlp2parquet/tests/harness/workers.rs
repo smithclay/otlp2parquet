@@ -31,8 +31,8 @@ use anyhow::{Context, Result};
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{config::Builder as S3ConfigBuilder, Client as S3Client};
+use otlp2parquet::deploy::cloudflare::process_conditional_blocks;
 use std::collections::HashMap;
-use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
@@ -146,37 +146,43 @@ impl WorkersHarness {
         })
     }
 
-    /// Generate wrangler config from template
+    /// Generate wrangler config from shared template
     fn generate_config(&self) -> Result<PathBuf> {
         let wrangler_dir =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../otlp2parquet-cloudflare");
-        let template_path = wrangler_dir.join("wrangler.template.toml");
-        let template =
-            fs::read_to_string(&template_path).context("Failed to read wrangler.template.toml")?;
+
+        // Use the shared template from otlp2parquet crate
+        let template = include_str!("../../templates/wrangler.toml");
+
+        let use_iceberg = self.catalog_mode == CatalogMode::Enabled;
+        let catalog_mode = if use_iceberg { "iceberg" } else { "none" };
 
         // Replace placeholders
-        let mut config_content = template
+        let config_content = template
             .replace("{{WORKER_NAME}}", &self.worker_name)
             .replace("{{BUCKET_NAME}}", &self.bucket_name)
-            .replace("{{CLOUDFLARE_ACCOUNT_ID}}", &self.account_id)
+            .replace("{{ACCOUNT_ID}}", &self.account_id)
             .replace("{{R2_ACCESS_KEY_ID}}", &self.r2_access_key_id)
-            .replace("{{R2_SECRET_ACCESS_KEY}}", &self.r2_secret_access_key);
+            .replace("{{R2_SECRET_ACCESS_KEY}}", &self.r2_secret_access_key)
+            .replace("{{CATALOG_MODE}}", catalog_mode)
+            .replace("{{CLOUDFLARE_API_TOKEN}}", &self.api_token)
+            .replace("{{BASIC_AUTH_ENABLED}}", "false");
 
-        // Add catalog configuration if enabled
-        if self.catalog_mode == CatalogMode::Enabled {
-            // Set catalog mode to iceberg
-            config_content = config_content.replace(
-                "OTLP2PARQUET_CATALOG_MODE = \"none\"",
-                &format!(
-                    "OTLP2PARQUET_CATALOG_MODE = \"iceberg\"\n\n# R2 Data Catalog credentials\nCLOUDFLARE_BUCKET_NAME = \"{}\"\nCLOUDFLARE_ACCOUNT_ID = \"{}\"\nCLOUDFLARE_API_TOKEN = \"{}\"",
-                    self.bucket_name, self.account_id, self.api_token
-                ),
-            );
-        }
+        // Process conditional blocks - smoke tests build from source and use inline creds
+        let config_content = process_conditional_blocks(
+            &config_content,
+            &[
+                ("BUILD_FROM_SOURCE", true),   // Smoke tests build from source
+                ("BUILD_FROM_RELEASE", false), // Not using release builds
+                ("INLINE_CREDENTIALS", true),  // Smoke tests use inline credentials
+                ("ICEBERG", use_iceberg),
+                ("BASICAUTH", false), // No basic auth for smoke tests
+            ],
+        );
 
         // Write to wrangler directory (gitignored via wrangler-smoke-*.toml pattern)
         let config_path = wrangler_dir.join(format!("wrangler-{}.toml", self.worker_name));
-        fs::write(&config_path, config_content)
+        std::fs::write(&config_path, config_content)
             .context("Failed to write generated wrangler config")?;
 
         tracing::info!("Generated wrangler config: {}", config_path.display());
