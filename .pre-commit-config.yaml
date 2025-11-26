@@ -20,6 +20,7 @@ repos:
         exclude: ^(.*template.*\.yaml|\.aws-sam/.*\.yaml)$
       - id: check-toml
         name: Check TOML files
+        exclude: ^(.*templates/.*\.toml)$
       - id: end-of-file-fixer
         name: Fix end of files
       - id: trailing-whitespace

@@ -31,6 +31,7 @@ optimized.wasm
 worker-build/
 build/
 wrangler.toml
+!**/templates/wrangler.toml
 
 # AWS
 .aws-sam/

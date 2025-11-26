@@ -32,6 +32,8 @@ use tracing::{error, info, warn};
 mod handlers;
 mod init;
 
+pub mod deploy;
+
 use handlers::{handle_logs, handle_metrics, handle_traces, health_check, ready_check};
 pub use init::init_tracing;
 use init::init_writer;
