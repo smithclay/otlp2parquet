@@ -22,6 +22,7 @@ COMMON OPTIONS:
 CLOUDFLARE OPTIONS:
   --account-id <ID>     Pre-fill Cloudflare Account ID
   --worker-name <NAME>  Pre-fill worker name
+  --release <VERSION>   Use specific release (default: current CLI version)
 
 AWS OPTIONS:
   --stack-name <NAME>   Pre-fill CloudFormation stack name
@@ -61,6 +62,17 @@ Next steps:
   3. Deploy:
      wrangler deploy
 ```
+
+**Build strategy:** The generated `wrangler.toml` uses a build command that downloads the pre-built worker bundle from GitHub releases:
+
+```toml
+[build]
+command = "curl -sL https://github.com/smithclay/otlp2parquet/releases/download/v{{VERSION}}/otlp2parquet-worker.zip -o worker.zip && unzip -o worker.zip"
+
+main = "build/worker/index.js"
+```
+
+This means users don't need Rust installed - just `curl`, `unzip`, and `wrangler`.
 
 ### AWS
 
