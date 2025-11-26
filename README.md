@@ -6,13 +6,13 @@
 
 What if your observability data was just Parquet files?
 
-This tool receives OpenTelemetry logs, metrics, and traces over HTTP and writes them as Parquet to local disk or cloud storage. Query with DuckDB, Spark, or anything that reads Parquet.
+Receive OpenTelemetry logs, metrics, and traces over HTTP and write them as Parquet to local disk, cloud storage or [Apache Iceberg](https://iceberg.apache.org/). Query with DuckDB, Spark, or anything that reads Parquet.
 
 ## Quick Start
 
 ```bash
-brew install smithclay/tap/otlp2parquet  # coming soon
-cargo install otlp2parquet               # from crates.io (after publish)
+# requires Rust toolchain: `curl https://sh.rustup.rs -sSf | sh`
+cargo install otlp2parquet
 
 otlp2parquet
 ```
@@ -31,7 +31,7 @@ Query it:
 duckdb -c "SELECT * FROM 'data/logs/**/*.parquet'"
 ```
 
-## What You Can Do With It
+## Why does this exist?
 
 - **Keep logs forever** — Parquet on S3 costs ~$0.02/GB/month vs $2+/GB in most vendors
 - **Query with real tools** — DuckDB, Spark, Athena, Trino, pandas
@@ -56,7 +56,7 @@ Both commands walk you through setup and generate the config files you need.
 
 ## Supported Signals
 
-Logs ✅ Metrics ✅ Traces ✅ — all via OTLP/HTTP (protobuf or JSON)
+Logs ✅ Metrics ✅ Traces ✅ — all via OTLP/HTTP (protobuf or JSON). No gRPC support for now.
 
 ## Learn More
 

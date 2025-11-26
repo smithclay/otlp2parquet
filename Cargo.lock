@@ -1977,8 +1977,9 @@ dependencies = [
 
 [[package]]
 name = "icepick"
-version = "0.1.0"
-source = "git+https://github.com/smithclay/icepick.git?rev=2c3031cf16be4100a871c924987358c8dd20db87#2c3031cf16be4100a871c924987358c8dd20db87"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85a86b19239e5a3f4efc31650d9f21c50b5e366533e678ff3608d8134131df86"
 dependencies = [
  "apache-avro",
  "arrow",
