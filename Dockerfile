@@ -15,19 +15,11 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /build
 
-# Copy manifests
+# Copy manifests and source
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
-COPY benches ./benches
 
-# Build dependencies first (better caching)
-RUN mkdir src && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs
-RUN cargo build --release -p otlp2parquet --bin otlp2parquet
-RUN rm -rf src target/release/otlp2parquet* target/release/deps/otlp2parquet*
-
-# Copy source and build
-COPY src ./src
-
+# Build the binary
 RUN cargo build --release -p otlp2parquet --bin otlp2parquet
 
 # Strip binary for smaller size
