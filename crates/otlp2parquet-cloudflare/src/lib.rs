@@ -10,8 +10,10 @@ mod auth;
 mod errors;
 mod handlers;
 
+use flate2::read::GzDecoder;
 use once_cell::sync::OnceCell;
 use otlp2parquet_config::{EnvSource, Platform, RuntimeConfig, ENV_PREFIX};
+use std::io::Read;
 use std::sync::Arc;
 use worker::*;
 
@@ -96,6 +98,21 @@ fn validate_catalog_config(
                 hint: "R2 Data Catalog requires all three variables to be set. Either provide all catalog variables for Iceberg support, or remove them entirely to use plain Parquet mode.".to_string(),
             })
         }
+    }
+}
+
+/// Decompress gzip-encoded request body if Content-Encoding header indicates gzip
+fn maybe_decompress(data: &[u8], content_encoding: Option<&str>) -> Result<Vec<u8>> {
+    match content_encoding {
+        Some(enc) if enc.eq_ignore_ascii_case("gzip") => {
+            let mut decoder = GzDecoder::new(data);
+            let mut decompressed = Vec::new();
+            decoder.read_to_end(&mut decompressed).map_err(|e| {
+                worker::Error::RustError(format!("gzip decompression failed: {}", e))
+            })?;
+            Ok(decompressed)
+        }
+        _ => Ok(data.to_vec()),
     }
 }
 
@@ -303,12 +320,17 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
     let content_type_header = req.headers().get("content-type").ok().flatten();
     let content_type = content_type_header.as_deref();
     let format = otlp2parquet_core::InputFormat::from_content_type(content_type);
+    let content_encoding = req.headers().get("content-encoding").ok().flatten();
 
-    let body_bytes = req.bytes().await.map_err(|e| {
+    let raw_body = req.bytes().await.map_err(|e| {
         console_error!("Failed to read request body: {:?}", e);
         e
     })?;
 
+    // Decompress if gzip-encoded (OTel collectors typically send gzip by default)
+    let body_bytes = maybe_decompress(&raw_body, content_encoding.as_deref())?;
+
+    // Check payload size AFTER decompression (prevents zip bombs)
     if body_bytes.len() > max_payload_bytes {
         console_error!(
             "Payload too large: {} bytes (max: {} bytes / {} MB)",

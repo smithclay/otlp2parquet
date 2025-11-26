@@ -2722,6 +2722,7 @@ version = "0.2.0"
 dependencies = [
  "arrow",
  "base64 0.22.1",
+ "flate2",
  "once_cell",
  "otlp2parquet-batch",
  "otlp2parquet-config",
