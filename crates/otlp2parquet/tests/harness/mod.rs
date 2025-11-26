@@ -535,20 +535,20 @@ impl TestDataSet {
     /// Load all test data fixtures
     pub fn load() -> Self {
         Self {
-            logs_pb: include_bytes!("../../testdata/logs.pb"),
-            logs_json: include_bytes!("../../testdata/log.json"),
-            logs_jsonl: include_bytes!("../../testdata/logs.jsonl"),
-            metrics_gauge_pb: include_bytes!("../../testdata/metrics_gauge.pb"),
-            metrics_gauge_json: include_bytes!("../../testdata/metrics_gauge.json"),
-            metrics_sum_pb: include_bytes!("../../testdata/metrics_sum.pb"),
-            metrics_histogram_pb: include_bytes!("../../testdata/metrics_histogram.pb"),
+            logs_pb: include_bytes!("../../../../testdata/logs.pb"),
+            logs_json: include_bytes!("../../../../testdata/log.json"),
+            logs_jsonl: include_bytes!("../../../../testdata/logs.jsonl"),
+            metrics_gauge_pb: include_bytes!("../../../../testdata/metrics_gauge.pb"),
+            metrics_gauge_json: include_bytes!("../../../../testdata/metrics_gauge.json"),
+            metrics_sum_pb: include_bytes!("../../../../testdata/metrics_sum.pb"),
+            metrics_histogram_pb: include_bytes!("../../../../testdata/metrics_histogram.pb"),
             metrics_exponential_histogram_pb: include_bytes!(
-                "../../testdata/metrics_exponential_histogram.pb"
+                "../../../../testdata/metrics_exponential_histogram.pb"
             ),
-            metrics_summary_pb: include_bytes!("../../testdata/metrics_summary.pb"),
-            traces_pb: include_bytes!("../../testdata/traces.pb"),
-            traces_json: include_bytes!("../../testdata/trace.json"),
-            traces_jsonl: include_bytes!("../../testdata/traces.jsonl"),
+            metrics_summary_pb: include_bytes!("../../../../testdata/metrics_summary.pb"),
+            traces_pb: include_bytes!("../../../../testdata/traces.pb"),
+            traces_json: include_bytes!("../../../../testdata/trace.json"),
+            traces_jsonl: include_bytes!("../../../../testdata/traces.jsonl"),
         }
     }
 }
