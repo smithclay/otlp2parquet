@@ -1,5 +1,5 @@
 [package]
-name = "otlp2parquet-server"
+name = "otlp2parquet-cli"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

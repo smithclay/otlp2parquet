@@ -63,7 +63,7 @@ curl -X POST https://your-worker.workers.dev/v1/logs \
     ```
 
 ??? note "Manual setup"
-    If you prefer to create `wrangler.toml` manually, see the [generated template](https://github.com/smithclay/otlp2parquet/blob/main/crates/otlp2parquet-server/templates/wrangler.toml) for reference.
+    If you prefer to create `wrangler.toml` manually, see the [generated template](https://github.com/smithclay/otlp2parquet/blob/main/crates/otlp2parquet-cli/templates/wrangler.toml) for reference.
 
 ??? warning "Production considerations"
     - **Authentication**: Enable `OTLP2PARQUET_BASIC_AUTH_ENABLED` or add Cloudflare Access

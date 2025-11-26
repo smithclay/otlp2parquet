@@ -96,7 +96,7 @@ build-cloudflare: ## Build Cloudflare Workers with worker-build
 .PHONY: build-cli
 build-cli: ## Build CLI binary in release mode
 	@echo "==> Building otlp2parquet CLI binary..."
-	@cargo build --release -p otlp2parquet-server --bin otlp2parquet
+	@cargo build --release -p otlp2parquet-cli --bin otlp2parquet
 	@echo "==> Binary available at: target/release/otlp2parquet"
 
 .PHONY: install-cli

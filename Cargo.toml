@@ -7,7 +7,7 @@ members = [
     "crates/otlp2parquet-proto",
     "crates/otlp2parquet-cloudflare",
     "crates/otlp2parquet-lambda",
-    "crates/otlp2parquet-server",
+    "crates/otlp2parquet-cli",
     "crates/otlp2parquet-handlers",
 ]
 exclude = ["examples/generate-parquet-testdata"]
@@ -42,7 +42,7 @@ opt-level = "z"
 [profile.release.package.otlp2parquet-lambda]
 opt-level = 3
 
-[profile.release.package.otlp2parquet-server]
+[profile.release.package.otlp2parquet-cli]
 opt-level = 3
 
 [workspace.dependencies]
@@ -87,7 +87,7 @@ repository.workspace = true
 [dependencies]
 otlp2parquet-core = { path = "crates/otlp2parquet-core" }
 otlp2parquet-batch = { path = "crates/otlp2parquet-batch" }
-otlp2parquet-server = { path = "crates/otlp2parquet-server" }
+otlp2parquet-cli = { path = "crates/otlp2parquet-cli" }
 
 # Runtime
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

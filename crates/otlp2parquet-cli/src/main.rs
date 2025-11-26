@@ -34,7 +34,7 @@ enum Commands {
     /// Generate deployment configuration for cloud platforms
     Deploy {
         #[command(subcommand)]
-        platform: otlp2parquet_server::deploy::DeployCommand,
+        platform: otlp2parquet_cli::deploy::DeployCommand,
     },
     /// Start the HTTP server (default if no subcommand given)
     Serve,
@@ -77,8 +77,7 @@ async fn async_main(cli: Cli) -> Result<()> {
 
     // Step 4: Initialize tracing early so validation logs show up
     // Note: run_with_config will also call init_tracing, but that's idempotent
-    use otlp2parquet_server::init_tracing;
-    init_tracing(&config);
+    otlp2parquet_cli::init_tracing(&config);
 
     // Step 5: Validate configuration early (creates directories, tests write permissions)
     validate_config(&config).await?;
@@ -87,7 +86,7 @@ async fn async_main(cli: Cli) -> Result<()> {
     display_startup_info(&config);
 
     // Step 7: Run server with resolved config
-    otlp2parquet_server::run_with_config(config).await
+    otlp2parquet_cli::run_with_config(config).await
 }
 
 fn apply_cli_overrides(config: &mut RuntimeConfig, cli: &Cli) -> Result<()> {
