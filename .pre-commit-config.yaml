@@ -5,7 +5,7 @@ repos:
       - id: fmt
         name: cargo fmt
         description: Format Rust code with rustfmt
-        args: ['--manifest-path=Cargo.toml', '--']
+        args: ['--manifest-path=Cargo.toml', '--all', '--']
 
       - id: clippy
         name: cargo clippy

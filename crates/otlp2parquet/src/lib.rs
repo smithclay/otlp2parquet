@@ -27,6 +27,7 @@ use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
+use tower_http::decompression::RequestDecompressionLayer;
 use tracing::{error, info, warn};
 
 mod handlers;
@@ -187,13 +188,15 @@ pub async fn run_with_config(config: RuntimeConfig) -> Result<()> {
 
     let router_state = state.clone();
 
-    // Build router
+    // Build router with gzip decompression support
+    // OTel collectors typically send gzip-compressed payloads by default
     let app = Router::new()
         .route("/v1/logs", post(handle_logs))
         .route("/v1/traces", post(handle_traces))
         .route("/v1/metrics", post(handle_metrics))
         .route("/health", get(health_check))
         .route("/ready", get(ready_check))
+        .layer(RequestDecompressionLayer::new().gzip(true))
         .with_state(router_state);
 
     // Create TCP listener
