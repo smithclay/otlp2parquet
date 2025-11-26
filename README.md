@@ -44,12 +44,20 @@ Once you've kicked the tires locally, deploy to serverless:
 
 **Cloudflare Workers + R2:**
 ```bash
+# Generates Cloudformation template
 otlp2parquet deploy cloudflare
+
+# Deploy with Cloudformation
+aws cloudformation deploy --template-file template.yaml --stack-name otlp2parquet
 ```
 
 **AWS Lambda + S3:**
 ```bash
+# Generates a wranger.toml file
 otlp2parquet deploy aws
+
+# Deploy to Cloudflare with wrangler
+wrangler deploy
 ```
 
 Both commands walk you through setup and generate the config files you need.

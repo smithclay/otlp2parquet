@@ -2,7 +2,12 @@
 # See: https://github.com/smithclay/otlp2parquet
 
 name = "{{WORKER_NAME}}"
+{{#BUILD_FROM_SOURCE}}
 main = "build/worker/shim.mjs"
+{{/BUILD_FROM_SOURCE}}
+{{#BUILD_FROM_RELEASE}}
+main = "build/index.js"
+{{/BUILD_FROM_RELEASE}}
 compatibility_date = "2025-01-15"
 
 workers_dev = true
@@ -44,9 +49,11 @@ OTLP2PARQUET_BASIC_AUTH_ENABLED = "{{BASIC_AUTH_ENABLED}}"
 # Username and password are set via wrangler secret
 {{/BASICAUTH}}
 
+{{#LOGGING}}
 [observability]
 [observability.logs]
 enabled = true
 head_sampling_rate = 1
 invocation_logs = true
 persist = true
+{{/LOGGING}}

@@ -32,6 +32,10 @@ pub struct CloudflareArgs {
     #[arg(long)]
     pub basic_auth: Option<bool>,
 
+    /// Enable Worker logging (observability)
+    #[arg(long)]
+    pub logging: Option<bool>,
+
     /// Release version to use (default: current CLI version)
     #[arg(long)]
     pub release: Option<String>,
@@ -115,6 +119,14 @@ pub fn run(args: CloudflareArgs) -> Result<()> {
             .interact()?,
     };
 
+    let enable_logging = match args.logging {
+        Some(enabled) => enabled,
+        None => Confirm::new()
+            .with_prompt("Enable Worker logging?")
+            .default(false)
+            .interact()?,
+    };
+
     let version = args
         .release
         .unwrap_or_else(|| format!("v{}", env!("CARGO_PKG_VERSION")));
@@ -154,6 +166,7 @@ pub fn run(args: CloudflareArgs) -> Result<()> {
             ("INLINE_CREDENTIALS", false), // CLI uses wrangler secrets
             ("ICEBERG", use_iceberg),
             ("BASICAUTH", enable_basic_auth),
+            ("LOGGING", enable_logging),
         ],
     );
 
@@ -167,13 +180,16 @@ pub fn run(args: CloudflareArgs) -> Result<()> {
     println!("  1. Create R2 bucket (if needed):");
     println!("     wrangler r2 bucket create {}", bucket_name);
     println!();
-    println!("  2. Set secrets:");
+    println!("  2. Set secrets (R2 S3-Compatible API credentials):");
     println!("     wrangler secret put AWS_ACCESS_KEY_ID");
     println!("     wrangler secret put AWS_SECRET_ACCESS_KEY");
+    println!();
+    println!("     Get credentials: https://developers.cloudflare.com/r2/api/tokens/#get-s3-api-credentials-from-an-api-token");
     if use_iceberg {
         println!("     wrangler secret put CLOUDFLARE_API_TOKEN");
     }
     if enable_basic_auth {
+        println!("     These will set username/password to POST data to your worker");
         println!("     wrangler secret put OTLP2PARQUET_BASIC_AUTH_USERNAME");
         println!("     wrangler secret put OTLP2PARQUET_BASIC_AUTH_PASSWORD");
     }
