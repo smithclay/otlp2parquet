@@ -1,6 +1,6 @@
 # Docs Simplification Design
 
-> **Status:** Planned
+> **Status:** Implemented
 
 **Goal:** Radically simplify docs around the new CLI `deploy` command, following Stripe-style task-oriented structure.
 
