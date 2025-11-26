@@ -24,12 +24,12 @@ jobs:
             arch: amd64
             runner: ubuntu-latest
             asset_name: otlp2parquet-lambda-linux-amd64
-            server_asset_name: otlp2parquet-server-linux-amd64
+            cli_asset_name: otlp2parquet-cli-linux-amd64
           - target: aarch64-unknown-linux-gnu
             arch: arm64
             runner: ubuntu-24.04-arm
             asset_name: otlp2parquet-lambda-linux-arm64
-            server_asset_name: otlp2parquet-server-linux-arm64
+            cli_asset_name: otlp2parquet-cli-linux-arm64
     steps:
       - uses: actions/checkout@v6
         with:
@@ -48,10 +48,10 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: cargo build --release --target "$TARGET" -p otlp2parquet-lambda
 
-      - name: Build server binary
+      - name: Build CLI binary
         env:
           TARGET: ${{ matrix.target }}
-        run: cargo build --release --target "$TARGET" --bin otlp2parquet
+        run: cargo build --release --target "$TARGET" -p otlp2parquet-cli --bin otlp2parquet
 
       - name: Package binary
         run: |
@@ -64,7 +64,7 @@ jobs:
           rm -rf "$TMP_LAMBDA"
           mkdir -p dist/linux-${{ matrix.arch }}
           cp "$SERVER_DIR/otlp2parquet" "dist/linux-${{ matrix.arch }}/otlp2parquet"
-          tar czf "$SERVER_DIR/${{ matrix.server_asset_name }}.tar.gz" -C dist "linux-${{ matrix.arch }}"
+          tar czf "$SERVER_DIR/${{ matrix.cli_asset_name }}.tar.gz" -C dist "linux-${{ matrix.arch }}"
 
       - name: Package Lambda as zip
         run: |
@@ -93,8 +93,8 @@ jobs:
       - name: Upload server artifact
         uses: actions/upload-artifact@v5
         with:
-          name: ${{ matrix.server_asset_name }}
-          path: target/${{ matrix.target }}/release/${{ matrix.server_asset_name }}.tar.gz
+          name: ${{ matrix.cli_asset_name }}
+          path: target/${{ matrix.target }}/release/${{ matrix.cli_asset_name }}.tar.gz
 
   docker-image:
     name: Docker Image (${{ matrix.platform }})
@@ -117,7 +117,7 @@ jobs:
       - name: Download server binaries
         uses: actions/download-artifact@v6
         with:
-          pattern: otlp2parquet-server-*
+          pattern: otlp2parquet-cli-*
           path: docker-dist
           merge-multiple: true
 
