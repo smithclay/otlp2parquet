@@ -45,7 +45,10 @@ pub fn run(args: AwsArgs) -> Result<()> {
 
     // Collect values via wizard or flags
     let lambda_s3_uri = match args.lambda_s3_uri {
-        Some(uri) => uri,
+        Some(uri) => {
+            validate_s3_uri(&uri).map_err(|e| anyhow::anyhow!("Invalid S3 URI: {}", e))?;
+            uri
+        }
         None => {
             println!("Download the Lambda binary from:");
             println!("  {}", GITHUB_RELEASES_URL);
@@ -69,7 +72,11 @@ pub fn run(args: AwsArgs) -> Result<()> {
     };
 
     let bucket_name = match args.bucket {
-        Some(bucket) => bucket,
+        Some(bucket) => {
+            validate_bucket_name(&bucket)
+                .map_err(|e| anyhow::anyhow!("Invalid bucket name: {}", e))?;
+            bucket
+        }
         None => Input::new()
             .with_prompt("S3 bucket name for data")
             .validate_with(validate_bucket_name)

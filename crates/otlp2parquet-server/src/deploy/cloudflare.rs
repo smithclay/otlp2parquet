@@ -53,7 +53,11 @@ pub fn run(args: CloudflareArgs) -> Result<()> {
     };
 
     let bucket_name = match args.bucket {
-        Some(bucket) => bucket,
+        Some(bucket) => {
+            validate_bucket_name(&bucket)
+                .map_err(|e| anyhow::anyhow!("Invalid bucket name: {}", e))?;
+            bucket
+        }
         None => Input::new()
             .with_prompt("R2 bucket name")
             .validate_with(validate_bucket_name)
@@ -61,7 +65,10 @@ pub fn run(args: CloudflareArgs) -> Result<()> {
     };
 
     let account_id = match args.account_id {
-        Some(id) => id,
+        Some(id) => {
+            validate_account_id(&id).map_err(|e| anyhow::anyhow!("Invalid account ID: {}", e))?;
+            id
+        }
         None => Input::new()
             .with_prompt("Cloudflare Account ID")
             .validate_with(validate_account_id)
