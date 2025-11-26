@@ -119,13 +119,20 @@ async fn process_logs(
     counter!("otlp.ingest.requests", 1);
     histogram!("otlp.ingest.bytes", body.len() as f64);
 
+    let parse_start = Instant::now();
     let request = otlp::parse_otlp_request(&body, format)
         .map_err(|e| AppError::bad_request(e.context("Failed to parse OTLP request payload")))?;
+    debug!(
+        elapsed_us = parse_start.elapsed().as_micros() as u64,
+        signal = "logs",
+        "parse"
+    );
 
     let per_service_requests = otlp::logs::split_request_by_service(request);
     let mut uploads: Vec<CompletedBatch<otlp::LogMetadata>> = Vec::new();
     let mut total_records: usize = 0;
 
+    let convert_start = Instant::now();
     if let Some(batcher) = &state.batcher {
         let mut expired = batcher
             .drain_expired()
@@ -150,10 +157,16 @@ async fn process_logs(
             uploads.push(batch);
         }
     }
+    debug!(
+        elapsed_us = convert_start.elapsed().as_micros() as u64,
+        signal = "logs",
+        "convert"
+    );
 
     counter!("otlp.ingest.records", total_records as u64);
 
     let mut uploaded_paths = Vec::new();
+    let write_start = Instant::now();
     for completed in uploads {
         let write_result = persist_log_batch(state, &completed)
             .await
@@ -168,6 +181,11 @@ async fn process_logs(
         );
         uploaded_paths.push(partition_path);
     }
+    debug!(
+        elapsed_us = write_start.elapsed().as_micros() as u64,
+        signal = "logs",
+        "write"
+    );
 
     histogram!(
         "otlp.ingest.latency_ms",
@@ -194,14 +212,22 @@ async fn process_traces(
     histogram!("otlp.ingest.bytes", body.len() as f64, "signal" => "traces");
 
     // Parse OTLP traces request
+    let parse_start = Instant::now();
     let request = otlp::traces::parse_otlp_trace_request(&body, format).map_err(|e| {
         AppError::bad_request(e.context("Failed to parse OTLP traces request payload"))
     })?;
+    debug!(
+        elapsed_us = parse_start.elapsed().as_micros() as u64,
+        signal = "traces",
+        "parse"
+    );
 
     let per_service_requests = otlp::traces::split_request_by_service(request);
     let mut uploaded_paths = Vec::new();
     let mut spans_processed: usize = 0;
+    let mut all_batches = Vec::new();
 
+    let convert_start = Instant::now();
     for subset in per_service_requests {
         let (batches, metadata) =
             otlp::traces::TraceArrowConverter::convert(&subset).map_err(|e| {
@@ -219,6 +245,16 @@ async fn process_traces(
             "signal" => "traces"
         );
 
+        all_batches.push((batches, metadata));
+    }
+    debug!(
+        elapsed_us = convert_start.elapsed().as_micros() as u64,
+        signal = "traces",
+        "convert"
+    );
+
+    let write_start = Instant::now();
+    for (batches, metadata) in all_batches {
         let service_name = metadata.service_name.as_ref();
 
         // Write traces via write_batch function
@@ -255,6 +291,11 @@ async fn process_traces(
         );
         uploaded_paths.push(partition_path);
     }
+    debug!(
+        elapsed_us = write_start.elapsed().as_micros() as u64,
+        signal = "traces",
+        "write"
+    );
 
     if spans_processed == 0 {
         return Ok((
@@ -292,15 +333,22 @@ async fn process_metrics(
     histogram!("otlp.ingest.bytes", body.len() as f64, "signal" => "metrics");
 
     // Parse OTLP metrics request
+    let parse_start = Instant::now();
     let request = otlp::metrics::parse_otlp_request(&body, format).map_err(|e| {
         AppError::bad_request(e.context("Failed to parse OTLP metrics request payload"))
     })?;
+    debug!(
+        elapsed_us = parse_start.elapsed().as_micros() as u64,
+        signal = "metrics",
+        "parse"
+    );
 
     let per_service_requests = otlp::metrics::split_request_by_service(request);
     let converter = otlp::metrics::ArrowConverter::new();
     let mut aggregated = otlp::metrics::MetricsMetadata::default();
-    let mut uploaded_paths = Vec::new();
+    let mut all_batches = Vec::new();
 
+    let convert_start = Instant::now();
     for subset in per_service_requests {
         let (batches_by_type, subset_metadata) = converter.convert(subset).map_err(|e| {
             AppError::bad_request(e.context("Failed to convert OTLP metrics to Arrow"))
@@ -314,6 +362,18 @@ async fn process_metrics(
         aggregated.exponential_histogram_count += subset_metadata.exponential_histogram_count;
         aggregated.summary_count += subset_metadata.summary_count;
 
+        all_batches.push((batches_by_type, subset_metadata));
+    }
+    debug!(
+        elapsed_us = convert_start.elapsed().as_micros() as u64,
+        signal = "metrics",
+        "convert"
+    );
+
+    let mut uploaded_paths = Vec::new();
+
+    let write_start = Instant::now();
+    for (batches_by_type, subset_metadata) in all_batches {
         let service_name = subset_metadata.service_name().to_string();
 
         for (metric_type, batch) in batches_by_type {
@@ -350,6 +410,11 @@ async fn process_metrics(
             uploaded_paths.push(partition_path);
         }
     }
+    debug!(
+        elapsed_us = write_start.elapsed().as_micros() as u64,
+        signal = "metrics",
+        "write"
+    );
 
     if uploaded_paths.is_empty() {
         return Ok((
