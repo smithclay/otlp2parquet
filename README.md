@@ -8,7 +8,7 @@ This tool receives OpenTelemetry logs, metrics, and traces over HTTP and writes 
 
 ```bash
 brew install smithclay/tap/otlp2parquet  # coming soon
-cargo install otlp2parquet               # for now
+cargo install otlp2parquet               # from crates.io (after publish)
 
 otlp2parquet
 ```
