@@ -1,5 +1,7 @@
 # CLI Deploy Command Design
 
+> **Status:** Implemented
+
 ## Overview
 
 A new `deploy` subcommand that generates platform-specific deployment configs through an interactive wizard. Templates are embedded in the binary via `include_str!`. The wizard guides first-time users through configuration, writes standard-named files, and prints the deployment command to run.
