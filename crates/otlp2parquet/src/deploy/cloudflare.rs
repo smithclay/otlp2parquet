@@ -28,6 +28,10 @@ pub struct CloudflareArgs {
     #[arg(long)]
     pub catalog: Option<String>,
 
+    /// Enable HTTP Basic Authentication
+    #[arg(long)]
+    pub basic_auth: Option<bool>,
+
     /// Release version to use (default: current CLI version)
     #[arg(long)]
     pub release: Option<String>,
@@ -103,6 +107,14 @@ pub fn run(args: CloudflareArgs) -> Result<()> {
         }
     };
 
+    let enable_basic_auth = match args.basic_auth {
+        Some(enabled) => enabled,
+        None => Confirm::new()
+            .with_prompt("Enable HTTP Basic Authentication?")
+            .default(false)
+            .interact()?,
+    };
+
     let version = args
         .release
         .unwrap_or_else(|| format!("v{}", env!("CARGO_PKG_VERSION")));
@@ -122,38 +134,28 @@ pub fn run(args: CloudflareArgs) -> Result<()> {
 
     // Render template
     let use_iceberg = catalog_mode == "iceberg";
-    let mut content = TEMPLATE
+    let content = TEMPLATE
         .replace("{{WORKER_NAME}}", &worker_name)
         .replace("{{BUCKET_NAME}}", &bucket_name)
         .replace("{{ACCOUNT_ID}}", &account_id)
         .replace("{{CATALOG_MODE}}", &catalog_mode)
-        .replace("{{VERSION}}", &version);
+        .replace("{{VERSION}}", &version)
+        .replace(
+            "{{BASIC_AUTH_ENABLED}}",
+            if enable_basic_auth { "true" } else { "false" },
+        );
 
-    // Handle conditional iceberg section
-    if use_iceberg {
-        content = content
-            .replace("{{#ICEBERG}}", "")
-            .replace("{{/ICEBERG}}", "");
-    } else {
-        // Remove iceberg-only lines
-        let lines: Vec<&str> = content.lines().collect();
-        let mut filtered = Vec::new();
-        let mut in_iceberg_block = false;
-        for line in lines {
-            if line.contains("{{#ICEBERG}}") {
-                in_iceberg_block = true;
-                continue;
-            }
-            if line.contains("{{/ICEBERG}}") {
-                in_iceberg_block = false;
-                continue;
-            }
-            if !in_iceberg_block {
-                filtered.push(line);
-            }
-        }
-        content = filtered.join("\n");
-    }
+    // Process conditional blocks
+    let content = process_conditional_blocks(
+        &content,
+        &[
+            ("BUILD_FROM_RELEASE", true),  // CLI uses release builds
+            ("BUILD_FROM_SOURCE", false),  // Not building from source
+            ("INLINE_CREDENTIALS", false), // CLI uses wrangler secrets
+            ("ICEBERG", use_iceberg),
+            ("BASICAUTH", enable_basic_auth),
+        ],
+    );
 
     // Write file
     fs::write(output_path, &content).context("Failed to write wrangler.toml")?;
@@ -170,6 +172,10 @@ pub fn run(args: CloudflareArgs) -> Result<()> {
     println!("     wrangler secret put AWS_SECRET_ACCESS_KEY");
     if use_iceberg {
         println!("     wrangler secret put CLOUDFLARE_API_TOKEN");
+    }
+    if enable_basic_auth {
+        println!("     wrangler secret put OTLP2PARQUET_BASIC_AUTH_USERNAME");
+        println!("     wrangler secret put OTLP2PARQUET_BASIC_AUTH_PASSWORD");
     }
     println!();
     println!("  3. Deploy:");
@@ -213,4 +219,45 @@ fn validate_account_id(input: &String) -> Result<(), String> {
         return Err("Account ID must be 32 characters".to_string());
     }
     Ok(())
+}
+
+/// Process conditional blocks in template content.
+/// Blocks are marked with {{#NAME}} and {{/NAME}}.
+/// If enabled is true, the block content is included (markers removed).
+/// If enabled is false, the entire block including content is removed.
+pub fn process_conditional_blocks(content: &str, conditions: &[(&str, bool)]) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut filtered = Vec::new();
+    let mut skip_stack: Vec<bool> = Vec::new();
+
+    for line in lines {
+        let mut is_marker = false;
+
+        for &(name, enabled) in conditions {
+            let start_marker = format!("{{{{#{}}}}}", name);
+            let end_marker = format!("{{{{/{}}}}}", name);
+
+            if line.contains(&start_marker) {
+                skip_stack.push(!enabled);
+                is_marker = true;
+                break;
+            }
+            if line.contains(&end_marker) {
+                skip_stack.pop();
+                is_marker = true;
+                break;
+            }
+        }
+
+        if is_marker {
+            continue;
+        }
+
+        // Include line only if not inside any skipped block
+        if !skip_stack.iter().any(|&skip| skip) {
+            filtered.push(line);
+        }
+    }
+
+    filtered.join("\n")
 }
