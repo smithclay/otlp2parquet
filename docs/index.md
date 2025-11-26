@@ -1,55 +1,36 @@
-# OTLP to Parquet
+# otlp2parquet
 
 > Store your observability data in cheap object storage. Servers optional.
 
-`otlp2parquet` ingests OpenTelemetry (OTLP) data, converts it to Parquet, and writes it to object storage with optional Apache Iceberg support. It runs anywhere—from a Docker container to serverless platforms like AWS Lambda and Cloudflare Workers—providing a fast, cost-effective way to store and query your telemetry.
+**otlp2parquet** ingests OpenTelemetry logs, traces, and metrics, converts them to Parquet, and writes to object storage. Deploy to Cloudflare Workers, AWS Lambda, or run locally with Docker.
 
----
+## Why otlp2parquet?
 
-## How It Works
+- **Cheap storage** - Write to S3, R2, or local filesystem. No vendor lock-in.
+- **Serverless** - Deploy to Cloudflare Workers (<3MB WASM) or AWS Lambda.
+- **Query anywhere** - DuckDB, Athena, Spark - any Parquet reader works.
+- **Optional Iceberg** - Add ACID transactions with S3 Tables or R2 Data Catalog.
 
-Getting started is a three-step process.
+## Get Started
 
-### 1. Deploy the lightweight binary
-
-Choose a platform and follow the setup guide. Each guide provides a production-ready starting point.
-
-*   [**Docker Guide**](./setup/docker.md)
-*   [**AWS Lambda Guide**](./setup/aws-lambda.md)
-*   [**Cloudflare Workers Guide**](./setup/cloudflare.md)
-
-### 2. Send Telemetry Data
-
-Point your OpenTelemetry SDK or Collector to your new endpoint. This example sends a test log record via `curl`.
+Deploy in under 5 minutes:
 
 ```bash
+# Install the CLI
+cargo install otlp2parquet
+
+# Deploy to your platform
+otlp2parquet deploy cloudflare
+otlp2parquet deploy aws
+```
+
+Or run locally with Docker:
+
+```bash
+docker-compose up
 curl -X POST http://localhost:4318/v1/logs \
   -H "Content-Type: application/json" \
-  -d @testdata/log.json
+  -d '{"resourceLogs":[{"resource":{},"scopeLogs":[{"scope":{},"logRecords":[{"body":{"stringValue":"Hello"}}]}]}]}'
 ```
 
-### 3. Query Your Data
-
-Use any Parquet-aware query engine to analyze your data directly in object storage. This example uses DuckDB to query the local MinIO container from the Docker setup.
-
-```sql
--- Configure DuckDB for local MinIO
-INSTALL httpfs; LOAD httpfs;
-SET s3_endpoint='localhost:9000';
-SET s3_url_style='path';
-SET s3_use_ssl=false;
-SET s3_access_key_id='minioadmin';
-SET s3_secret_access_key='minioadmin';
-
--- Query the log record you just sent
-SELECT Timestamp, ServiceName, Body
-FROM read_parquet('s3://otlp-logs/logs/**/*.parquet');
-```
-
-## Next Steps
-
-*   **[Concepts](./concepts/architecture.md)**: Learn about the architecture, schema, and storage layers.
-*   **[Setup Guides](./setup/overview.md)**: Get detailed setup instructions for each platform.
-*   **[Sending Data](./guides/sending-data.md)**: Learn how to send logs, traces, and metrics.
-*   **[Querying Data](./guides/querying-data.md)**: See more advanced query examples.
-*   **[Configuration](./concepts/configuration.md)**: View all configuration options.
+[**Deploy Now →**](deploying.md)
