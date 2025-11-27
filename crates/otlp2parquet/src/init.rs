@@ -89,7 +89,7 @@ pub(crate) async fn init_writer(
         otlp2parquet_writer::initialize_storage(config)
             .map_err(|e| anyhow::anyhow!("Failed to initialize storage: {}", e))?;
 
-        return Ok((None, String::new()));
+        return Ok((None, "otlp".to_string()));
     }
 
     // Iceberg mode - check if Iceberg catalog is configured

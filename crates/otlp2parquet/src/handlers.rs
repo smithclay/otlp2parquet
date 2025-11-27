@@ -12,10 +12,9 @@ use axum::{
 };
 use metrics::{counter, histogram};
 use otlp2parquet_batch::CompletedBatch;
-use otlp2parquet_core::{otlp, InputFormat, ParquetWriteResult};
+use otlp2parquet_core::{otlp, InputFormat};
 use prost::Message;
 use serde_json::json;
-use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info};
 
@@ -168,18 +167,17 @@ async fn process_logs(
     let mut uploaded_paths = Vec::new();
     let write_start = Instant::now();
     for completed in uploads {
-        let write_result = persist_log_batch(state, &completed)
+        let partition_paths = persist_log_batch(state, &completed)
             .await
             .map_err(AppError::internal)?;
-        let partition_path = write_result.path.clone();
 
         counter!("otlp.batch.flushes", 1);
         histogram!("otlp.batch.rows", completed.metadata.record_count as f64);
         info!(
-            "Committed batch path={} service={} rows={}",
-            partition_path, completed.metadata.service_name, completed.metadata.record_count
+            "Committed batch paths={:?} service={} rows={}",
+            partition_paths, completed.metadata.service_name, completed.metadata.record_count
         );
-        uploaded_paths.push(partition_path);
+        uploaded_paths.extend(partition_paths);
     }
     debug!(
         elapsed_us = write_start.elapsed().as_micros() as u64,
@@ -258,7 +256,7 @@ async fn process_traces(
         let service_name = metadata.service_name.as_ref();
 
         // Write traces via write_batch function
-        let mut partition_path = String::new();
+        let mut partition_paths = Vec::new();
         for batch in &batches {
             let path = otlp2parquet_writer::write_batch(otlp2parquet_writer::WriteBatchRequest {
                 catalog: state.catalog.as_ref().map(|c| c.as_ref()),
@@ -276,7 +274,7 @@ async fn process_traces(
                 AppError::internal(anyhow::anyhow!("Failed to write traces to storage: {}", e))
             })?;
 
-            partition_path = path; // Track last path for logging
+            partition_paths.push(path);
         }
 
         counter!("otlp.traces.flushes", 1);
@@ -286,10 +284,10 @@ async fn process_traces(
             "signal" => "traces"
         );
         info!(
-            "Committed traces batch path={} service={} spans={}",
-            partition_path, service_name, metadata.span_count
+            "Committed traces batch paths={:?} service={} spans={}",
+            partition_paths, service_name, metadata.span_count
         );
-        uploaded_paths.push(partition_path);
+        uploaded_paths.extend(partition_paths);
     }
     debug!(
         elapsed_us = write_start.elapsed().as_micros() as u64,
@@ -462,7 +460,7 @@ async fn process_metrics(
 pub(crate) async fn persist_log_batch(
     state: &AppState,
     completed: &CompletedBatch<otlp::LogMetadata>,
-) -> anyhow::Result<ParquetWriteResult> {
+) -> anyhow::Result<Vec<String>> {
     let mut uploaded_paths = Vec::new();
 
     for batch in &completed.batches {
@@ -483,45 +481,7 @@ pub(crate) async fn persist_log_batch(
         uploaded_paths.push(path);
     }
 
-    // Return minimal ParquetWriteResult for backward compatibility
-    let schema = completed
-        .batches
-        .first()
-        .map(|b| b.schema())
-        .unwrap_or_else(|| Arc::new(arrow::datatypes::Schema::empty()));
-
-    // Create minimal parquet metadata (required fields only)
-    use parquet::schema::types::Type;
-    let parquet_schema = Type::group_type_builder("schema")
-        .build()
-        .context("Failed to build parquet schema")?;
-    let schema_descriptor = Arc::new(parquet::schema::types::SchemaDescriptor::new(Arc::new(
-        parquet_schema,
-    )));
-
-    let file_metadata = parquet::file::metadata::FileMetaData::new(
-        0,    // version
-        0,    // num rows
-        None, // created_by
-        None, // key_value_metadata
-        schema_descriptor,
-        None, // column_orders
-    );
-
-    let parquet_metadata = Arc::new(parquet::file::metadata::ParquetMetaData::new(
-        file_metadata,
-        vec![], // row groups
-    ));
-
-    Ok(ParquetWriteResult {
-        path: uploaded_paths.into_iter().next().unwrap_or_default(),
-        hash: otlp2parquet_core::Blake3Hash::new([0u8; 32]),
-        file_size: 0,
-        row_count: completed.metadata.record_count as i64,
-        arrow_schema: schema,
-        parquet_metadata,
-        completed_at: chrono::Utc::now(),
-    })
+    Ok(uploaded_paths)
 }
 
 fn extract_first_timestamp(batch: &RecordBatch) -> i64 {

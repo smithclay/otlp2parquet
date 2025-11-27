@@ -359,7 +359,7 @@ async fn write_plain_parquet(
     service_name: &str,
     timestamp_micros: i64,
     batch: &RecordBatch,
-) -> Result<()> {
+) -> Result<String> {
     // Get global storage operator
     let op = crate::storage::get_operator().ok_or_else(|| {
         WriterError::write_failure(
@@ -409,7 +409,7 @@ async fn write_plain_parquet(
         bytes_written
     );
 
-    Ok(())
+    Ok(file_path)
 }
 
 /// WASM plain Parquet path: write into an in-memory buffer synchronously to avoid Send bounds.
@@ -420,7 +420,7 @@ async fn write_plain_parquet(
     service_name: &str,
     timestamp_micros: i64,
     batch: &RecordBatch,
-) -> Result<()> {
+) -> Result<String> {
     let op = crate::storage::get_operator().ok_or_else(|| {
         WriterError::write_failure(
             "Storage operator not initialized. Call initialize_storage() with RuntimeConfig before writing. \
@@ -467,7 +467,7 @@ async fn write_plain_parquet(
         bytes_written
     );
 
-    Ok(())
+    Ok(file_path)
 }
 
 pub async fn write_batch(req: WriteBatchRequest<'_>) -> Result<String> {
@@ -491,7 +491,7 @@ pub async fn write_batch(req: WriteBatchRequest<'_>) -> Result<String> {
     );
 
     // If catalog is provided, use Iceberg. Otherwise, write plain Parquet to storage
-    match req.catalog {
+    let path = match req.catalog {
         Some(cat) => {
             write_with_catalog(
                 cat,
@@ -502,8 +502,12 @@ pub async fn write_batch(req: WriteBatchRequest<'_>) -> Result<String> {
                 req.retry_policy,
             )
             .await?;
+
+            // Catalog mode returns logical table path
+            format!("{}/{}", req.namespace, table_name)
         }
         None => {
+            // Plain Parquet mode returns physical object path
             write_plain_parquet(
                 req.signal_type,
                 req.metric_type,
@@ -511,12 +515,11 @@ pub async fn write_batch(req: WriteBatchRequest<'_>) -> Result<String> {
                 req.timestamp_micros,
                 req.batch,
             )
-            .await?;
+            .await?
         }
-    }
+    };
 
-    // Return table path for logging
-    Ok(format!("{}/{}", req.namespace, table_name))
+    Ok(path)
 }
 
 /// Generate a partitioned file path for plain Parquet files

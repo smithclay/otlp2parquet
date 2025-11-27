@@ -245,13 +245,15 @@ async fn flush_pending_batches(state: &AppState) -> Result<()> {
             let rows = completed.metadata.record_count;
             let service = completed.metadata.service_name.as_ref().to_string();
             match handlers::persist_log_batch(state, &completed).await {
-                Ok(write_result) => {
-                    info!(
-                        path = %write_result.path,
-                        service_name = %service,
-                        rows,
-                        "Flushed pending batch"
-                    );
+                Ok(paths) => {
+                    for path in paths {
+                        info!(
+                            path = %path,
+                            service_name = %service,
+                            rows,
+                            "Flushed pending batch"
+                        );
+                    }
                 }
                 Err(e) => {
                     warn!(
