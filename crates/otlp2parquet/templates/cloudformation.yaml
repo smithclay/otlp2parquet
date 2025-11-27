@@ -171,9 +171,30 @@ Outputs:
     Description: Lambda function ARN
     Value: !GetAtt OtlpToParquetFunction.Arn
 
+  FunctionName:
+    Description: Lambda function name
+    Value: !Ref OtlpToParquetFunction
+
   DataLocation:
     Description: Data storage location
     Value: !If
       - UsePlainParquet
       - !Sub 's3://${DataBucket}'
       - !GetAtt S3TablesBucket.Arn
+
+  # Outputs for plain Parquet mode
+  DataBucketName:
+    Condition: UsePlainParquet
+    Description: S3 bucket name for plain Parquet files
+    Value: !Ref DataBucket
+
+  # Outputs for Iceberg mode
+  S3TablesBucketArn:
+    Condition: UseIcebergCatalog
+    Description: S3 Tables bucket ARN
+    Value: !GetAtt S3TablesBucket.Arn
+
+  S3TablesBucketName:
+    Condition: UseIcebergCatalog
+    Description: S3 Tables bucket name
+    Value: !Ref S3TablesBucket
