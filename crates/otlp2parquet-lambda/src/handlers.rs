@@ -4,12 +4,14 @@
 
 use anyhow::Result;
 use base64::Engine;
+use flate2::read::GzDecoder;
 use otlp2parquet_handlers::{
     process_logs as process_logs_handler, process_metrics as process_metrics_handler,
     process_traces as process_traces_handler, OtlpError, ProcessorConfig,
 };
 use serde_json::json;
 use std::borrow::Cow;
+use std::io::Read;
 
 use crate::{HttpResponseData, LambdaState};
 
@@ -40,11 +42,22 @@ pub(crate) async fn handle_http_request(
     body: Option<&str>,
     is_base64_encoded: bool,
     content_type: Option<&str>,
+    content_encoding: Option<&str>,
     state: &LambdaState,
 ) -> HttpResponseData {
     let method = method.trim().to_ascii_uppercase();
     match method.as_str() {
-        "POST" => handle_post(path, body, is_base64_encoded, content_type, state).await,
+        "POST" => {
+            handle_post(
+                path,
+                body,
+                is_base64_encoded,
+                content_type,
+                content_encoding,
+                state,
+            )
+            .await
+        }
         "GET" => handle_get(path),
         _ => HttpResponseData::json(405, json!({ "error": "method not allowed" }).to_string()),
     }
@@ -56,6 +69,7 @@ async fn handle_post(
     body: Option<&str>,
     is_base64_encoded: bool,
     content_type: Option<&str>,
+    content_encoding: Option<&str>,
     state: &LambdaState,
 ) -> HttpResponseData {
     let signal = match path {
@@ -65,11 +79,18 @@ async fn handle_post(
         _ => return HttpResponseData::json(404, json!({ "error": "not found" }).to_string()),
     };
 
-    let body = match decode_body(body, is_base64_encoded) {
+    let decoded = match decode_body(body, is_base64_encoded) {
         Ok(bytes) => bytes,
         Err(response) => return response,
     };
 
+    // Decompress if gzip-encoded (OTel collectors typically send gzip by default)
+    let body = match maybe_decompress(&decoded, content_encoding) {
+        Ok(bytes) => bytes,
+        Err(response) => return response,
+    };
+
+    // Check payload size AFTER decompression (prevents zip bombs)
     if body.len() > state.max_payload_bytes {
         return HttpResponseData::json(
             413,
@@ -242,6 +263,28 @@ fn decode_body<'a>(
         Ok(Cow::Owned(decoded))
     } else {
         Ok(Cow::Borrowed(body.as_bytes()))
+    }
+}
+
+/// Decompress gzip-encoded request body if Content-Encoding header indicates gzip
+fn maybe_decompress(
+    data: &[u8],
+    content_encoding: Option<&str>,
+) -> Result<Vec<u8>, HttpResponseData> {
+    match content_encoding {
+        Some(enc) if enc.eq_ignore_ascii_case("gzip") => {
+            let mut decoder = GzDecoder::new(data);
+            let mut decompressed = Vec::new();
+            decoder.read_to_end(&mut decompressed).map_err(|e| {
+                HttpResponseData::json(
+                    400,
+                    json!({ "error": "gzip decompression failed", "message": e.to_string() })
+                        .to_string(),
+                )
+            })?;
+            Ok(decompressed)
+        }
+        _ => Ok(data.to_vec()),
     }
 }
 

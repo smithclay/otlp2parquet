@@ -38,12 +38,19 @@ async fn handle_request(
                 .get("content-type")
                 .and_then(|v| v.to_str().ok());
 
+            // Extract Content-Encoding header for gzip decompression
+            let content_encoding = request
+                .headers
+                .get("content-encoding")
+                .and_then(|v| v.to_str().ok());
+
             let response = handle_http_request(
                 method,
                 &path,
                 request.body.as_deref(),
                 request.is_base64_encoded,
                 content_type,
+                content_encoding,
                 &state,
             )
             .await;
@@ -60,12 +67,19 @@ async fn handle_request(
                 .get("content-type")
                 .and_then(|v| v.to_str().ok());
 
+            // Extract Content-Encoding header for gzip decompression
+            let content_encoding = request
+                .headers
+                .get("content-encoding")
+                .and_then(|v| v.to_str().ok());
+
             let response = handle_http_request(
                 method,
                 &path,
                 request.body.as_deref(),
                 request.is_base64_encoded,
                 content_type,
+                content_encoding,
                 &state,
             )
             .await;
@@ -92,12 +106,19 @@ async fn handle_request(
                 .get("content-type")
                 .and_then(|v| v.to_str().ok());
 
+            // Extract Content-Encoding header for gzip decompression
+            let content_encoding = request
+                .headers
+                .get("content-encoding")
+                .and_then(|v| v.to_str().ok());
+
             let response = handle_http_request(
                 method,
                 &path,
                 request.body.as_deref(),
                 request.is_base64_encoded,
                 content_type,
+                content_encoding,
                 &state,
             )
             .await;

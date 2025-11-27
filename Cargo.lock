@@ -2710,6 +2710,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "arrow",
+ "js-sys",
  "otlp2parquet-core",
  "otlp2parquet-proto",
  "parking_lot",
@@ -2722,6 +2723,7 @@ version = "0.2.0"
 dependencies = [
  "arrow",
  "base64 0.22.1",
+ "flate2",
  "once_cell",
  "otlp2parquet-batch",
  "otlp2parquet-config",
@@ -2785,6 +2787,7 @@ dependencies = [
  "aws_lambda_events",
  "base64 0.22.1",
  "chrono",
+ "flate2",
  "lambda_runtime",
  "opendal",
  "otlp2parquet-batch",
