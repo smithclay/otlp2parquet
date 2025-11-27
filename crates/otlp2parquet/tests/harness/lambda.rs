@@ -167,7 +167,7 @@ impl SmokeTestHarness for LambdaHarness {
                 "--capabilities",
                 "CAPABILITY_IAM",
                 "--parameter-overrides",
-                &format!("AuthType=NONE"),
+                "AuthType=NONE",
                 &format!("IcebergNamespace={}", self.namespace),
                 "--no-fail-on-empty-changeset",
             ])
