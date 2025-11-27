@@ -28,6 +28,11 @@ Parameters:
       - NONE
     Description: Function URL authentication type (AWS_IAM for production, NONE for testing)
 
+  IcebergNamespace:
+    Type: String
+    Default: otlp
+    Description: Iceberg namespace for tables
+
 Conditions:
   UseIcebergCatalog: !Equals [!Ref CatalogMode, iceberg]
   UsePlainParquet: !Equals [!Ref CatalogMode, none]
@@ -54,7 +59,7 @@ Resources:
           OTLP2PARQUET_S3_BUCKET: !If [UsePlainParquet, !Ref DataBucket, !Ref AWS::NoValue]
           OTLP2PARQUET_S3_REGION: !If [UsePlainParquet, !Ref AWS::Region, !Ref AWS::NoValue]
           OTLP2PARQUET_ICEBERG_BUCKET_ARN: !If [UseIcebergCatalog, !GetAtt S3TablesBucket.Arn, !Ref AWS::NoValue]
-          OTLP2PARQUET_ICEBERG_NAMESPACE: otlp
+          OTLP2PARQUET_ICEBERG_NAMESPACE: !Ref IcebergNamespace
       Role: !GetAtt LambdaExecutionRole.Arn
 
   LambdaExecutionRole:
