@@ -20,6 +20,14 @@ Parameters:
     Default: {{LOG_RETENTION}}
     AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
 
+  AuthType:
+    Type: String
+    Default: AWS_IAM
+    AllowedValues:
+      - AWS_IAM
+      - NONE
+    Description: Function URL authentication type (AWS_IAM for production, NONE for testing)
+
 Conditions:
   UseIcebergCatalog: !Equals [!Ref CatalogMode, iceberg]
   UsePlainParquet: !Equals [!Ref CatalogMode, none]
@@ -109,7 +117,7 @@ Resources:
   FunctionUrl:
     Type: AWS::Lambda::Url
     Properties:
-      AuthType: AWS_IAM
+      AuthType: !Ref AuthType
       TargetFunctionArn: !GetAtt OtlpToParquetFunction.Arn
       Cors:
         AllowOrigins:
@@ -129,7 +137,7 @@ Resources:
       FunctionName: !Ref OtlpToParquetFunction
       Action: lambda:InvokeFunctionUrl
       Principal: "*"
-      FunctionUrlAuthType: AWS_IAM
+      FunctionUrlAuthType: !Ref AuthType
 
   FunctionLogGroup:
     Type: AWS::Logs::LogGroup
