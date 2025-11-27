@@ -2710,6 +2710,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "arrow",
+ "js-sys",
  "otlp2parquet-core",
  "otlp2parquet-proto",
  "parking_lot",

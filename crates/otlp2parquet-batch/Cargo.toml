@@ -20,3 +20,6 @@ prost = { workspace = true }
 
 # Utilities
 anyhow = { workspace = true }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+js-sys = "0.3"

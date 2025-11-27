@@ -570,19 +570,37 @@ fn sanitize_service_name(service_name: &str) -> Cow<'_, str> {
     }
 }
 
+/// Get fallback timestamp partition values when timestamp_micros is invalid.
+/// Uses platform-appropriate time source (std::time on native, js_sys on WASM).
+#[cfg(not(target_family = "wasm"))]
+fn fallback_partition() -> (i32, u8, u8, u8) {
+    let now = OffsetDateTime::now_utc();
+    (now.year(), u8::from(now.month()), now.day(), now.hour())
+}
+
+#[cfg(target_family = "wasm")]
+fn fallback_partition() -> (i32, u8, u8, u8) {
+    // js_sys::Date::now() returns milliseconds since epoch
+    let now_ms = js_sys::Date::now() as i64;
+    let nanos = i128::from(now_ms).saturating_mul(1_000_000);
+    match OffsetDateTime::from_unix_timestamp_nanos(nanos) {
+        Ok(dt) => (dt.year(), u8::from(dt.month()), dt.day(), dt.hour()),
+        Err(_) => {
+            // Absolute fallback if even JS time conversion fails
+            (2025, 1, 1, 0)
+        }
+    }
+}
+
 fn partition_from_timestamp(timestamp_micros: i64) -> (i32, u8, u8, u8) {
     if timestamp_micros <= 0 {
-        let now = OffsetDateTime::now_utc();
-        return (now.year(), u8::from(now.month()), now.day(), now.hour());
+        return fallback_partition();
     }
 
     let nanos = i128::from(timestamp_micros).saturating_mul(1_000);
     match OffsetDateTime::from_unix_timestamp_nanos(nanos) {
         Ok(dt) => (dt.year(), u8::from(dt.month()), dt.day(), dt.hour()),
-        Err(_) => {
-            let now = OffsetDateTime::now_utc();
-            (now.year(), u8::from(now.month()), now.day(), now.hour())
-        }
+        Err(_) => fallback_partition(),
     }
 }
 
