@@ -7,17 +7,17 @@
 //! - Send signals: POST to Lambda Function URL with OTLP payloads
 //! - Verify execution: Query CloudWatch Logs for errors
 //! - Verify data: DuckDB queries S3 Tables catalog + S3 Parquet files
-//! - Cleanup: Delete CloudFormation stack
+//! - Cleanup: Delete CloudFormation stack + temp S3 bucket
 //!
 //! ## Prerequisites
 //! - AWS credentials configured (IAM role or environment variables)
 //! - Lambda deployment package built (make build-lambda)
-//! - S3 bucket for Lambda ZIP uploads
 //!
 //! ## Environment Variables
 //! - `SMOKE_TEST_STACK_PREFIX`: Stack name prefix (default: "smoke-lambda")
 //! - `SMOKE_TEST_AWS_REGION`: AWS region (default: "us-west-2")
 //! - `SMOKE_TEST_S3_TABLES_NAMESPACE`: Iceberg namespace (default: "otel_smoke")
+//! - `SMOKE_TEST_LAMBDA_BUCKET`: (optional) S3 bucket for Lambda ZIP; auto-created if not set
 
 use super::{
     CatalogMode, CatalogType, DeploymentInfo, DuckDBVerifier, ExecutionStatus, S3Credentials,
@@ -51,6 +51,8 @@ pub struct LambdaHarness {
     aws_config: aws_config::SdkConfig,
     /// Catalog mode (S3 Tables or plain Parquet)
     catalog_mode: CatalogMode,
+    /// Whether we created the lambda bucket (and should delete it on cleanup)
+    owns_lambda_bucket: bool,
 }
 
 impl LambdaHarness {
@@ -77,12 +79,44 @@ impl LambdaHarness {
             .load()
             .await;
 
-        // Upload Lambda ZIP to S3
-        let lambda_bucket = std::env::var("SMOKE_TEST_LAMBDA_BUCKET")
-            .context("SMOKE_TEST_LAMBDA_BUCKET env var required")?;
+        let s3_client = S3Client::new(&aws_config);
+
+        // Use provided bucket or create a temp one
+        let (lambda_bucket, owns_lambda_bucket) = if let Ok(bucket) =
+            std::env::var("SMOKE_TEST_LAMBDA_BUCKET")
+        {
+            (bucket, false)
+        } else {
+            // Create a temporary bucket for the Lambda ZIP
+            let temp_bucket = format!("otlp2parquet-smoke-code-{}", test_id);
+            tracing::info!("Creating temporary S3 bucket: {}", temp_bucket);
+
+            // Create bucket with location constraint for non-us-east-1 regions
+            let create_result = if region == "us-east-1" {
+                s3_client.create_bucket().bucket(&temp_bucket).send().await
+            } else {
+                s3_client
+                    .create_bucket()
+                    .bucket(&temp_bucket)
+                    .create_bucket_configuration(
+                        aws_sdk_s3::types::CreateBucketConfiguration::builder()
+                            .location_constraint(aws_sdk_s3::types::BucketLocationConstraint::from(
+                                region.as_str(),
+                            ))
+                            .build(),
+                    )
+                    .send()
+                    .await
+            };
+
+            create_result.context("Failed to create temporary S3 bucket for Lambda code")?;
+
+            tracing::info!("Created temporary bucket: {}", temp_bucket);
+            (temp_bucket, true)
+        };
+
         let lambda_key = format!("smoke-tests/{}/bootstrap-arm64.zip", stack_name);
 
-        let s3_client = S3Client::new(&aws_config);
         let zip_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../target/lambda/bootstrap-arm64.zip");
 
@@ -113,6 +147,7 @@ impl LambdaHarness {
             lambda_key,
             aws_config,
             catalog_mode,
+            owns_lambda_bucket,
         })
     }
 }
@@ -137,13 +172,13 @@ impl SmokeTestHarness for LambdaHarness {
             CatalogMode::None => "none",
         };
 
+        // Use 's3' source for smoke tests (tests locally built binary, not GitHub release)
         let rendered = template_content
             .replace("{{STACK_NAME}}", &self.stack_name)
             .replace("{{BUCKET_NAME}}", &data_bucket_name)
             .replace("{{CATALOG_MODE}}", catalog_mode)
             .replace("{{LOG_RETENTION}}", "7")
-            .replace("{{LAMBDA_S3_BUCKET}}", &self.lambda_bucket)
-            .replace("{{LAMBDA_S3_KEY}}", &self.lambda_key);
+            .replace("{{LAMBDA_VERSION}}", "latest");
 
         // Write rendered template to temp file
         let temp_template = std::env::temp_dir().join(format!("{}-template.yaml", self.stack_name));
@@ -168,6 +203,9 @@ impl SmokeTestHarness for LambdaHarness {
                 "CAPABILITY_IAM",
                 "--parameter-overrides",
                 "AuthType=NONE",
+                "LambdaSource=s3",
+                &format!("LambdaS3Bucket={}", self.lambda_bucket),
+                &format!("LambdaS3Key={}", self.lambda_key),
                 &format!("IcebergNamespace={}", self.namespace),
                 "--no-fail-on-empty-changeset",
             ])
@@ -298,7 +336,7 @@ impl SmokeTestHarness for LambdaHarness {
         tracing::info!("Verifying Lambda execution via CloudWatch Logs");
 
         let logs_client = LogsClient::new(&self.aws_config);
-        let log_group_name = format!("/aws/lambda/{}-ingest", self.stack_name);
+        let log_group_name = format!("/aws/lambda/{}", self.stack_name);
 
         // Wait a bit for logs to be available
         tokio::time::sleep(Duration::from_secs(5)).await;
@@ -548,6 +586,28 @@ impl SmokeTestHarness for LambdaHarness {
             .await
         {
             tracing::warn!("Failed to delete Lambda ZIP: {}", e);
+        }
+
+        // If we created the lambda bucket, delete it
+        if self.owns_lambda_bucket {
+            tracing::info!(
+                "Deleting temporary Lambda code bucket: {}",
+                self.lambda_bucket
+            );
+            if let Err(e) = s3_client
+                .delete_bucket()
+                .bucket(&self.lambda_bucket)
+                .send()
+                .await
+            {
+                tracing::warn!(
+                    "Failed to delete temporary bucket {}: {}",
+                    self.lambda_bucket,
+                    e
+                );
+            } else {
+                tracing::info!("Deleted temporary bucket: {}", self.lambda_bucket);
+            }
         }
 
         Ok(())

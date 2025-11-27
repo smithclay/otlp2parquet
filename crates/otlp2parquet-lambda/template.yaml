@@ -84,6 +84,8 @@ Resources:
                   - s3tables:UpdateTableMetadataLocation
                   - s3tables:GetNamespace
                   - s3tables:CreateNamespace
+                  - s3tables:PutTableData
+                  - s3tables:GetTableData
                 Resource:
                   - !Sub '${S3TablesBucket.Arn}/*'
                   - !GetAtt S3TablesBucket.Arn

@@ -9,13 +9,12 @@ use std::path::Path;
 use super::names;
 
 const TEMPLATE: &str = include_str!("../../templates/cloudformation.yaml");
-const GITHUB_RELEASES_URL: &str = "https://github.com/smithclay/otlp2parquet/releases/latest";
 
 #[derive(Args)]
 pub struct AwsArgs {
-    /// S3 URI of Lambda binary (e.g., s3://my-bucket/otlp2parquet-lambda-arm64.zip)
-    #[arg(long)]
-    pub lambda_s3_uri: Option<String>,
+    /// GitHub release version (e.g., v0.0.2 or "latest")
+    #[arg(long, default_value = "latest")]
+    pub version: String,
 
     /// CloudFormation stack name
     #[arg(long)]
@@ -43,24 +42,7 @@ pub fn run(args: AwsArgs) -> Result<()> {
     println!("otlp2parquet deploy - AWS Lambda + S3");
     println!();
 
-    // Collect values via wizard or flags
-    let lambda_s3_uri = match args.lambda_s3_uri {
-        Some(uri) => {
-            validate_s3_uri(&uri).map_err(|e| anyhow::anyhow!("Invalid S3 URI: {}", e))?;
-            uri
-        }
-        None => {
-            println!("Download the Lambda binary from:");
-            println!("  {}", GITHUB_RELEASES_URL);
-            println!();
-            Input::new()
-                .with_prompt("S3 URI of Lambda binary")
-                .validate_with(validate_s3_uri)
-                .interact_text()?
-        }
-    };
-
-    let (lambda_bucket, lambda_key) = parse_s3_uri(&lambda_s3_uri)?;
+    let version = args.version;
 
     let default_name = names::generate();
     let stack_name = match args.stack_name {
@@ -129,14 +111,13 @@ pub fn run(args: AwsArgs) -> Result<()> {
         .replace("{{BUCKET_NAME}}", &bucket_name)
         .replace("{{CATALOG_MODE}}", &catalog_mode)
         .replace("{{LOG_RETENTION}}", &retention.to_string())
-        .replace("{{LAMBDA_S3_BUCKET}}", &lambda_bucket)
-        .replace("{{LAMBDA_S3_KEY}}", &lambda_key);
+        .replace("{{LAMBDA_VERSION}}", &version);
 
     // Write file
     fs::write(output_path, &content).context("Failed to write template.yaml")?;
 
     println!();
-    println!("Created template.yaml");
+    println!("Created template.yaml (version: {})", version);
     println!();
     println!("Next steps:");
     println!("  1. Deploy:");
@@ -145,28 +126,10 @@ pub fn run(args: AwsArgs) -> Result<()> {
     println!("       --stack-name {} \\", stack_name);
     println!("       --capabilities CAPABILITY_IAM");
     println!();
+    println!("The Lambda binary will be automatically fetched from GitHub releases.");
+    println!();
 
     Ok(())
-}
-
-#[allow(clippy::ptr_arg)]
-fn validate_s3_uri(input: &String) -> Result<(), String> {
-    if !input.starts_with("s3://") {
-        return Err("S3 URI must start with 's3://'".to_string());
-    }
-    let path = input.strip_prefix("s3://").unwrap();
-    if !path.contains('/') {
-        return Err(
-            "S3 URI must include both bucket and key (e.g., s3://bucket/key.zip)".to_string(),
-        );
-    }
-    Ok(())
-}
-
-fn parse_s3_uri(uri: &str) -> Result<(String, String)> {
-    let path = uri.strip_prefix("s3://").context("Invalid S3 URI")?;
-    let (bucket, key) = path.split_once('/').context("Invalid S3 URI format")?;
-    Ok((bucket.to_string(), key.to_string()))
 }
 
 #[allow(clippy::ptr_arg)]
