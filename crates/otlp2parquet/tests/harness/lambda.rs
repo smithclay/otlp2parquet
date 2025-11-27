@@ -27,6 +27,8 @@ use anyhow::{Context, Result};
 use aws_config::BehaviorVersion;
 use aws_sdk_cloudformation::Client as CfnClient;
 use aws_sdk_cloudwatchlogs::Client as LogsClient;
+use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3tables::Client as S3TablesClient;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -41,8 +43,10 @@ pub struct LambdaHarness {
     region: String,
     /// S3 Tables namespace
     namespace: String,
-    /// SAM template path
-    template_path: PathBuf,
+    /// S3 bucket for Lambda ZIP upload
+    lambda_bucket: String,
+    /// S3 key for Lambda ZIP
+    lambda_key: String,
     /// AWS SDK config
     aws_config: aws_config::SdkConfig,
     /// Catalog mode (S3 Tables or plain Parquet)
@@ -73,20 +77,40 @@ impl LambdaHarness {
             .load()
             .await;
 
-        // Choose template based on catalog mode
-        let template_filename = match catalog_mode {
-            CatalogMode::Enabled => "lambda-template.yaml",
-            CatalogMode::None => "lambda-template-plain-parquet.yaml",
-        };
-        let template_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../scripts/smoke")
-            .join(template_filename);
+        // Upload Lambda ZIP to S3
+        let lambda_bucket = std::env::var("SMOKE_TEST_LAMBDA_BUCKET")
+            .context("SMOKE_TEST_LAMBDA_BUCKET env var required")?;
+        let lambda_key = format!("smoke-tests/{}/bootstrap-arm64.zip", stack_name);
+
+        let s3_client = S3Client::new(&aws_config);
+        let zip_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/lambda/bootstrap-arm64.zip");
+
+        tracing::info!(
+            "Uploading Lambda ZIP to s3://{}/{}",
+            lambda_bucket,
+            lambda_key
+        );
+
+        let body = ByteStream::from_path(&zip_path)
+            .await
+            .context("Failed to read Lambda ZIP file")?;
+
+        s3_client
+            .put_object()
+            .bucket(&lambda_bucket)
+            .key(&lambda_key)
+            .body(body)
+            .send()
+            .await
+            .context("Failed to upload Lambda ZIP to S3")?;
 
         Ok(Self {
             stack_name,
             region,
             namespace,
-            template_path,
+            lambda_bucket,
+            lambda_key,
             aws_config,
             catalog_mode,
         })
