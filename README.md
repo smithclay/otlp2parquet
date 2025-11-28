@@ -60,7 +60,7 @@ wrangler deploy
 otlp2parquet deploy aws
 
 # Deploy with Cloudformation
-aws cloudformation deploy --template-file template.yaml --stack-name otlp2parquet
+aws cloudformation deploy --template-file template.yaml --stack-name otlp2parquet --capabilities CAPABILITY_IAM
 ```
 
 Both commands walk you through setup and generate the config files you need.

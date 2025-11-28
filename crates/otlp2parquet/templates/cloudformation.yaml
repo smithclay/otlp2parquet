@@ -73,12 +73,6 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
-      LifecycleConfiguration:
-        Rules:
-          - Id: DeleteOldVersions
-            Status: Enabled
-            NoncurrentVersionExpiration:
-              NoncurrentDays: 7
 
   # IAM role for the code fetcher Lambda (only needed for GitHub source)
   CodeFetcherRole:

@@ -59,10 +59,14 @@ pub fn run(args: AwsArgs) -> Result<()> {
                 .map_err(|e| anyhow::anyhow!("Invalid bucket name: {}", e))?;
             bucket
         }
-        None => Input::new()
-            .with_prompt("S3 bucket name for data")
-            .validate_with(validate_bucket_name)
-            .interact_text()?,
+        None => {
+            let default_bucket = format!("{}-data", stack_name);
+            Input::new()
+                .with_prompt("S3 bucket name for data")
+                .default(default_bucket)
+                .validate_with(validate_bucket_name)
+                .interact_text()?
+        }
     };
 
     let catalog_mode = match args.catalog {
