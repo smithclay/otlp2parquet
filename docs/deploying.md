@@ -78,36 +78,37 @@ Deploy to AWS Lambda with S3 or S3 Tables (Iceberg) storage.
 
 ### Quick Start
 
-1. Download the Lambda binary from [GitHub Releases](https://github.com/smithclay/otlp2parquet/releases)
-2. Upload to your S3 bucket:
-   ```bash
-   aws s3 cp otlp2parquet-lambda-arm64.zip s3://my-bucket/
-   ```
-3. Generate the CloudFormation template:
-   ```bash
-   otlp2parquet deploy aws
-   ```
+```bash
+# Generates a CloudFormation template for Lambda + S3
+otlp2parquet deploy aws
+
+# Deploy with CloudFormation
+aws cloudformation deploy --template-file template.yaml --stack-name otlp2parquet --capabilities CAPABILITY_IAM
+```
 
 The wizard prompts for:
-- **Lambda S3 URI** (e.g., `s3://my-bucket/otlp2parquet-lambda-arm64.zip`)
-- **Stack name** (default: auto-generated)
-- **Data bucket name**
+- **Stack name** (default: auto-generated like `swift-beacon-4821`)
+- **Data bucket name** - where Parquet files are written
 - **Catalog mode** - Plain Parquet (S3) or Iceberg (S3 Tables)
 
-Then deploy:
+### Send test data
+
+Lambda URLs use IAM SigV4 auth by default:
 
 ```bash
-aws cloudformation deploy \
-  --template-file template.yaml \
-  --stack-name my-stack \
-  --capabilities CAPABILITY_IAM
+uvx awscurl \
+  --service lambda \
+  --region $AWS_REGION \
+  -X POST $FUNCTION_URL/v1/logs \
+  -H "Content-Type: application/json" \
+  -d '{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"body":{"stringValue":"hello world"}}]}]}]}'
 ```
 
 ### Get your endpoint
 
 ```bash
 aws cloudformation describe-stacks \
-  --stack-name my-stack \
+  --stack-name otlp2parquet \
   --query 'Stacks[0].Outputs[?OutputKey==`FunctionUrl`].OutputValue' \
   --output text
 ```
@@ -115,16 +116,30 @@ aws cloudformation describe-stacks \
 ??? note "Non-interactive mode (CI/CD)"
     ```bash
     otlp2parquet deploy aws \
-      --lambda-s3-uri s3://my-bucket/lambda.zip \
       --stack-name my-stack \
       --bucket my-data \
       --catalog none \
       --force
+
+    aws cloudformation deploy --template-file template.yaml --stack-name my-stack --capabilities CAPABILITY_IAM
+    ```
+
+??? note "Custom Lambda binary"
+    To use a custom build instead of GitHub Releases:
+    ```bash
+    # Build the Lambda binary
+    make build-lambda
+
+    # Upload to your bucket
+    aws s3 cp target/lambda/bootstrap-arm64.zip s3://my-bucket/
+
+    # Generate template with custom S3 URI
+    otlp2parquet deploy aws --lambda-s3-uri s3://my-bucket/bootstrap-arm64.zip
     ```
 
 ??? warning "Production considerations"
     - **Authentication**: Lambda URL uses IAM auth by default (SigV4)
-    - **Cold starts**: First invocation takes 5-10s; configure retries in OTel exporter
+    - **Cold starts**: First invocation takes ~1s; configure retries in OTel exporter
     - **Batching**: Use an OTel Collector to batch requests and reduce invocations
 
 ---
