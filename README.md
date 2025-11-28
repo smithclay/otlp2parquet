@@ -61,6 +61,14 @@ otlp2parquet deploy aws
 
 # Deploy with Cloudformation
 aws cloudformation deploy --template-file template.yaml --stack-name otlp2parquet --capabilities CAPABILITY_IAM
+
+# Send a log (requires IAM sigv4 auth by default)
+uvx awscurl \
+  --service lambda \
+  --region $AWS_REGION \
+  -X POST $FUNCTION_URL \
+  -H "Content-Type: application/json" \
+  -d '{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"body":{"stringValue":"hello world"}}]}]}]}'
 ```
 
 Both commands walk you through setup and generate the config files you need.

@@ -8,16 +8,15 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [[bin]]
 name = "otlp2parquet"
 path = "src/main.rs"
 
 [dependencies]
-otlp2parquet-core = { path = "../otlp2parquet-core" }
-otlp2parquet-batch = { path = "../otlp2parquet-batch" }
-otlp2parquet-config = { path = "../otlp2parquet-config" }
-otlp2parquet-writer = { path = "../otlp2parquet-writer" }
+otlp2parquet-core = { workspace = true }
+otlp2parquet-writer = { workspace = true }
 arrow = { workspace = true }
 parquet = { workspace = true }
 prost = { workspace = true }

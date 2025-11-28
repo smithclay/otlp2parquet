@@ -1,12 +1,15 @@
 [package]
 name = "otlp2parquet-writer"
-version = "0.1.0"
-edition = "2021"
+description = "Parquet and Iceberg writer for otlp2parquet"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 icepick = { version = "0.2.0", default-features = false }
-otlp2parquet-core = { path = "../otlp2parquet-core" }
-otlp2parquet-config = { path = "../otlp2parquet-config" }
+otlp2parquet-core = { workspace = true }
 arrow = { workspace = true }
 anyhow = "1"
 thiserror = "2"

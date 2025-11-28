@@ -5,13 +5,12 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+publish = false
 
 [dependencies]
 arrow = { version = "56", default-features = false }
 otlp2parquet-core = { path = "../otlp2parquet-core", default-features = false }
-otlp2parquet-batch = { path = "../otlp2parquet-batch", default-features = false }
 otlp2parquet-writer = { path = "../otlp2parquet-writer", default-features = false }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }
-otlp2parquet-config = { path = "../otlp2parquet-config", default-features = false }

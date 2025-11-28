@@ -1,4 +1,4 @@
-use crate::{
+use super::{
     CatalogMode, FsConfig, LambdaConfig, LogFormat, R2Config, RuntimeConfig, S3Config,
     ServerConfig, StorageBackend,
 };

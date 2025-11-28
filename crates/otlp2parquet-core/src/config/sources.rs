@@ -7,9 +7,9 @@
 // 4. Default config files (./config.toml, ./.otlp2parquet.toml)
 // 5. Platform defaults (based on auto-detected Platform)
 
-use crate::env_overrides::{self, EnvSource, ENV_PREFIX};
-use crate::platform::Platform;
-use crate::*;
+use super::env_overrides::{self, EnvSource, ENV_PREFIX};
+use super::platform::Platform;
+use super::*;
 use anyhow::{Context, Result};
 use std::env;
 use std::path::Path;

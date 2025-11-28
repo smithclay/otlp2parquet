@@ -2,7 +2,7 @@
 //
 // Validates that required fields are present and values are sensible
 
-use crate::*;
+use super::*;
 use anyhow::{bail, Result};
 use tracing::warn;
 
