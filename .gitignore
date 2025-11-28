@@ -57,3 +57,4 @@ testdata/*_large.*
 testdata/**/*_large.*
 
 otlp2parquet-worker.zip
+template.yaml

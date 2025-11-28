@@ -16,15 +16,14 @@ echo "Filtering buckets with prefix: $PREFIX"
 echo ""
 
 # Get all matching S3 Tables bucket ARNs
+# Match any bucket name containing the prefix (handles both smoke-lambda-* and otlp2parquet-smoke-smoke-lambda-*)
 bucket_arns=$(aws s3tables list-table-buckets \
   --region "$REGION" \
-  --query "tableBuckets[?contains(name, \`$PREFIX\`)].arn" \
-  --output text)
+  --output json | jq -r ".tableBuckets[] | select(.name | contains(\"$PREFIX\")) | .arn")
 
 if [ -z "$bucket_arns" ]; then
   echo "No S3 Tables buckets found matching prefix '$PREFIX'"
-  exit 0
-fi
+else
 
 # Process each bucket
 echo "$bucket_arns" | tr '\t' '\n' | while read -r bucket_arn; do
@@ -85,7 +84,66 @@ echo "$bucket_arns" | tr '\t' '\n' | while read -r bucket_arn; do
   echo ""
 done
 
-echo "=== Cleanup complete ==="
+fi
+
+echo "=== S3 Tables cleanup complete ==="
 echo ""
-echo "Note: CloudFormation stacks can now be deleted with:"
-echo "  aws cloudformation delete-stack --region $REGION --stack-name <stack-name>"
+
+# Empty and delete S3 buckets that match the prefix pattern
+# Handles both otlp2parquet-smoke-{prefix} and otlp2parquet-plain-{prefix} patterns
+echo "=== Emptying S3 buckets matching '$PREFIX' ==="
+
+s3_buckets=$(aws s3 ls 2>/dev/null | awk '{print $3}' | grep -E "(otlp2parquet-smoke-|otlp2parquet-plain-).*$PREFIX" || true)
+
+if [ -z "$s3_buckets" ]; then
+  echo "No S3 buckets found matching pattern"
+else
+  echo "$s3_buckets" | while read -r bucket; do
+    [ -z "$bucket" ] && continue
+    echo "  Emptying and deleting bucket: $bucket"
+    # First try simple delete
+    aws s3 rm "s3://$bucket" --recursive 2>&1 || true
+    # Try to delete the bucket
+    if ! aws s3 rb "s3://$bucket" 2>&1; then
+      # If failed, it might have versioning - use Python to delete all versions
+      echo "    Bucket has versioning, deleting all versions..."
+      uvx --quiet --with boto3 python3 -c "
+import boto3
+s3 = boto3.resource('s3')
+bucket = s3.Bucket('$bucket')
+bucket.object_versions.delete()
+bucket.delete()
+print('    Deleted versioned bucket')
+" 2>&1 || echo "    Failed to delete versioned bucket"
+    fi
+  done
+fi
+
+echo ""
+
+# Now delete CloudFormation stacks matching the prefix
+echo "=== Deleting CloudFormation stacks matching '$PREFIX' ==="
+
+stack_names=$(aws cloudformation list-stacks \
+  --region "$REGION" \
+  --stack-status-filter CREATE_COMPLETE CREATE_FAILED UPDATE_COMPLETE ROLLBACK_COMPLETE DELETE_FAILED \
+  --query "StackSummaries[?contains(StackName, \`$PREFIX\`)].StackName" \
+  --output text)
+
+if [ -z "$stack_names" ]; then
+  echo "No CloudFormation stacks found matching prefix '$PREFIX'"
+else
+  echo "$stack_names" | tr '\t' '\n' | while read -r stack_name; do
+    [ -z "$stack_name" ] && continue
+    echo "  Deleting stack: $stack_name"
+    aws cloudformation delete-stack \
+      --region "$REGION" \
+      --stack-name "$stack_name" 2>&1 || echo "    Failed to delete stack"
+  done
+  echo ""
+  echo "Stack deletions initiated. Monitor with:"
+  echo "  aws cloudformation list-stacks --region $REGION --stack-status-filter DELETE_IN_PROGRESS DELETE_FAILED --query \"StackSummaries[?contains(StackName, '$PREFIX')].[StackName,StackStatus]\" --output table"
+fi
+
+echo ""
+echo "=== Cleanup complete ==="
