@@ -178,6 +178,7 @@ impl WorkersHarness {
                 ("INLINE_CREDENTIALS", true),  // Smoke tests use inline credentials
                 ("ICEBERG", use_iceberg),
                 ("BASICAUTH", false), // No basic auth for smoke tests
+                ("LOGGING", true),    // Enable Workers observability logging
             ],
         );
 
@@ -346,7 +347,7 @@ impl SmokeTestHarness for WorkersHarness {
                 "r2-plain-parquet".to_string()
             },
             bucket: self.bucket_name.clone(),
-            namespace: "otel".to_string(), // Workers uses "otel" namespace
+            namespace: "otlp".to_string(), // Workers uses "otlp" namespace (default)
             resource_ids: HashMap::from([
                 ("worker_name".to_string(), self.worker_name.clone()),
                 ("bucket_name".to_string(), self.bucket_name.clone()),
