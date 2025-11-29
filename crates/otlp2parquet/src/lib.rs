@@ -24,11 +24,12 @@ use otlp2parquet_core::batch::{BatchConfig, BatchManager, PassthroughBatcher};
 use otlp2parquet_core::config::RuntimeConfig;
 use otlp2parquet_core::parquet::encoding::set_parquet_row_group_size;
 use serde_json::json;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
 use tower_http::decompression::RequestDecompressionLayer;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 mod handlers;
 mod init;
@@ -213,11 +214,31 @@ pub async fn run_with_config(config: RuntimeConfig) -> Result<()> {
     info!("  GET  http://{}/ready      - Readiness check", addr);
     info!("Press Ctrl+C or send SIGTERM to stop");
 
+    // Spawn background flush task if batching is enabled
+    let shutdown_flag = Arc::new(AtomicBool::new(false));
+    let flush_handle = if state.batcher.is_some() {
+        let flush_state = state.clone();
+        let flush_shutdown = Arc::clone(&shutdown_flag);
+        let flush_interval =
+            Duration::from_secs(config.batch.max_age_secs.max(1) / 2).max(Duration::from_secs(1));
+        Some(tokio::spawn(async move {
+            run_background_flush(flush_state, flush_shutdown, flush_interval).await;
+        }))
+    } else {
+        None
+    };
+
     // Start server with graceful shutdown
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("Server error")?;
+
+    // Signal background task to stop and wait for it
+    shutdown_flag.store(true, Ordering::SeqCst);
+    if let Some(handle) = flush_handle {
+        let _ = handle.await;
+    }
 
     flush_pending_batches(&state).await?;
 
@@ -268,4 +289,56 @@ async fn flush_pending_batches(state: &AppState) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Background task that periodically flushes expired batches
+async fn run_background_flush(state: AppState, shutdown: Arc<AtomicBool>, interval: Duration) {
+    debug!(
+        "Background flush task started (interval={}s)",
+        interval.as_secs()
+    );
+
+    while !shutdown.load(Ordering::SeqCst) {
+        tokio::time::sleep(interval).await;
+
+        if shutdown.load(Ordering::SeqCst) {
+            break;
+        }
+
+        if let Some(batcher) = &state.batcher {
+            match batcher.drain_expired() {
+                Ok(expired) => {
+                    for completed in expired {
+                        let rows = completed.metadata.record_count;
+                        let service = completed.metadata.service_name.as_ref().to_string();
+                        match handlers::persist_log_batch(&state, &completed).await {
+                            Ok(paths) => {
+                                for path in &paths {
+                                    info!(
+                                        path = %path,
+                                        service_name = %service,
+                                        rows,
+                                        "Flushed expired batch"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                warn!(
+                                    error = %e,
+                                    service_name = %service,
+                                    rows,
+                                    "Failed to flush expired batch"
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to drain expired batches");
+                }
+            }
+        }
+    }
+
+    debug!("Background flush task stopped");
 }
