@@ -3,6 +3,11 @@
 // This module handles converting OTLP metrics data to Arrow RecordBatches
 // with separate schemas for each metric type (gauge, sum, histogram, etc.)
 
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::mem;
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use arrow::array::{
     Array, BooleanBuilder, Float64Builder, GenericListArray, Int32Builder, Int64Builder,
@@ -17,49 +22,12 @@ use otlp2parquet_proto::opentelemetry::proto::{
         ScopeMetrics,
     },
 };
-use std::collections::HashMap;
-use std::mem;
-use std::sync::Arc;
 
 use crate::otlp::common::{
-    any_value_builder::{any_value_string, any_value_to_json_value},
-    field_names::semconv,
-    UNKNOWN_SERVICE_NAME,
+    any_value_builder::any_value_string, field_names::semconv, keyvalue_to_json,
+    string_pairs_to_json, UNKNOWN_SERVICE_NAME,
 };
 use crate::schema::metrics::*;
-
-/// JSON-encode KeyValue attributes to string for S3 Tables compatibility
-fn keyvalue_attrs_to_json_string(attributes: &[KeyValue]) -> String {
-    if attributes.is_empty() {
-        return "{}".to_string();
-    }
-
-    let mut map = serde_json::Map::with_capacity(attributes.len());
-    for attr in attributes {
-        let json_value = attr
-            .value
-            .as_ref()
-            .map(any_value_to_json_value)
-            .unwrap_or(serde_json::Value::Null);
-        map.insert(attr.key.clone(), json_value);
-    }
-
-    serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
-}
-
-/// JSON-encode resource attributes (Vec of key-value pairs) to string
-fn resource_attrs_to_json_string(attributes: &[(String, String)]) -> String {
-    if attributes.is_empty() {
-        return "{}".to_string();
-    }
-
-    let mut map = serde_json::Map::with_capacity(attributes.len());
-    for (key, value) in attributes {
-        map.insert(key.clone(), serde_json::Value::String(value.clone()));
-    }
-
-    serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
-}
 
 /// Helper to convert a ListArray from a ListBuilder to use a specific field
 ///
@@ -476,7 +444,7 @@ fn flush_summary_builder(
 // Context structures for resource and scope information
 struct ResourceContext {
     service_name: String,
-    attributes_json: String,
+    attributes_json: Cow<'static, str>,
 }
 
 struct ScopeContext {
@@ -504,7 +472,7 @@ fn extract_resource_context(resource_metrics: &ResourceMetrics) -> ResourceConte
 
     ResourceContext {
         service_name,
-        attributes_json: resource_attrs_to_json_string(&attributes),
+        attributes_json: string_pairs_to_json(&attributes),
     }
 }
 
@@ -595,7 +563,7 @@ impl BaseColumnsBuilder {
 
         // Resource attributes - JSON-encoded string for S3 Tables compatibility
         self.resource_attributes_builder
-            .append_value(&resource_ctx.attributes_json);
+            .append_value(resource_ctx.attributes_json.as_ref());
 
         // Scope information
         if scope_ctx.name.is_empty() {
@@ -610,8 +578,9 @@ impl BaseColumnsBuilder {
         }
 
         // Data point attributes - JSON-encoded string for S3 Tables compatibility
-        let attributes_json = keyvalue_attrs_to_json_string(attributes);
-        self.attributes_builder.append_value(attributes_json);
+        let attributes_json = keyvalue_to_json(attributes);
+        self.attributes_builder
+            .append_value(attributes_json.as_ref());
 
         self.count += 1;
         Ok(())

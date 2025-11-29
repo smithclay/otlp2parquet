@@ -3,6 +3,9 @@
 // This is the core processing logic that extracts data from OTLP protobuf
 // messages and builds Arrow columns according to the ClickHouse schema.
 
+use std::borrow::Cow;
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use arrow::array::{
     BinaryBuilder, Int32Builder, RecordBatch, StringBuilder, TimestampMicrosecondBuilder,
@@ -10,61 +13,18 @@ use arrow::array::{
 };
 use otlp2parquet_proto::opentelemetry::proto::{
     collector::logs::v1::ExportLogsServiceRequest,
-    common::v1::{AnyValue, KeyValue},
+    common::v1::AnyValue,
     logs::v1::{LogRecord, ResourceLogs, ScopeLogs},
 };
 use prost::Message;
-use std::sync::Arc;
 
 use crate::otlp::common::{
-    any_value_builder::{any_value_string, any_value_to_json_value},
+    any_value_builder::any_value_string,
+    body_to_json,
     builder_helpers::{SPAN_ID_SIZE, TRACE_ID_SIZE},
+    keyvalue_to_json, pairs_to_json,
 };
 use crate::schema::{otel_logs_schema_arc, EXTRACTED_RESOURCE_ATTRS};
-
-/// JSON-encode attributes map to string for S3 Tables compatibility
-fn attributes_to_json_string(attributes: &[(&str, Option<&AnyValue>)]) -> String {
-    if attributes.is_empty() {
-        return "{}".to_string();
-    }
-
-    let mut map = serde_json::Map::with_capacity(attributes.len());
-    for &(key, value) in attributes {
-        let json_value = value
-            .map(any_value_to_json_value)
-            .unwrap_or(serde_json::Value::Null);
-        map.insert(key.to_string(), json_value);
-    }
-
-    serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
-}
-
-/// JSON-encode body (AnyValue) to string for S3 Tables compatibility
-fn body_to_json_string(body: Option<&AnyValue>) -> Option<String> {
-    body.map(|v| {
-        let json = any_value_to_json_value(v);
-        json.to_string()
-    })
-}
-
-/// JSON-encode log attributes (KeyValue) to string for S3 Tables compatibility
-fn keyvalue_attrs_to_json_string(attributes: &[KeyValue]) -> String {
-    if attributes.is_empty() {
-        return "{}".to_string();
-    }
-
-    let mut map = serde_json::Map::with_capacity(attributes.len());
-    for attr in attributes {
-        let json_value = attr
-            .value
-            .as_ref()
-            .map(any_value_to_json_value)
-            .unwrap_or(serde_json::Value::Null);
-        map.insert(attr.key.clone(), json_value);
-    }
-
-    serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
-}
 
 /// Metadata extracted during OTLP parsing
 #[derive(Debug, Clone)]
@@ -263,7 +223,7 @@ struct ServiceFields<'a> {
 
 struct ResourceContext<'a> {
     schema_url: Option<&'a str>,
-    attributes_json: String,
+    attributes_json: Cow<'static, str>,
     service: ServiceFields<'a>,
 }
 
@@ -271,7 +231,7 @@ struct ScopeContext<'a> {
     schema_url: Option<&'a str>,
     name: &'a str,
     version: Option<&'a str>,
-    attributes_json: String,
+    attributes_json: Cow<'static, str>,
 }
 
 impl ArrowConverter {
@@ -361,7 +321,7 @@ impl ArrowConverter {
             }
         }
 
-        let attributes_json = attributes_to_json_string(&attributes);
+        let attributes_json = pairs_to_json(&attributes);
 
         ResourceContext {
             schema_url,
@@ -389,18 +349,11 @@ impl ArrowConverter {
                 Some(scope.version.as_str())
             }
         });
-        let attributes: Vec<(&str, Option<&AnyValue>)> = scope_logs
+        let attributes_json = scope_logs
             .scope
             .as_ref()
-            .map(|scope| {
-                scope
-                    .attributes
-                    .iter()
-                    .map(|attr| (attr.key.as_str(), attr.value.as_ref()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let attributes_json = attributes_to_json_string(&attributes);
+            .map(|scope| keyvalue_to_json(&scope.attributes))
+            .unwrap_or(Cow::Borrowed("{}"));
 
         ScopeContext {
             schema_url,
@@ -453,8 +406,8 @@ impl ArrowConverter {
             .append_value(log_record.severity_number);
 
         // JSON-encode body as string for S3 Tables compatibility
-        if let Some(body_json) = body_to_json_string(log_record.body.as_ref()) {
-            self.body_builder.append_value(body_json);
+        if let Some(body_json) = body_to_json(log_record.body.as_ref()) {
+            self.body_builder.append_value(body_json.as_ref());
         } else {
             self.body_builder.append_null();
         }
@@ -494,7 +447,7 @@ impl ArrowConverter {
 
         // JSON-encode scope attributes as string for S3 Tables compatibility
         self.scope_attributes_builder
-            .append_value(&scope_ctx.attributes_json);
+            .append_value(scope_ctx.attributes_json.as_ref());
 
         if let Some(url) = scope_ctx.schema_url {
             self.scope_schema_url_builder.append_value(url);
@@ -504,11 +457,12 @@ impl ArrowConverter {
 
         // JSON-encode resource attributes as string for S3 Tables compatibility
         self.resource_attributes_builder
-            .append_value(&resource_ctx.attributes_json);
+            .append_value(resource_ctx.attributes_json.as_ref());
 
         // JSON-encode log attributes as string for S3 Tables compatibility
-        let log_attrs_json = keyvalue_attrs_to_json_string(&log_record.attributes);
-        self.log_attributes_builder.append_value(log_attrs_json);
+        let log_attrs_json = keyvalue_to_json(&log_record.attributes);
+        self.log_attributes_builder
+            .append_value(log_attrs_json.as_ref());
 
         self.current_row_count += 1;
 

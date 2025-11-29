@@ -9,5 +9,7 @@ pub mod field_names;
 pub mod field_numbers;
 pub mod format;
 pub mod json_normalizer;
+pub mod json_writer;
 
 pub use format::{parse_request, InputFormat, JsonNormalizer, OtlpSignalRequest};
+pub use json_writer::{body_to_json, keyvalue_to_json, pairs_to_json, string_pairs_to_json};
