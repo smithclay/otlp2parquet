@@ -46,7 +46,7 @@ impl BatchInstant {
     }
 }
 
-use crate::{BatchConfig, BatchMetadata, CompletedBatch};
+use super::{BatchConfig, BatchMetadata, CompletedBatch};
 
 /// Buffered batch accumulating Arrow RecordBatches
 #[derive(Debug)]

@@ -15,7 +15,7 @@ pub struct ProcessorConfig<'a> {
 }
 
 use crate::error::OtlpError;
-use otlp2parquet_batch::LogSignalProcessor;
+use otlp2parquet_core::batch::LogSignalProcessor;
 use otlp2parquet_core::{otlp, InputFormat, SignalType};
 use otlp2parquet_writer::{RetryPolicy, WriteBatchRequest};
 
@@ -39,7 +39,7 @@ pub async fn process_logs(
     let per_service_requests = otlp::logs::split_request_by_service(request);
 
     // Convert to Arrow via PassthroughBatcher
-    let passthrough = otlp2parquet_batch::PassthroughBatcher::<LogSignalProcessor>::default();
+    let passthrough = otlp2parquet_core::batch::PassthroughBatcher::<LogSignalProcessor>::default();
     let mut batches = Vec::new();
     let mut total_records = 0;
 
@@ -268,7 +268,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_logs_valid_request() {
-        use otlp2parquet_config::{FsConfig, StorageBackend, StorageConfig};
+        use otlp2parquet_core::config::{FsConfig, StorageBackend, StorageConfig};
         use otlp2parquet_core::InputFormat;
 
         // Read test data
@@ -278,7 +278,7 @@ mod tests {
         let temp_dir = std::env::temp_dir().join("otlp2parquet-handlers-test");
         std::fs::create_dir_all(&temp_dir).ok();
 
-        let runtime_config = otlp2parquet_config::RuntimeConfig {
+        let runtime_config = otlp2parquet_core::config::RuntimeConfig {
             batch: Default::default(),
             request: Default::default(),
             storage: StorageConfig {
@@ -343,7 +343,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_traces_valid_request() {
-        use otlp2parquet_config::{FsConfig, StorageBackend, StorageConfig};
+        use otlp2parquet_core::config::{FsConfig, StorageBackend, StorageConfig};
         use otlp2parquet_core::InputFormat;
 
         // Read test data
@@ -353,7 +353,7 @@ mod tests {
         let temp_dir = std::env::temp_dir().join("otlp2parquet-handlers-test-traces");
         std::fs::create_dir_all(&temp_dir).ok();
 
-        let runtime_config = otlp2parquet_config::RuntimeConfig {
+        let runtime_config = otlp2parquet_core::config::RuntimeConfig {
             batch: Default::default(),
             request: Default::default(),
             storage: StorageConfig {
@@ -417,7 +417,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_metrics_valid_request() {
-        use otlp2parquet_config::{FsConfig, StorageBackend, StorageConfig};
+        use otlp2parquet_core::config::{FsConfig, StorageBackend, StorageConfig};
         use otlp2parquet_core::InputFormat;
 
         // Read test data
@@ -428,7 +428,7 @@ mod tests {
         let temp_dir = std::env::temp_dir().join("otlp2parquet-handlers-test-metrics");
         std::fs::create_dir_all(&temp_dir).ok();
 
-        let runtime_config = otlp2parquet_config::RuntimeConfig {
+        let runtime_config = otlp2parquet_core::config::RuntimeConfig {
             batch: Default::default(),
             request: Default::default(),
             storage: StorageConfig {

@@ -8,11 +8,12 @@
 // - Accident: Serialization format (Parquet), storage, networking (OTHER CRATES)
 //
 // Serialization (Arrow → Parquet) moved to: otlp2parquet-writer
-// Batching/optimization moved to: otlp2parquet-batch
 
 use anyhow::Result;
 use arrow::array::RecordBatch;
 
+pub mod batch;
+pub mod config;
 pub mod otlp;
 pub mod parquet;
 pub mod schema;

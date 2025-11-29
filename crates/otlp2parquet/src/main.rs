@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use otlp2parquet_config::RuntimeConfig;
+use otlp2parquet_core::config::RuntimeConfig;
 use std::path::PathBuf;
 
 /// OTLP HTTP server writing Parquet files to object storage
@@ -90,7 +90,7 @@ async fn async_main(cli: Cli) -> Result<()> {
 }
 
 fn apply_cli_overrides(config: &mut RuntimeConfig, cli: &Cli) -> Result<()> {
-    use otlp2parquet_config::{ServerConfig, StorageBackend};
+    use otlp2parquet_core::config::{ServerConfig, StorageBackend};
 
     // Override port
     if let Some(port) = cli.port {
@@ -122,7 +122,7 @@ fn apply_cli_overrides(config: &mut RuntimeConfig, cli: &Cli) -> Result<()> {
 }
 
 fn apply_desktop_defaults(config: &mut RuntimeConfig) {
-    use otlp2parquet_config::{CatalogMode, LogFormat, ServerConfig, StorageBackend};
+    use otlp2parquet_core::config::{CatalogMode, LogFormat, ServerConfig, StorageBackend};
 
     // Ensure server config exists with defaults
     let server = config.server.get_or_insert_with(ServerConfig::default);
@@ -142,7 +142,7 @@ fn apply_desktop_defaults(config: &mut RuntimeConfig) {
 }
 
 fn display_startup_info(config: &RuntimeConfig) {
-    use otlp2parquet_config::StorageBackend;
+    use otlp2parquet_core::config::StorageBackend;
     use tracing::info;
 
     let server = config.server.as_ref().expect("server config validated");
@@ -190,7 +190,7 @@ fn display_startup_info(config: &RuntimeConfig) {
 }
 
 async fn validate_config(config: &RuntimeConfig) -> Result<()> {
-    use otlp2parquet_config::StorageBackend;
+    use otlp2parquet_core::config::StorageBackend;
     use std::fs;
     use tracing::info;
 

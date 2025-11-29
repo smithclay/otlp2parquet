@@ -296,6 +296,29 @@ audit: ## Run security audit on dependencies
 	@cargo audit || (echo "cargo-audit not installed. Install with: cargo install cargo-audit" && exit 1)
 
 #
+# Publishing Commands
+#
+
+.PHONY: publish-dry-run
+publish-dry-run: ## Dry-run publish all crates to crates.io (in dependency order)
+	@echo "==> Dry-run publishing workspace crates..."
+	@if ! command -v cargo-ws >/dev/null 2>&1; then \
+		echo "Installing cargo-workspaces..."; \
+		cargo install cargo-workspaces; \
+	fi
+	@cargo ws publish --dry-run
+
+.PHONY: publish
+publish: ## Publish all crates to crates.io (in dependency order)
+	@echo "==> Publishing workspace crates to crates.io..."
+	@echo "Order: otlp2parquet-proto -> otlp2parquet-core -> otlp2parquet-writer -> otlp2parquet"
+	@if ! command -v cargo-ws >/dev/null 2>&1; then \
+		echo "Installing cargo-workspaces..."; \
+		cargo install cargo-workspaces; \
+	fi
+	@cargo ws publish
+
+#
 # Performance Profiling & Benchmarking Commands
 #
 

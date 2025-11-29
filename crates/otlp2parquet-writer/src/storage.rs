@@ -3,7 +3,7 @@
 //! Provides a global operator for direct Parquet writes when catalog is not used.
 
 use once_cell::sync::OnceCell;
-use otlp2parquet_config::{RuntimeConfig, StorageBackend};
+use otlp2parquet_core::config::{RuntimeConfig, StorageBackend};
 
 static OPERATOR: OnceCell<opendal::Operator> = OnceCell::new();
 

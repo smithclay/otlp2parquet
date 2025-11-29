@@ -12,7 +12,7 @@ mod handlers;
 
 use flate2::read::GzDecoder;
 use once_cell::sync::OnceCell;
-use otlp2parquet_config::{EnvSource, Platform, RuntimeConfig, ENV_PREFIX};
+use otlp2parquet_core::config::{EnvSource, Platform, RuntimeConfig, ENV_PREFIX};
 use std::io::Read;
 use std::sync::Arc;
 use worker::*;
@@ -182,7 +182,9 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
     // Determine whether to use catalog based on catalog_mode configuration
     // - CatalogMode::Iceberg → use R2 Data Catalog (requires CLOUDFLARE_* env vars)
     // - CatalogMode::None → write directly to R2 (plain Parquet, no catalog)
-    if config.catalog_mode == otlp2parquet_config::CatalogMode::Iceberg && CATALOG.get().is_none() {
+    if config.catalog_mode == otlp2parquet_core::config::CatalogMode::Iceberg
+        && CATALOG.get().is_none()
+    {
         // Iceberg mode requires CLOUDFLARE_* catalog vars
         match validate_catalog_config(&env) {
             Ok(CatalogMode::R2DataCatalog {
@@ -287,7 +289,7 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
                 return error_response.into_response(status_code);
             }
         }
-    } else if config.catalog_mode == otlp2parquet_config::CatalogMode::None {
+    } else if config.catalog_mode == otlp2parquet_core::config::CatalogMode::None {
         // Plain Parquet mode - skip catalog entirely
         console_log!(
             "[{}] Catalog mode: none - writing plain Parquet to R2 bucket '{}' (no Iceberg catalog)",
@@ -349,7 +351,7 @@ async fn handle_otlp_request(mut req: Request, env: Env, _ctx: Context) -> Resul
     }
 
     // Determine if catalog is enabled based on config and initialization status
-    let catalog_enabled = config.catalog_mode == otlp2parquet_config::CatalogMode::Iceberg;
+    let catalog_enabled = config.catalog_mode == otlp2parquet_core::config::CatalogMode::Iceberg;
 
     // Route to appropriate handler based on signal type
     match signal {

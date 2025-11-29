@@ -3,7 +3,7 @@
 // Storage backend and logging/tracing setup
 
 use anyhow::Result;
-use otlp2parquet_config::{LogFormat, RuntimeConfig, StorageBackend};
+use otlp2parquet_core::config::{LogFormat, RuntimeConfig, StorageBackend};
 use std::sync::Arc;
 use tracing::info;
 
@@ -14,7 +14,7 @@ pub(crate) async fn init_writer(
     Option<Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>>,
     String,
 )> {
-    use otlp2parquet_config::CatalogMode;
+    use otlp2parquet_core::config::CatalogMode;
 
     info!(
         "Initializing writer with storage backend: {} (catalog_mode: {})",

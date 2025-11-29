@@ -11,7 +11,7 @@ use axum::{
     Json,
 };
 use metrics::{counter, histogram};
-use otlp2parquet_batch::CompletedBatch;
+use otlp2parquet_core::batch::CompletedBatch;
 use otlp2parquet_core::{otlp, InputFormat};
 use prost::Message;
 use serde_json::json;

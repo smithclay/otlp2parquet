@@ -6,7 +6,7 @@
 // We don't add our own tokio - lambda_runtime provides it
 
 use lambda_runtime::{service_fn, Error, LambdaEvent};
-use otlp2parquet_config::{RuntimeConfig, StorageBackend};
+use otlp2parquet_core::config::{RuntimeConfig, StorageBackend};
 use otlp2parquet_core::parquet::encoding::set_parquet_row_group_size;
 use std::sync::Arc;
 
@@ -177,7 +177,9 @@ pub async fn run() -> Result<(), Error> {
     tracing::info!("Lambda payload cap set to {} bytes", max_payload_bytes);
 
     // Check catalog mode to determine initialization path
-    let (catalog, namespace) = if config.catalog_mode == otlp2parquet_config::CatalogMode::Iceberg {
+    let (catalog, namespace) = if config.catalog_mode
+        == otlp2parquet_core::config::CatalogMode::Iceberg
+    {
         // Initialize catalog - support both REST catalog and S3 Tables
         let iceberg_cfg = config.iceberg.as_ref().ok_or_else(|| {
             Error::from("Lambda requires iceberg configuration (rest_uri or bucket_arn) when catalog_mode=iceberg")
@@ -294,7 +296,7 @@ pub async fn run() -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use otlp2parquet_config::{IcebergConfig, Platform};
+    use otlp2parquet_core::config::{IcebergConfig, Platform};
 
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
         use std::sync::{Mutex, OnceLock};
@@ -355,7 +357,7 @@ mod tests {
 
     #[test]
     fn catalog_mode_none_requires_s3_storage_config() {
-        use otlp2parquet_config::{CatalogMode, S3Config, StorageBackend};
+        use otlp2parquet_core::config::{CatalogMode, S3Config, StorageBackend};
 
         // Create config with catalog_mode=none but no S3 storage config
         let mut config = RuntimeConfig::from_platform_defaults(Platform::Lambda);
@@ -378,7 +380,7 @@ mod tests {
 
     #[test]
     fn catalog_mode_iceberg_requires_bucket_arn_or_rest_uri() {
-        use otlp2parquet_config::CatalogMode;
+        use otlp2parquet_core::config::CatalogMode;
 
         // Create config with catalog_mode=iceberg
         let mut config = RuntimeConfig::from_platform_defaults(Platform::Lambda);
@@ -413,7 +415,10 @@ mod tests {
         let config =
             RuntimeConfig::load_for_platform(Platform::Lambda).expect("config load should succeed");
 
-        assert_eq!(config.catalog_mode, otlp2parquet_config::CatalogMode::None);
+        assert_eq!(
+            config.catalog_mode,
+            otlp2parquet_core::config::CatalogMode::None
+        );
 
         std::env::remove_var("OTLP2PARQUET_CATALOG_MODE");
     }

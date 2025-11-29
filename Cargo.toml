@@ -2,8 +2,6 @@
 members = [
     "crates/otlp2parquet",
     "crates/otlp2parquet-core",
-    "crates/otlp2parquet-batch",
-    "crates/otlp2parquet-config",
     "crates/otlp2parquet-writer",
     "crates/otlp2parquet-proto",
     "crates/otlp2parquet-cloudflare",
@@ -14,11 +12,12 @@ exclude = ["examples/generate-parquet-testdata"]
 resolver = "2"
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 authors = ["otlp2parquet Contributors"]
 license = "Apache-2.0"
 repository = "https://github.com/smithclay/otlp2parquet"
+description = "Stream OpenTelemetry logs, metrics, and traces to Parquet files"
 
 [profile.release]
 opt-level = "z"           # Optimize for size
@@ -33,9 +32,6 @@ opt-level = "z"
 [profile.release.package.otlp2parquet-core]
 opt-level = 3
 
-[profile.release.package.otlp2parquet-batch]
-opt-level = 3
-
 [profile.release.package.otlp2parquet-cloudflare]
 opt-level = "z"
 
@@ -46,6 +42,11 @@ opt-level = 3
 opt-level = 3
 
 [workspace.dependencies]
+# Internal crates - all use workspace version
+otlp2parquet-proto = { version = "0.2.1", path = "crates/otlp2parquet-proto" }
+otlp2parquet-core = { version = "0.2.1", path = "crates/otlp2parquet-core" }
+otlp2parquet-writer = { version = "0.2.1", path = "crates/otlp2parquet-writer" }
+
 # Arrow/Parquet - MINIMAL features only
 arrow = { version = "56.2", default-features = false, features = ["ipc"] }
 parquet = { version = "56.2", default-features = false, features = ["snap", "arrow", "async"] }

@@ -9,11 +9,11 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::otlp::traces::{TraceArrowConverter, TraceMetadata, TraceRequest};
+use crate::otlp::LogMetadata;
+use crate::{convert_request_to_arrow_with_capacity, estimate_request_row_count};
 use anyhow::{anyhow, Context, Result};
 use arrow::array::RecordBatch;
-use otlp2parquet_core::otlp::traces::{TraceArrowConverter, TraceMetadata, TraceRequest};
-use otlp2parquet_core::otlp::LogMetadata;
-use otlp2parquet_core::{convert_request_to_arrow_with_capacity, estimate_request_row_count};
 use otlp2parquet_proto::opentelemetry::proto::collector::logs::v1::ExportLogsServiceRequest;
 use parking_lot::Mutex;
 

@@ -4,14 +4,13 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 otlp2parquet-core = { path = "../otlp2parquet-core" }
-otlp2parquet-batch = { path = "../otlp2parquet-batch" }
-otlp2parquet-config = { path = "../otlp2parquet-config" }
 otlp2parquet-writer = { path = "../otlp2parquet-writer" }
 otlp2parquet-handlers = { path = "../otlp2parquet-handlers", default-features = false }
 
