@@ -69,6 +69,7 @@ curl -X POST https://your-worker.workers.dev/v1/logs \
     - **Authentication**: Enable `OTLP2PARQUET_BASIC_AUTH_ENABLED` or add Cloudflare Access
     - **Batching**: Use an OTel Collector upstream to batch requests
     - **Binary size**: Current WASM is ~1.3MB (limit 3MB)
+    - **Memory limit**: WASM has ~128MB memory; batches over 48MB are rejected. Split large payloads upstream.
 
 ---
 

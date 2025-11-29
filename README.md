@@ -8,6 +8,8 @@
 
 Receive OpenTelemetry logs, metrics, and traces and write them as Parquet files to local disk, cloud storage or [Apache Iceberg](https://iceberg.apache.org/). Query with DuckDB, Spark, or anything that reads Parquet.
 
+![otlp2parquet architecture](docs/otlp2parquet-arch-dec2025.png)
+
 ## Quick Start
 
 See [Deploy to Cloud](#deploy-to-the-cloud) for running in an AWS Lambda or Cloudflare Worker.
@@ -39,7 +41,7 @@ duckdb -c "SELECT * FROM './data/logs/**/*.parquet'"
 - **Keep monitoring data around a long time** Parquet on S3 can be 90% cheaper than large monitoring vendors for long-term analytics.
 - **Query with good tools** — duckDB, Spark, Athena, Trino, Pandas
 - **Easy Iceberg** — Optional catalog support, including [S3 Tables](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-tables.html) and [R2 Data Catalog](https://developers.cloudflare.com/r2/data-catalog/)
-- **Deploy anywhere** — Local binary, Cloudflare Workers, AWS Lambda
+- **Deploy anywhere** — Local binary, Cloudflare Workers (WASM), AWS Lambda
 
 ## Deploy to the Cloud
 
@@ -81,9 +83,11 @@ Logs, Metrics, Traces via OTLP/HTTP (protobuf or JSON, gzip compression supporte
 ## Stable Surface (v1)
 - OTLP/HTTP endpoints: `/v1/logs`, `/v1/metrics`, `/v1/traces` (protobuf or JSON; gzip supported)
 - Partition layout: `logs/{service}/year=.../hour=.../{ts}-{uuid}.parquet`, `metrics/{type}/{service}/...`, `traces/{service}/...`
-- Storage: filesystem, S3, or R2; optional Iceberg catalog commits are best-effort (Parquet always written)
+- Storage: filesystem, S3, or R2 with optional Iceberg catalog
 - Schemas: ClickHouse-compatible, PascalCase columns; five metric schemas (Gauge, Sum, Histogram, ExponentialHistogram, Summary)
-- Error model: HTTP 400 on invalid input/too large; 5xx on conversion/storage; warnings when catalog commit fails
+- Error model: HTTP 400 on invalid input/too large; 5xx on conversion/storage
+
+**Best-effort catalog commits**: Parquet files are always written to storage first. If you enable an Iceberg catalog (S3 Tables, R2 Data Catalog), catalog registration happens after the write. If catalog registration fails (network error, conflict), the data is still safely stored and a warning is logged—your data is never lost due to catalog issues.
 
 ## Future work (contributions welcome)
 - OpenTelemetry Arrow alignment
