@@ -45,7 +45,7 @@ fn keyvalue_ref_attrs_to_json_string(attributes: &[&KeyValue]) -> String {
         return "{}".to_string();
     }
 
-    let mut map = serde_json::Map::new();
+    let mut map = serde_json::Map::with_capacity(attributes.len());
     for attr in attributes {
         let json_value = attr
             .value
@@ -177,7 +177,7 @@ struct TraceArrowBuilder {
 
 struct ResourceContext<'a> {
     service_name: Option<&'a str>,
-    attributes: Vec<&'a KeyValue>,
+    attributes_json: String,
 }
 
 struct ScopeContext<'a> {
@@ -354,9 +354,11 @@ impl TraceArrowBuilder {
             }
         }
 
+        let attributes_json = keyvalue_ref_attrs_to_json_string(attributes.as_slice());
+
         ResourceContext {
             service_name,
-            attributes,
+            attributes_json,
         }
     }
 
@@ -453,8 +455,8 @@ impl TraceArrowBuilder {
 
     fn append_resource_attributes(&mut self, resource_ctx: &ResourceContext<'_>) -> Result<()> {
         // Convert resource attributes to JSON string for S3 Tables compatibility
-        let json_string = keyvalue_ref_attrs_to_json_string(resource_ctx.attributes.as_slice());
-        self.resource_attributes_builder.append_value(json_string);
+        self.resource_attributes_builder
+            .append_value(&resource_ctx.attributes_json);
         Ok(())
     }
 

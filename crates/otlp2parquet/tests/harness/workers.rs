@@ -33,6 +33,7 @@ use aws_credential_types::Credentials;
 use aws_sdk_s3::{config::Builder as S3ConfigBuilder, Client as S3Client};
 use otlp2parquet::deploy::cloudflare::process_conditional_blocks;
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;

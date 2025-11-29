@@ -34,7 +34,7 @@ fn keyvalue_attrs_to_json_string(attributes: &[KeyValue]) -> String {
         return "{}".to_string();
     }
 
-    let mut map = serde_json::Map::new();
+    let mut map = serde_json::Map::with_capacity(attributes.len());
     for attr in attributes {
         let json_value = attr
             .value
@@ -53,7 +53,7 @@ fn resource_attrs_to_json_string(attributes: &[(String, String)]) -> String {
         return "{}".to_string();
     }
 
-    let mut map = serde_json::Map::new();
+    let mut map = serde_json::Map::with_capacity(attributes.len());
     for (key, value) in attributes {
         map.insert(key.clone(), serde_json::Value::String(value.clone()));
     }
@@ -152,6 +152,7 @@ pub struct ArrowConverter {
 
 // Upper bound to cap memory when ingesting very large metric payloads.
 const METRIC_MAX_ROWS_PER_BATCH: usize = 65_536;
+const METRIC_DEFAULT_BUILDER_CAPACITY: usize = 1024;
 
 impl Default for ArrowConverter {
     fn default() -> Self {
@@ -372,7 +373,10 @@ fn flush_gauge_builder(
         return Ok(());
     }
 
-    let current = mem::replace(builder, GaugeBuilder::new());
+    let current = mem::replace(
+        builder,
+        GaugeBuilder::with_capacity(METRIC_MAX_ROWS_PER_BATCH),
+    );
     let len = current.len();
     metadata.gauge_count += len;
     metadata.record_metric_timestamp("gauge", current.first_timestamp());
@@ -391,7 +395,10 @@ fn flush_sum_builder(
         return Ok(());
     }
 
-    let current = mem::replace(builder, SumBuilder::new());
+    let current = mem::replace(
+        builder,
+        SumBuilder::with_capacity(METRIC_MAX_ROWS_PER_BATCH),
+    );
     let len = current.len();
     metadata.sum_count += len;
     metadata.record_metric_timestamp("sum", current.first_timestamp());
@@ -410,7 +417,10 @@ fn flush_histogram_builder(
         return Ok(());
     }
 
-    let current = mem::replace(builder, HistogramBuilder::new());
+    let current = mem::replace(
+        builder,
+        HistogramBuilder::with_capacity(METRIC_MAX_ROWS_PER_BATCH),
+    );
     let len = current.len();
     metadata.histogram_count += len;
     metadata.record_metric_timestamp("histogram", current.first_timestamp());
@@ -429,7 +439,10 @@ fn flush_exp_histogram_builder(
         return Ok(());
     }
 
-    let current = mem::replace(builder, ExponentialHistogramBuilder::new());
+    let current = mem::replace(
+        builder,
+        ExponentialHistogramBuilder::with_capacity(METRIC_MAX_ROWS_PER_BATCH),
+    );
     let len = current.len();
     metadata.exponential_histogram_count += len;
     metadata.record_metric_timestamp("exponential_histogram", current.first_timestamp());
@@ -448,7 +461,10 @@ fn flush_summary_builder(
         return Ok(());
     }
 
-    let current = mem::replace(builder, SummaryBuilder::new());
+    let current = mem::replace(
+        builder,
+        SummaryBuilder::with_capacity(METRIC_MAX_ROWS_PER_BATCH),
+    );
     let len = current.len();
     metadata.summary_count += len;
     metadata.record_metric_timestamp("summary", current.first_timestamp());
@@ -460,7 +476,7 @@ fn flush_summary_builder(
 // Context structures for resource and scope information
 struct ResourceContext {
     service_name: String,
-    attributes: Vec<(String, String)>,
+    attributes_json: String,
 }
 
 struct ScopeContext {
@@ -488,7 +504,7 @@ fn extract_resource_context(resource_metrics: &ResourceMetrics) -> ResourceConte
 
     ResourceContext {
         service_name,
-        attributes,
+        attributes_json: resource_attrs_to_json_string(&attributes),
     }
 }
 
@@ -530,17 +546,18 @@ struct BaseColumnsBuilder {
 }
 
 impl BaseColumnsBuilder {
-    fn new() -> Self {
+    fn with_capacity(capacity: usize) -> Self {
         Self {
-            timestamp_builder: TimestampMicrosecondBuilder::new().with_timezone("UTC"),
-            service_name_builder: StringBuilder::new(),
-            metric_name_builder: StringBuilder::new(),
-            metric_description_builder: StringBuilder::new(),
-            metric_unit_builder: StringBuilder::new(),
-            resource_attributes_builder: StringBuilder::new(),
-            scope_name_builder: StringBuilder::new(),
-            scope_version_builder: StringBuilder::new(),
-            attributes_builder: StringBuilder::new(),
+            timestamp_builder: TimestampMicrosecondBuilder::with_capacity(capacity)
+                .with_timezone("UTC"),
+            service_name_builder: StringBuilder::with_capacity(capacity, capacity * 32),
+            metric_name_builder: StringBuilder::with_capacity(capacity, capacity * 32),
+            metric_description_builder: StringBuilder::with_capacity(capacity, capacity * 64),
+            metric_unit_builder: StringBuilder::with_capacity(capacity, capacity * 16),
+            resource_attributes_builder: StringBuilder::with_capacity(capacity, capacity * 256),
+            scope_name_builder: StringBuilder::with_capacity(capacity, capacity * 24),
+            scope_version_builder: StringBuilder::with_capacity(capacity, capacity * 16),
+            attributes_builder: StringBuilder::with_capacity(capacity, capacity * 128),
             count: 0,
             first_timestamp: None,
         }
@@ -577,9 +594,8 @@ impl BaseColumnsBuilder {
         }
 
         // Resource attributes - JSON-encoded string for S3 Tables compatibility
-        let resource_attrs_json = resource_attrs_to_json_string(&resource_ctx.attributes);
         self.resource_attributes_builder
-            .append_value(resource_attrs_json);
+            .append_value(&resource_ctx.attributes_json);
 
         // Scope information
         if scope_ctx.name.is_empty() {
@@ -625,9 +641,13 @@ struct GaugeBuilder {
 
 impl GaugeBuilder {
     fn new() -> Self {
+        Self::with_capacity(METRIC_DEFAULT_BUILDER_CAPACITY)
+    }
+
+    fn with_capacity(capacity: usize) -> Self {
         Self {
-            base: BaseColumnsBuilder::new(),
-            value_builder: Float64Builder::new(),
+            base: BaseColumnsBuilder::with_capacity(capacity),
+            value_builder: Float64Builder::with_capacity(capacity),
         }
     }
 
@@ -695,11 +715,15 @@ struct SumBuilder {
 
 impl SumBuilder {
     fn new() -> Self {
+        Self::with_capacity(METRIC_DEFAULT_BUILDER_CAPACITY)
+    }
+
+    fn with_capacity(capacity: usize) -> Self {
         Self {
-            base: BaseColumnsBuilder::new(),
-            value_builder: Float64Builder::new(),
-            aggregation_temporality_builder: Int32Builder::new(),
-            is_monotonic_builder: BooleanBuilder::new(),
+            base: BaseColumnsBuilder::with_capacity(capacity),
+            value_builder: Float64Builder::with_capacity(capacity),
+            aggregation_temporality_builder: Int32Builder::with_capacity(capacity),
+            is_monotonic_builder: BooleanBuilder::with_capacity(capacity),
         }
     }
 
@@ -776,6 +800,10 @@ struct HistogramBuilder {
 
 impl HistogramBuilder {
     fn new() -> Self {
+        Self::with_capacity(METRIC_DEFAULT_BUILDER_CAPACITY)
+    }
+
+    fn with_capacity(capacity: usize) -> Self {
         let schema = otel_metrics_histogram_schema_arc();
         // Get bucket_counts field (index 11) and explicit_bounds field (index 12)
         let bucket_counts_field = if let DataType::List(field) = schema.field(11).data_type() {
@@ -790,15 +818,15 @@ impl HistogramBuilder {
         };
 
         Self {
-            base: BaseColumnsBuilder::new(),
-            count_builder: Int64Builder::new(),
-            sum_builder: Float64Builder::new(),
-            bucket_counts_builder: ListBuilder::new(Int64Builder::new())
+            base: BaseColumnsBuilder::with_capacity(capacity),
+            count_builder: Int64Builder::with_capacity(capacity),
+            sum_builder: Float64Builder::with_capacity(capacity),
+            bucket_counts_builder: ListBuilder::new(Int64Builder::with_capacity(capacity))
                 .with_field(bucket_counts_field),
-            explicit_bounds_builder: ListBuilder::new(Float64Builder::new())
+            explicit_bounds_builder: ListBuilder::new(Float64Builder::with_capacity(capacity))
                 .with_field(explicit_bounds_field),
-            min_builder: Float64Builder::new(),
-            max_builder: Float64Builder::new(),
+            min_builder: Float64Builder::with_capacity(capacity),
+            max_builder: Float64Builder::with_capacity(capacity),
         }
     }
 
@@ -921,6 +949,10 @@ struct ExponentialHistogramBuilder {
 
 impl ExponentialHistogramBuilder {
     fn new() -> Self {
+        Self::with_capacity(METRIC_DEFAULT_BUILDER_CAPACITY)
+    }
+
+    fn with_capacity(capacity: usize) -> Self {
         let schema = otel_metrics_exponential_histogram_schema_arc();
         // Get positive_bucket_counts field (index 14) and negative_bucket_counts field (index 16)
         let positive_bucket_counts_field =
@@ -937,19 +969,19 @@ impl ExponentialHistogramBuilder {
             };
 
         Self {
-            base: BaseColumnsBuilder::new(),
-            count_builder: Int64Builder::new(),
-            sum_builder: Float64Builder::new(),
-            scale_builder: Int32Builder::new(),
-            zero_count_builder: Int64Builder::new(),
-            positive_offset_builder: Int32Builder::new(),
-            positive_bucket_counts_builder: ListBuilder::new(Int64Builder::new())
+            base: BaseColumnsBuilder::with_capacity(capacity),
+            count_builder: Int64Builder::with_capacity(capacity),
+            sum_builder: Float64Builder::with_capacity(capacity),
+            scale_builder: Int32Builder::with_capacity(capacity),
+            zero_count_builder: Int64Builder::with_capacity(capacity),
+            positive_offset_builder: Int32Builder::with_capacity(capacity),
+            positive_bucket_counts_builder: ListBuilder::new(Int64Builder::with_capacity(capacity))
                 .with_field(positive_bucket_counts_field),
-            negative_offset_builder: Int32Builder::new(),
-            negative_bucket_counts_builder: ListBuilder::new(Int64Builder::new())
+            negative_offset_builder: Int32Builder::with_capacity(capacity),
+            negative_bucket_counts_builder: ListBuilder::new(Int64Builder::with_capacity(capacity))
                 .with_field(negative_bucket_counts_field),
-            min_builder: Float64Builder::new(),
-            max_builder: Float64Builder::new(),
+            min_builder: Float64Builder::with_capacity(capacity),
+            max_builder: Float64Builder::with_capacity(capacity),
         }
     }
 
@@ -1091,6 +1123,10 @@ struct SummaryBuilder {
 
 impl SummaryBuilder {
     fn new() -> Self {
+        Self::with_capacity(METRIC_DEFAULT_BUILDER_CAPACITY)
+    }
+
+    fn with_capacity(capacity: usize) -> Self {
         let schema = otel_metrics_summary_schema_arc();
         // Get quantile_values field (index 11) and quantile_quantiles field (index 12)
         let quantile_values_field = if let DataType::List(field) = schema.field(11).data_type() {
@@ -1105,12 +1141,12 @@ impl SummaryBuilder {
         };
 
         Self {
-            base: BaseColumnsBuilder::new(),
-            count_builder: Int64Builder::new(),
-            sum_builder: Float64Builder::new(),
-            quantile_values_builder: ListBuilder::new(Float64Builder::new())
+            base: BaseColumnsBuilder::with_capacity(capacity),
+            count_builder: Int64Builder::with_capacity(capacity),
+            sum_builder: Float64Builder::with_capacity(capacity),
+            quantile_values_builder: ListBuilder::new(Float64Builder::with_capacity(capacity))
                 .with_field(quantile_values_field),
-            quantile_quantiles_builder: ListBuilder::new(Float64Builder::new())
+            quantile_quantiles_builder: ListBuilder::new(Float64Builder::with_capacity(capacity))
                 .with_field(quantile_quantiles_field),
         }
     }
