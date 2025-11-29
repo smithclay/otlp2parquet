@@ -26,7 +26,6 @@ use parquet::arrow::ArrowWriter;
 use parquet::arrow::{async_writer::AsyncFileWriter, AsyncArrowWriter};
 #[cfg(not(target_family = "wasm"))]
 use parquet::errors::{ParquetError, Result as ParquetResult};
-use parquet::file::properties::WriterProperties;
 use std::borrow::Cow;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -381,14 +380,12 @@ async fn write_plain_parquet(
     })?;
     let async_writer = OpendalAsyncWriter::new(op_writer);
 
-    let props = WriterProperties::builder()
-        .set_compression(parquet::basic::Compression::SNAPPY)
-        .build();
-
-    let mut parquet_writer = AsyncArrowWriter::try_new(async_writer, batch.schema(), Some(props))
-        .map_err(|e| {
-        WriterError::write_failure(format!("Failed to create Parquet writer: {}", e))
-    })?;
+    let mut parquet_writer = AsyncArrowWriter::try_new(
+        async_writer,
+        batch.schema(),
+        Some(otlp2parquet_core::parquet::encoding::writer_properties().clone()),
+    )
+    .map_err(|e| WriterError::write_failure(format!("Failed to create Parquet writer: {}", e)))?;
 
     parquet_writer
         .write(batch)
@@ -433,16 +430,16 @@ async fn write_plain_parquet(
 
     tracing::debug!("Writing plain Parquet (WASM) to path: {}", file_path);
 
-    let props = WriterProperties::builder()
-        .set_compression(parquet::basic::Compression::SNAPPY)
-        .build();
-
     let mut buffer = Vec::new();
     {
-        let mut writer =
-            ArrowWriter::try_new(&mut buffer, batch.schema(), Some(props)).map_err(|e| {
-                WriterError::write_failure(format!("Failed to create Parquet writer: {}", e))
-            })?;
+        let mut writer = ArrowWriter::try_new(
+            &mut buffer,
+            batch.schema(),
+            Some(otlp2parquet_core::parquet::encoding::writer_properties().clone()),
+        )
+        .map_err(|e| {
+            WriterError::write_failure(format!("Failed to create Parquet writer: {}", e))
+        })?;
         writer.write(batch).map_err(|e| {
             WriterError::write_failure(format!("Failed to write RecordBatch: {}", e))
         })?;

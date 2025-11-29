@@ -77,5 +77,7 @@ fn test_cli_invalid_output_path_fails() {
         stderr.contains("permission")
             || stderr.contains("Permission")
             || stderr.contains("Read-only file system")
+            || stderr.contains("not writable")
+            || stderr.contains("Failed to create output directory")
     );
 }

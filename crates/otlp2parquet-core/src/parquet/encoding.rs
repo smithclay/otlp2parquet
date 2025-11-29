@@ -16,7 +16,7 @@ use crate::types::Blake3Hash;
 #[cfg(target_arch = "wasm32")]
 use parquet::basic::Compression;
 #[cfg(not(target_arch = "wasm32"))]
-use parquet::basic::{Compression, ZstdLevel};
+use parquet::basic::Compression;
 
 const DEFAULT_ROW_GROUP_SIZE: usize = 32 * 1024;
 static ROW_GROUP_SIZE: OnceLock<usize> = OnceLock::new();
@@ -79,8 +79,8 @@ fn compression_setting() -> Compression {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn compression_setting() -> Compression {
-    let level = ZstdLevel::try_new(2).unwrap_or_default();
-    Compression::ZSTD(level)
+    // Prefer Snappy to avoid relying on optional Zstd compile-time feature.
+    Compression::SNAPPY
 }
 
 /// Get shared writer properties (cached)

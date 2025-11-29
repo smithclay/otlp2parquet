@@ -51,7 +51,8 @@ fn body_to_json_string(body: Option<&AnyValue>) -> Option<String> {
 #[derive(Debug, Clone)]
 pub struct LogMetadata {
     pub service_name: Arc<str>,
-    pub first_timestamp_nanos: i64,
+    // Stored in microseconds to align with Parquet/Iceberg expectations.
+    pub first_timestamp_micros: i64,
     pub record_count: usize,
 }
 
@@ -221,7 +222,7 @@ impl ArrowConverter {
         let record_count = batch.num_rows();
         let metadata = LogMetadata {
             service_name: Arc::clone(&self.service_name),
-            first_timestamp_nanos: self.first_timestamp.unwrap_or(0),
+            first_timestamp_micros: self.first_timestamp.unwrap_or(0),
             record_count,
         };
 

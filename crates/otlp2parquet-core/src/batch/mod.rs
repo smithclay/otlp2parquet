@@ -29,9 +29,9 @@ struct BatchKey {
 
 impl BatchKey {
     fn from_metadata<M: BatchMetadata>(metadata: &M) -> Self {
-        let bucket = if metadata.first_timestamp_nanos() > 0 {
+        let bucket = if metadata.first_timestamp_micros() > 0 {
             // Metadata timestamps are stored in microseconds; bucket by minute in micros.
-            metadata.first_timestamp_nanos() / 60_000_000
+            metadata.first_timestamp_micros() / 60_000_000
         } else {
             0
         };
@@ -53,9 +53,10 @@ pub struct BatchConfig {
 /// Metadata required by the batching layer.
 pub trait BatchMetadata: Clone {
     fn service_name(&self) -> &Arc<str>;
-    fn first_timestamp_nanos(&self) -> i64;
+    /// Stored in microseconds.
+    fn first_timestamp_micros(&self) -> i64;
     fn record_count(&self) -> usize;
-    fn aggregate(service_name: Arc<str>, first_timestamp_nanos: i64, record_count: usize) -> Self;
+    fn aggregate(service_name: Arc<str>, first_timestamp_micros: i64, record_count: usize) -> Self;
 }
 
 impl BatchMetadata for LogMetadata {
@@ -63,18 +64,18 @@ impl BatchMetadata for LogMetadata {
         &self.service_name
     }
 
-    fn first_timestamp_nanos(&self) -> i64 {
-        self.first_timestamp_nanos
+    fn first_timestamp_micros(&self) -> i64 {
+        self.first_timestamp_micros
     }
 
     fn record_count(&self) -> usize {
         self.record_count
     }
 
-    fn aggregate(service_name: Arc<str>, first_timestamp_nanos: i64, record_count: usize) -> Self {
+    fn aggregate(service_name: Arc<str>, first_timestamp_micros: i64, record_count: usize) -> Self {
         Self {
             service_name,
-            first_timestamp_nanos,
+            first_timestamp_micros,
             record_count,
         }
     }
@@ -85,18 +86,18 @@ impl BatchMetadata for TraceMetadata {
         &self.service_name
     }
 
-    fn first_timestamp_nanos(&self) -> i64 {
-        self.first_timestamp_nanos
+    fn first_timestamp_micros(&self) -> i64 {
+        self.first_timestamp_micros
     }
 
     fn record_count(&self) -> usize {
         self.span_count
     }
 
-    fn aggregate(service_name: Arc<str>, first_timestamp_nanos: i64, record_count: usize) -> Self {
+    fn aggregate(service_name: Arc<str>, first_timestamp_micros: i64, record_count: usize) -> Self {
         Self {
             service_name,
-            first_timestamp_nanos,
+            first_timestamp_micros,
             span_count: record_count,
         }
     }
@@ -182,15 +183,24 @@ pub struct CompletedBatch<M: BatchMetadata = LogMetadata> {
 /// Thread-safe batch orchestrator shared across handlers.
 pub struct BatchManager<P: SignalProcessor = LogSignalProcessor> {
     config: BatchConfig,
-    inner: Arc<Mutex<HashMap<BatchKey, BufferedBatch<P::Metadata>>>>,
+    inner: Arc<Mutex<BatchState<P>>>,
     _marker: PhantomData<P>,
+}
+
+#[derive(Debug)]
+struct BatchState<P: SignalProcessor> {
+    batches: HashMap<BatchKey, BufferedBatch<P::Metadata>>,
+    total_bytes: usize,
 }
 
 impl<P: SignalProcessor> BatchManager<P> {
     pub fn new(config: BatchConfig) -> Self {
         Self {
             config,
-            inner: Arc::new(Mutex::new(HashMap::new())),
+            inner: Arc::new(Mutex::new(BatchState {
+                batches: HashMap::new(),
+                total_bytes: 0,
+            })),
             _marker: PhantomData,
         }
     }
@@ -209,16 +219,40 @@ impl<P: SignalProcessor> BatchManager<P> {
 
         let key = BatchKey::from_metadata(&metadata);
         let mut guard = self.inner.lock();
-        let buffered = guard
-            .entry(key.clone())
-            .or_insert_with(|| BufferedBatch::new(&metadata));
-        buffered.add_batches(batches, &metadata, approx_bytes);
+        let max_pending_bytes = self
+            .config
+            .max_bytes
+            .saturating_mul(8)
+            .max(self.config.max_bytes);
+
+        let prospective_total = guard.total_bytes.saturating_add(approx_bytes);
+        if prospective_total > max_pending_bytes {
+            anyhow::bail!(
+                "backpressure: buffered batches exceed limit ({} > {})",
+                prospective_total,
+                max_pending_bytes
+            );
+        }
+
+        // Scope the mutable borrow to avoid holding it across flush/remove.
+        let flush_now = {
+            let buffered = guard
+                .batches
+                .entry(key.clone())
+                .or_insert_with(|| BufferedBatch::new(&metadata));
+            buffered.add_batches(batches, &metadata, approx_bytes);
+            buffered.should_flush(&self.config)
+        };
+
+        guard.total_bytes = prospective_total;
 
         let mut completed = Vec::new();
-        if buffered.should_flush(&self.config) {
+        if flush_now {
             let batch = guard
+                .batches
                 .remove(&key)
                 .ok_or_else(|| anyhow!("batch evicted before flush: {:?}", key))?;
+            guard.total_bytes = guard.total_bytes.saturating_sub(batch.total_bytes());
             completed.push(batch.finalize()?);
         }
 
@@ -231,13 +265,15 @@ impl<P: SignalProcessor> BatchManager<P> {
         let mut guard = self.inner.lock();
         let mut completed = Vec::new();
         let keys: Vec<BatchKey> = guard
+            .batches
             .iter()
             .filter(|(_, batch)| batch.should_flush(&self.config))
             .map(|(key, _)| key.clone())
             .collect();
 
         for key in keys {
-            if let Some(batch) = guard.remove(&key) {
+            if let Some(batch) = guard.batches.remove(&key) {
+                guard.total_bytes = guard.total_bytes.saturating_sub(batch.total_bytes());
                 completed.push(batch.finalize()?);
             }
         }
@@ -247,7 +283,8 @@ impl<P: SignalProcessor> BatchManager<P> {
 
     pub fn drain_all(&self) -> Result<Vec<CompletedBatch<P::Metadata>>> {
         let mut guard = self.inner.lock();
-        let drained: Vec<_> = guard.drain().collect();
+        let drained: Vec<_> = guard.batches.drain().collect();
+        guard.total_bytes = 0;
         drop(guard);
 
         drained

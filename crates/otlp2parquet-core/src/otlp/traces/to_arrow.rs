@@ -62,7 +62,8 @@ fn keyvalue_ref_attrs_to_json_string(attributes: &[&KeyValue]) -> String {
 #[derive(Debug, Clone)]
 pub struct TraceMetadata {
     pub service_name: Arc<str>,
-    pub first_timestamp_nanos: i64,
+    // Stored in microseconds to align with Parquet/Iceberg expectations.
+    pub first_timestamp_micros: i64,
     pub span_count: usize,
 }
 
@@ -91,7 +92,7 @@ impl TraceArrowConverter {
 
         let metadata = TraceMetadata {
             service_name: agg.service_name,
-            first_timestamp_nanos: agg.first_timestamp.unwrap_or(0),
+            first_timestamp_micros: agg.first_timestamp.unwrap_or(0),
             span_count: agg.span_count,
         };
 
@@ -133,7 +134,7 @@ impl TraceAggregation {
     fn observe(&mut self, meta: &TraceMetadata) {
         self.span_count += meta.span_count;
 
-        if let Some(ts) = (meta.first_timestamp_nanos > 0).then_some(meta.first_timestamp_nanos) {
+        if let Some(ts) = (meta.first_timestamp_micros > 0).then_some(meta.first_timestamp_micros) {
             self.first_timestamp = Some(match self.first_timestamp {
                 Some(existing) => existing.min(ts),
                 None => ts,
@@ -593,7 +594,7 @@ impl TraceArrowBuilder {
 
         let metadata = TraceMetadata {
             service_name: Arc::clone(&self.service_name),
-            first_timestamp_nanos: self.first_timestamp.unwrap_or(0),
+            first_timestamp_micros: self.first_timestamp.unwrap_or(0),
             span_count: self.span_count,
         };
 
@@ -649,7 +650,7 @@ mod tests {
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0].num_rows(), 0);
         assert_eq!(metadata.span_count, 0);
-        assert_eq!(metadata.first_timestamp_nanos, 0);
+        assert_eq!(metadata.first_timestamp_micros, 0);
         assert!(metadata.service_name.is_empty());
     }
 
@@ -725,7 +726,7 @@ mod tests {
         assert_eq!(batch.num_rows(), 1);
 
         assert_eq!(metadata.span_count, 1);
-        assert_eq!(metadata.first_timestamp_nanos, 1); // 1000 nanos / 1000 = 1 micros
+        assert_eq!(metadata.first_timestamp_micros, 1); // 1000 nanos / 1000 = 1 micros
         assert_eq!(metadata.service_name.as_ref(), "svc");
 
         let trace_ids = batch
@@ -754,7 +755,7 @@ mod tests {
         let (batches, metadata) = TraceArrowConverter::convert(&request).unwrap();
 
         assert_eq!(metadata.service_name.as_ref(), "frontend-proxy");
-        assert_eq!(metadata.first_timestamp_nanos, 1_760_738_064_624_180); // Stored as microseconds
+        assert_eq!(metadata.first_timestamp_micros, 1_760_738_064_624_180); // Stored as microseconds
         assert_eq!(metadata.span_count, 2);
 
         assert_eq!(batches.len(), 1);
@@ -798,7 +799,7 @@ mod tests {
         let (batches, metadata) = TraceArrowConverter::convert(&request).unwrap();
 
         assert_eq!(metadata.service_name.as_ref(), "frontend-proxy");
-        assert_eq!(metadata.first_timestamp_nanos, 1_760_738_064_624_180); // Stored as microseconds
+        assert_eq!(metadata.first_timestamp_micros, 1_760_738_064_624_180); // Stored as microseconds
         assert_eq!(metadata.span_count, 2);
 
         assert_eq!(batches.len(), 1);
@@ -816,7 +817,7 @@ mod tests {
         let (batches, metadata) = TraceArrowConverter::convert(&request).unwrap();
 
         assert_eq!(metadata.span_count, 19);
-        assert_eq!(metadata.first_timestamp_nanos, 1_760_738_064_624_180); // Stored as microseconds
+        assert_eq!(metadata.first_timestamp_micros, 1_760_738_064_624_180); // Stored as microseconds
         assert_eq!(metadata.service_name.as_ref(), "product-catalog");
 
         let batch = &batches[0];
@@ -864,7 +865,7 @@ mod tests {
         let (batches, metadata) = TraceArrowConverter::convert(&request).unwrap();
 
         assert_eq!(metadata.span_count, 19);
-        assert_eq!(metadata.first_timestamp_nanos, 1_760_738_064_624_180); // Stored as microseconds
+        assert_eq!(metadata.first_timestamp_micros, 1_760_738_064_624_180); // Stored as microseconds
         assert_eq!(metadata.service_name.as_ref(), "product-catalog");
 
         let batch = &batches[0];

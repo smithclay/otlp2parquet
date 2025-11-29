@@ -78,20 +78,17 @@ Both commands walk you through setup and generate the config files you need.
 Logs, Metrics, Traces via OTLP/HTTP (protobuf or JSON, gzip compression supported). No gRPC support for now.
 
 
+## Stable Surface (v1)
+- OTLP/HTTP endpoints: `/v1/logs`, `/v1/metrics`, `/v1/traces` (protobuf or JSON; gzip supported)
+- Partition layout: `logs/{service}/year=.../hour=.../{ts}-{uuid}.parquet`, `metrics/{type}/{service}/...`, `traces/{service}/...`
+- Storage: filesystem, S3, or R2; optional Iceberg catalog commits are best-effort (Parquet always written)
+- Schemas: ClickHouse-compatible, PascalCase columns; five metric schemas (Gauge, Sum, Histogram, ExponentialHistogram, Summary)
+- Error model: HTTP 400 on invalid input/too large; 5xx on conversion/storage; warnings when catalog commit fails
+
 ## Future work (contributions welcome)
-As of late 2025 this project is a  prototype. More development in needed in the following areas:
-
-#### Schema
-- Alignment with OpenTelemetry Arrow project
-
-#### Additional platform support
-- Azure Functions
-- Helm chart/manifest for Kubernetes
-
-#### Apache Iceberg
-There are many TODOs related to the [Iceberg integration](https://github.com/smithclay/icepick):
-  - Queueing writes to Iceberg with SQS or Cloudflare Queues
-  - Partitions
+- OpenTelemetry Arrow alignment
+- Additional platforms: Azure Functions; Kubernetes manifests
+- Iceberg ergonomics: queued commits (SQS/Queues), richer partition configs
 
 
 ## Learn More
