@@ -265,7 +265,7 @@ async fn process_traces(
                 signal_type: otlp2parquet_core::SignalType::Traces,
                 metric_type: None,
                 service_name,
-                timestamp_micros: metadata.first_timestamp_nanos,
+                timestamp_micros: metadata.first_timestamp_micros,
                 snapshot_timestamp_ms: None,
                 retry_policy: otlp2parquet_writer::RetryPolicy::default(),
             })
@@ -471,7 +471,7 @@ pub(crate) async fn persist_log_batch(
             signal_type: otlp2parquet_core::SignalType::Logs,
             metric_type: None,
             service_name: &completed.metadata.service_name,
-            timestamp_micros: completed.metadata.first_timestamp_nanos,
+            timestamp_micros: completed.metadata.first_timestamp_micros,
             snapshot_timestamp_ms: None,
             retry_policy: otlp2parquet_writer::RetryPolicy::default(),
         })

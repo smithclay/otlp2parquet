@@ -66,8 +66,8 @@ impl<M: BatchMetadata> BufferedBatch<M> {
             batches: Vec::new(),
             total_rows: 0,
             total_bytes: 0,
-            first_timestamp: if metadata.first_timestamp_nanos() > 0 {
-                metadata.first_timestamp_nanos()
+            first_timestamp: if metadata.first_timestamp_micros() > 0 {
+                metadata.first_timestamp_micros()
             } else {
                 i64::MAX
             },
@@ -78,12 +78,16 @@ impl<M: BatchMetadata> BufferedBatch<M> {
     }
 
     pub fn add_batches(&mut self, batches: Vec<RecordBatch>, metadata: &M, approx_bytes: usize) {
-        if metadata.first_timestamp_nanos() > 0 {
-            self.first_timestamp = self.first_timestamp.min(metadata.first_timestamp_nanos());
+        if metadata.first_timestamp_micros() > 0 {
+            self.first_timestamp = self.first_timestamp.min(metadata.first_timestamp_micros());
         }
         self.total_rows += metadata.record_count();
         self.total_bytes += approx_bytes;
         self.batches.extend(batches);
+    }
+
+    pub fn total_bytes(&self) -> usize {
+        self.total_bytes
     }
 
     pub fn should_flush(&self, cfg: &BatchConfig) -> bool {

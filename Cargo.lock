@@ -2663,7 +2663,7 @@ dependencies = [
 
 [[package]]
 name = "otlp2parquet"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "arrow",
@@ -2704,7 +2704,7 @@ dependencies = [
 
 [[package]]
 name = "otlp2parquet-cloudflare"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "arrow",
  "base64 0.22.1",
@@ -2721,7 +2721,7 @@ dependencies = [
 
 [[package]]
 name = "otlp2parquet-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "arrow",
@@ -2744,7 +2744,7 @@ dependencies = [
 
 [[package]]
 name = "otlp2parquet-handlers"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "arrow",
  "otlp2parquet-core",
@@ -2754,7 +2754,7 @@ dependencies = [
 
 [[package]]
 name = "otlp2parquet-lambda"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "arrow",
@@ -2776,7 +2776,7 @@ dependencies = [
 
 [[package]]
 name = "otlp2parquet-proto"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "prost",
  "prost-build",
@@ -2786,7 +2786,7 @@ dependencies = [
 
 [[package]]
 name = "otlp2parquet-writer"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "arrow",

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::convert::{TryFrom, TryInto};
 use std::mem;
 use std::sync::Arc;
@@ -14,55 +15,62 @@ use otlp2parquet_proto::opentelemetry::proto::{
     trace::v1::{span, status, ResourceSpans, ScopeSpans, Span},
 };
 
-use crate::otlp::common::any_value_builder::{any_value_string, any_value_to_json_value};
+use crate::otlp::common::any_value_builder::any_value_string;
+use crate::otlp::common::json_writer::keyvalue_to_json;
 use crate::otlp::field_names::semconv;
 use crate::schema::{otel_traces_schema_arc, EXTRACTED_RESOURCE_ATTRS};
 
 use super::format::TraceRequest;
 
-/// JSON-encode KeyValue attributes to string for S3 Tables compatibility
-fn keyvalue_attrs_to_json_string(attributes: &[KeyValue]) -> String {
+/// JSON-encode KeyValue reference attributes to string for S3 Tables compatibility.
+/// This is a thin wrapper around `keyvalue_to_json` for slices of references.
+fn keyvalue_ref_to_json(attributes: &[&KeyValue]) -> Cow<'static, str> {
+    use crate::otlp::common::json_writer::{write_any_value, EMPTY_JSON_OBJECT};
+    use std::fmt::Write;
+
     if attributes.is_empty() {
-        return "{}".to_string();
+        return Cow::Borrowed(EMPTY_JSON_OBJECT);
     }
 
-    let mut map = serde_json::Map::new();
+    let mut buf = String::with_capacity(attributes.len() * 64);
+    buf.push('{');
+    let mut first = true;
     for attr in attributes {
-        let json_value = attr
-            .value
-            .as_ref()
-            .map(any_value_to_json_value)
-            .unwrap_or(serde_json::Value::Null);
-        map.insert(attr.key.clone(), json_value);
+        if !first {
+            buf.push(',');
+        }
+        first = false;
+        // Write escaped key
+        buf.push('"');
+        for c in attr.key.chars() {
+            match c {
+                '"' => buf.push_str("\\\""),
+                '\\' => buf.push_str("\\\\"),
+                '\n' => buf.push_str("\\n"),
+                '\r' => buf.push_str("\\r"),
+                '\t' => buf.push_str("\\t"),
+                c if c.is_control() => {
+                    let _ = write!(buf, "\\u{:04x}", c as u32);
+                }
+                c => buf.push(c),
+            }
+        }
+        buf.push_str("\":");
+        match &attr.value {
+            Some(v) => write_any_value(&mut buf, v),
+            None => buf.push_str("null"),
+        }
     }
-
-    serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
-}
-
-/// JSON-encode KeyValue reference attributes to string for S3 Tables compatibility
-fn keyvalue_ref_attrs_to_json_string(attributes: &[&KeyValue]) -> String {
-    if attributes.is_empty() {
-        return "{}".to_string();
-    }
-
-    let mut map = serde_json::Map::new();
-    for attr in attributes {
-        let json_value = attr
-            .value
-            .as_ref()
-            .map(any_value_to_json_value)
-            .unwrap_or(serde_json::Value::Null);
-        map.insert(attr.key.clone(), json_value);
-    }
-
-    serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
+    buf.push('}');
+    Cow::Owned(buf)
 }
 
 /// Metadata extracted from OTLP trace export requests during conversion.
 #[derive(Debug, Clone)]
 pub struct TraceMetadata {
     pub service_name: Arc<str>,
-    pub first_timestamp_nanos: i64,
+    // Stored in microseconds to align with Parquet/Iceberg expectations.
+    pub first_timestamp_micros: i64,
     pub span_count: usize,
 }
 
@@ -91,7 +99,7 @@ impl TraceArrowConverter {
 
         let metadata = TraceMetadata {
             service_name: agg.service_name,
-            first_timestamp_nanos: agg.first_timestamp.unwrap_or(0),
+            first_timestamp_micros: agg.first_timestamp.unwrap_or(0),
             span_count: agg.span_count,
         };
 
@@ -133,7 +141,7 @@ impl TraceAggregation {
     fn observe(&mut self, meta: &TraceMetadata) {
         self.span_count += meta.span_count;
 
-        if let Some(ts) = (meta.first_timestamp_nanos > 0).then_some(meta.first_timestamp_nanos) {
+        if let Some(ts) = (meta.first_timestamp_micros > 0).then_some(meta.first_timestamp_micros) {
             self.first_timestamp = Some(match self.first_timestamp {
                 Some(existing) => existing.min(ts),
                 None => ts,
@@ -176,7 +184,7 @@ struct TraceArrowBuilder {
 
 struct ResourceContext<'a> {
     service_name: Option<&'a str>,
-    attributes: Vec<&'a KeyValue>,
+    attributes_json: Cow<'static, str>,
 }
 
 struct ScopeContext<'a> {
@@ -353,9 +361,11 @@ impl TraceArrowBuilder {
             }
         }
 
+        let attributes_json = keyvalue_ref_to_json(attributes.as_slice());
+
         ResourceContext {
             service_name,
-            attributes,
+            attributes_json,
         }
     }
 
@@ -452,8 +462,8 @@ impl TraceArrowBuilder {
 
     fn append_resource_attributes(&mut self, resource_ctx: &ResourceContext<'_>) -> Result<()> {
         // Convert resource attributes to JSON string for S3 Tables compatibility
-        let json_string = keyvalue_ref_attrs_to_json_string(resource_ctx.attributes.as_slice());
-        self.resource_attributes_builder.append_value(json_string);
+        self.resource_attributes_builder
+            .append_value(resource_ctx.attributes_json.as_ref());
         Ok(())
     }
 
@@ -473,8 +483,9 @@ impl TraceArrowBuilder {
 
     fn append_span_attributes(&mut self, span: &Span) -> Result<()> {
         // Convert span attributes to JSON string for S3 Tables compatibility
-        let json_string = keyvalue_attrs_to_json_string(&span.attributes);
-        self.span_attributes_builder.append_value(json_string);
+        let json_string = keyvalue_to_json(&span.attributes);
+        self.span_attributes_builder
+            .append_value(json_string.as_ref());
         Ok(())
     }
 
@@ -488,8 +499,8 @@ impl TraceArrowBuilder {
                 timestamps.append_value(Self::nanos_to_micros(event.time_unix_nano));
                 names.append_value(event.name.as_str());
                 // Convert event attributes to JSON string for S3 Tables compatibility
-                let json_string = keyvalue_attrs_to_json_string(&event.attributes);
-                attributes.append_value(json_string);
+                let json_string = keyvalue_to_json(&event.attributes);
+                attributes.append_value(json_string.as_ref());
             }
         }
 
@@ -517,8 +528,8 @@ impl TraceArrowBuilder {
                 }
 
                 // Convert link attributes to JSON string for S3 Tables compatibility
-                let json_string = keyvalue_attrs_to_json_string(&link.attributes);
-                attributes.append_value(json_string);
+                let json_string = keyvalue_to_json(&link.attributes);
+                attributes.append_value(json_string.as_ref());
             }
         }
 
@@ -593,7 +604,7 @@ impl TraceArrowBuilder {
 
         let metadata = TraceMetadata {
             service_name: Arc::clone(&self.service_name),
-            first_timestamp_nanos: self.first_timestamp.unwrap_or(0),
+            first_timestamp_micros: self.first_timestamp.unwrap_or(0),
             span_count: self.span_count,
         };
 
@@ -649,7 +660,7 @@ mod tests {
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0].num_rows(), 0);
         assert_eq!(metadata.span_count, 0);
-        assert_eq!(metadata.first_timestamp_nanos, 0);
+        assert_eq!(metadata.first_timestamp_micros, 0);
         assert!(metadata.service_name.is_empty());
     }
 
@@ -725,7 +736,7 @@ mod tests {
         assert_eq!(batch.num_rows(), 1);
 
         assert_eq!(metadata.span_count, 1);
-        assert_eq!(metadata.first_timestamp_nanos, 1); // 1000 nanos / 1000 = 1 micros
+        assert_eq!(metadata.first_timestamp_micros, 1); // 1000 nanos / 1000 = 1 micros
         assert_eq!(metadata.service_name.as_ref(), "svc");
 
         let trace_ids = batch
@@ -754,7 +765,7 @@ mod tests {
         let (batches, metadata) = TraceArrowConverter::convert(&request).unwrap();
 
         assert_eq!(metadata.service_name.as_ref(), "frontend-proxy");
-        assert_eq!(metadata.first_timestamp_nanos, 1_760_738_064_624_180); // Stored as microseconds
+        assert_eq!(metadata.first_timestamp_micros, 1_760_738_064_624_180); // Stored as microseconds
         assert_eq!(metadata.span_count, 2);
 
         assert_eq!(batches.len(), 1);
@@ -798,7 +809,7 @@ mod tests {
         let (batches, metadata) = TraceArrowConverter::convert(&request).unwrap();
 
         assert_eq!(metadata.service_name.as_ref(), "frontend-proxy");
-        assert_eq!(metadata.first_timestamp_nanos, 1_760_738_064_624_180); // Stored as microseconds
+        assert_eq!(metadata.first_timestamp_micros, 1_760_738_064_624_180); // Stored as microseconds
         assert_eq!(metadata.span_count, 2);
 
         assert_eq!(batches.len(), 1);
@@ -816,7 +827,7 @@ mod tests {
         let (batches, metadata) = TraceArrowConverter::convert(&request).unwrap();
 
         assert_eq!(metadata.span_count, 19);
-        assert_eq!(metadata.first_timestamp_nanos, 1_760_738_064_624_180); // Stored as microseconds
+        assert_eq!(metadata.first_timestamp_micros, 1_760_738_064_624_180); // Stored as microseconds
         assert_eq!(metadata.service_name.as_ref(), "product-catalog");
 
         let batch = &batches[0];
@@ -864,7 +875,7 @@ mod tests {
         let (batches, metadata) = TraceArrowConverter::convert(&request).unwrap();
 
         assert_eq!(metadata.span_count, 19);
-        assert_eq!(metadata.first_timestamp_nanos, 1_760_738_064_624_180); // Stored as microseconds
+        assert_eq!(metadata.first_timestamp_micros, 1_760_738_064_624_180); // Stored as microseconds
         assert_eq!(metadata.service_name.as_ref(), "product-catalog");
 
         let batch = &batches[0];

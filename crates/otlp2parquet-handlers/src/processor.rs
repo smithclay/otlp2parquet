@@ -66,7 +66,7 @@ pub async fn process_logs(
                 signal_type: SignalType::Logs,
                 metric_type: None,
                 service_name: &batch.metadata.service_name,
-                timestamp_micros: batch.metadata.first_timestamp_nanos,
+                timestamp_micros: batch.metadata.first_timestamp_micros,
                 snapshot_timestamp_ms: config.snapshot_timestamp_ms,
                 retry_policy: config.retry_policy,
             })
@@ -133,7 +133,7 @@ pub async fn process_traces(
                 signal_type: SignalType::Traces,
                 metric_type: None,
                 service_name: metadata.service_name.as_ref(),
-                timestamp_micros: metadata.first_timestamp_nanos,
+                timestamp_micros: metadata.first_timestamp_micros,
                 snapshot_timestamp_ms: config.snapshot_timestamp_ms,
                 retry_policy: config.retry_policy,
             })

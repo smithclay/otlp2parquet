@@ -11,7 +11,6 @@ use crate::error::{Result, WriterError};
 use crate::table_mapping::table_name_for_signal;
 use arrow::array::RecordBatch;
 #[cfg(not(target_family = "wasm"))]
-#[cfg(not(target_family = "wasm"))]
 use bytes::Bytes;
 #[cfg(not(target_family = "wasm"))]
 use futures::future::BoxFuture;
@@ -26,7 +25,6 @@ use parquet::arrow::ArrowWriter;
 use parquet::arrow::{async_writer::AsyncFileWriter, AsyncArrowWriter};
 #[cfg(not(target_family = "wasm"))]
 use parquet::errors::{ParquetError, Result as ParquetResult};
-use parquet::file::properties::WriterProperties;
 use std::borrow::Cow;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -381,14 +379,12 @@ async fn write_plain_parquet(
     })?;
     let async_writer = OpendalAsyncWriter::new(op_writer);
 
-    let props = WriterProperties::builder()
-        .set_compression(parquet::basic::Compression::SNAPPY)
-        .build();
-
-    let mut parquet_writer = AsyncArrowWriter::try_new(async_writer, batch.schema(), Some(props))
-        .map_err(|e| {
-        WriterError::write_failure(format!("Failed to create Parquet writer: {}", e))
-    })?;
+    let mut parquet_writer = AsyncArrowWriter::try_new(
+        async_writer,
+        batch.schema(),
+        Some(otlp2parquet_core::parquet::encoding::writer_properties().clone()),
+    )
+    .map_err(|e| WriterError::write_failure(format!("Failed to create Parquet writer: {}", e)))?;
 
     parquet_writer
         .write(batch)
@@ -412,6 +408,12 @@ async fn write_plain_parquet(
     Ok(file_path)
 }
 
+/// Maximum in-memory buffer size for WASM Parquet writes (48MB).
+/// WASM environments typically have ~128MB memory limit; this leaves headroom for
+/// Arrow buffers, the runtime, and other allocations.
+#[cfg(target_family = "wasm")]
+const WASM_MAX_BUFFER_BYTES: usize = 48 * 1024 * 1024;
+
 /// WASM plain Parquet path: write into an in-memory buffer synchronously to avoid Send bounds.
 #[cfg(target_family = "wasm")]
 async fn write_plain_parquet(
@@ -421,6 +423,18 @@ async fn write_plain_parquet(
     timestamp_micros: i64,
     batch: &RecordBatch,
 ) -> Result<String> {
+    // Guard against OOM: estimate batch size and reject if too large for WASM buffer
+    let estimated_size = batch.get_array_memory_size();
+    if estimated_size > WASM_MAX_BUFFER_BYTES {
+        return Err(WriterError::write_failure(format!(
+            "Batch too large for WASM memory: {} bytes (limit: {} bytes, {} rows). \
+             Reduce batch size or use an upstream OTel Collector to split requests.",
+            estimated_size,
+            WASM_MAX_BUFFER_BYTES,
+            batch.num_rows()
+        )));
+    }
+
     let op = crate::storage::get_operator().ok_or_else(|| {
         WriterError::write_failure(
             "Storage operator not initialized. Call initialize_storage() with RuntimeConfig before writing. \
@@ -433,16 +447,16 @@ async fn write_plain_parquet(
 
     tracing::debug!("Writing plain Parquet (WASM) to path: {}", file_path);
 
-    let props = WriterProperties::builder()
-        .set_compression(parquet::basic::Compression::SNAPPY)
-        .build();
-
     let mut buffer = Vec::new();
     {
-        let mut writer =
-            ArrowWriter::try_new(&mut buffer, batch.schema(), Some(props)).map_err(|e| {
-                WriterError::write_failure(format!("Failed to create Parquet writer: {}", e))
-            })?;
+        let mut writer = ArrowWriter::try_new(
+            &mut buffer,
+            batch.schema(),
+            Some(otlp2parquet_core::parquet::encoding::writer_properties().clone()),
+        )
+        .map_err(|e| {
+            WriterError::write_failure(format!("Failed to create Parquet writer: {}", e))
+        })?;
         writer.write(batch).map_err(|e| {
             WriterError::write_failure(format!("Failed to write RecordBatch: {}", e))
         })?;
