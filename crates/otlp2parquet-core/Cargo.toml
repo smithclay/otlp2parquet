@@ -7,6 +7,10 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+wasm = ["wasm-bindgen", "js-sys", "getrandom/js"]
+
 [dependencies]
 # Arrow for data structures only (no Parquet serialization)
 arrow = { workspace = true }
@@ -33,8 +37,12 @@ parking_lot = "0.12"
 toml = { workspace = true }
 tracing = { workspace = true }
 
+# WASM bindings (optional)
+wasm-bindgen = { version = "0.2", optional = true }
+getrandom = { version = "0.2", optional = true }
+
 [target.'cfg(target_family = "wasm")'.dependencies]
-js-sys = "0.3"
+js-sys = { version = "0.3", optional = true }
 
 [dev-dependencies]
 # For testing Parquet output
