@@ -173,6 +173,33 @@ wasm-profile: wasm ## Profile WASM binary size with twiggy
 wasm-full: wasm-compress wasm-profile ## Build, optimize, compress, and profile WASM binary
 
 #
+# Demo WASM Build
+#
+
+WASM_DEMO_OUT := docs/query-demo/wasm
+
+.PHONY: wasm-demo
+wasm-demo: ## Build otlp2parquet-core WASM for browser demo
+	@echo "==> Building otlp2parquet-core WASM for browser demo..."
+	@if ! command -v wasm-pack >/dev/null 2>&1; then \
+		echo "Installing wasm-pack..."; \
+		cargo install wasm-pack; \
+	fi
+	@wasm-pack build crates/otlp2parquet-core \
+		--target web \
+		--out-dir ../../$(WASM_DEMO_OUT) \
+		--features wasm \
+		--release
+	@echo "==> WASM demo built to $(WASM_DEMO_OUT)/"
+	@SIZE=$$(stat -f%z $(WASM_DEMO_OUT)/otlp2parquet_core_bg.wasm 2>/dev/null || stat -c%s $(WASM_DEMO_OUT)/otlp2parquet_core_bg.wasm 2>/dev/null); \
+	python3 -c "import sys; size=int(sys.argv[1]); print(f\"==> WASM size: {size/1024:.1f} KB ({size/1024/1024:.3f} MB)\")" $$SIZE
+
+.PHONY: clean-wasm-demo
+clean-wasm-demo: ## Remove demo WASM artifacts
+	@rm -rf $(WASM_DEMO_OUT)
+	@echo "Cleaned demo WASM artifacts"
+
+#
 # Clean Commands
 #
 

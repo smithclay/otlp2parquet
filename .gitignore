@@ -58,3 +58,6 @@ testdata/**/*_large.*
 
 otlp2parquet-worker.zip
 template.yaml
+
+# WASM demo build output
+docs/query-demo/wasm/
