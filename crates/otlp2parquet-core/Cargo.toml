@@ -12,7 +12,7 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = []
-wasm = ["wasm-bindgen", "js-sys", "getrandom/js"]
+wasm = ["wasm-bindgen", "getrandom/js"]
 
 [dependencies]
 # Arrow for data structures only (no Parquet serialization)
@@ -45,7 +45,7 @@ wasm-bindgen = { version = "0.2", optional = true }
 getrandom = { version = "0.2", optional = true }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
-js-sys = { version = "0.3", optional = true }
+js-sys = "0.3"
 
 [dev-dependencies]
 # For testing Parquet output
