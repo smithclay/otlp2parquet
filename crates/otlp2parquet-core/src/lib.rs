@@ -159,6 +159,26 @@ pub mod wasm {
         batch_to_ipc_bytes(&batch).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Convert OTLP JSON traces to Arrow IPC bytes
+    #[wasm_bindgen]
+    pub fn traces_json_to_arrow_ipc(otlp_json: &str) -> std::result::Result<Vec<u8>, JsError> {
+        use otlp::traces;
+
+        let request = traces::parse_otlp_trace_request(otlp_json.as_bytes(), InputFormat::Json)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+
+        let (batches, _metadata) = traces::TraceArrowConverter::convert(&request)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+
+        // Return the first batch (demo assumes single batch)
+        let batch = batches
+            .into_iter()
+            .next()
+            .ok_or_else(|| JsError::new("No batches produced from trace conversion"))?;
+
+        batch_to_ipc_bytes(&batch).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     fn batch_to_ipc_bytes(batch: &RecordBatch) -> Result<Vec<u8>> {
         use arrow::ipc::writer::StreamWriter;
         let mut buf = Vec::new();
