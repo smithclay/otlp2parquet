@@ -21,7 +21,7 @@ pub mod types;
 
 // Re-export commonly used types
 pub use otlp::{InputFormat, LogMetadata};
-pub use schema::otel_logs_schema;
+pub use schema::{otel_logs_schema, otel_metrics_gauge_schema};
 pub use types::{Blake3Hash, ParquetWriteResult, SignalType};
 
 /// Parse OTLP log data and convert to Arrow RecordBatch
@@ -177,6 +177,30 @@ pub mod wasm {
             .ok_or_else(|| JsError::new("No batches produced from trace conversion"))?;
 
         batch_to_ipc_bytes(&batch).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Convert OTLP JSON metrics to Arrow IPC bytes (returns gauge data only for demo)
+    #[wasm_bindgen]
+    pub fn metrics_json_to_arrow_ipc(otlp_json: &str) -> std::result::Result<Vec<u8>, JsError> {
+        use otlp::metrics;
+
+        let request = metrics::parse_otlp_request(otlp_json.as_bytes(), InputFormat::Json)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+
+        let converter = metrics::ArrowConverter::new();
+        let (batches, _metadata) = converter
+            .convert(request)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+
+        // Return gauge batch if available, otherwise empty
+        if let Some((_, batch)) = batches.into_iter().find(|(name, _)| name == "gauge") {
+            batch_to_ipc_bytes(&batch).map_err(|e| JsError::new(&e.to_string()))
+        } else {
+            // Return empty batch with gauge schema
+            let schema = crate::schema::otel_metrics_gauge_schema();
+            let empty = RecordBatch::new_empty(std::sync::Arc::new(schema));
+            batch_to_ipc_bytes(&empty).map_err(|e| JsError::new(&e.to_string()))
+        }
     }
 
     fn batch_to_ipc_bytes(batch: &RecordBatch) -> Result<Vec<u8>> {
