@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["otel_traces_schema","otel_traces_schema_arc"]};

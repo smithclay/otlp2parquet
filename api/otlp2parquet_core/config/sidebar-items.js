@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ENV_PREFIX"],"enum":["CatalogMode","LogFormat","Platform","StorageBackend"],"struct":["BatchConfig","CloudflareConfig","FsConfig","IcebergConfig","IcebergTableNames","LambdaConfig","R2Config","RequestConfig","RuntimeConfig","S3Config","ServerConfig","StorageConfig"],"trait":["EnvSource"]};

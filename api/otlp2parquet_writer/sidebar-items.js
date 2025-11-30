@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CatalogType","ErrorCode","WriterError"],"fn":["ensure_namespace","initialize_catalog","initialize_storage","table_name_for_signal","write_batch"],"struct":["CatalogConfig","RetryPolicy","WriteBatchRequest"],"type":["Result"]};

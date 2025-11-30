@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["otel_metrics_exponential_histogram_schema","otel_metrics_exponential_histogram_schema_arc","otel_metrics_gauge_schema","otel_metrics_gauge_schema_arc","otel_metrics_histogram_schema","otel_metrics_histogram_schema_arc","otel_metrics_sum_schema","otel_metrics_sum_schema_arc","otel_metrics_summary_schema","otel_metrics_summary_schema_arc"]};

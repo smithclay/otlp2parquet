@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["encode_record_batches","set_parquet_row_group_size","writer_properties"],"struct":["EncodedParquet"]};
