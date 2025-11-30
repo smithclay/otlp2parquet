@@ -2728,6 +2728,7 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "chrono",
+ "getrandom 0.2.16",
  "hex",
  "js-sys",
  "otlp2parquet-proto",
@@ -2740,6 +2741,7 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
+ "wasm-bindgen",
 ]
 
 [[package]]

@@ -140,3 +140,33 @@ mod tests {
         assert_eq!(metadata.record_count, 0);
     }
 }
+
+// WASM bindings for browser usage
+#[cfg(feature = "wasm")]
+pub mod wasm {
+    use super::*;
+    use wasm_bindgen::prelude::*;
+
+    /// Convert OTLP JSON logs to Arrow IPC bytes
+    ///
+    /// Input: JSON string in OTLP ExportLogsServiceRequest format
+    /// Output: Arrow IPC stream bytes (can be loaded by DuckDB)
+    #[wasm_bindgen]
+    pub fn logs_json_to_arrow_ipc(otlp_json: &str) -> std::result::Result<Vec<u8>, JsError> {
+        let (batch, _metadata) = parse_otlp_to_arrow(otlp_json.as_bytes(), InputFormat::Json)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+
+        batch_to_ipc_bytes(&batch).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    fn batch_to_ipc_bytes(batch: &RecordBatch) -> Result<Vec<u8>> {
+        use arrow::ipc::writer::StreamWriter;
+        let mut buf = Vec::new();
+        {
+            let mut writer = StreamWriter::try_new(&mut buf, &batch.schema())?;
+            writer.write(batch)?;
+            writer.finish()?;
+        }
+        Ok(buf)
+    }
+}
