@@ -11,6 +11,9 @@ let onLogsExport = null;
 let onTracesExport = null;
 let onMetricsExport = null;
 
+// Callback for real-time gauge updates (bypasses OTLP for immediate UI)
+let onGaugeUpdate = null;
+
 // Tracer instance
 let tracer = null;
 
@@ -18,6 +21,27 @@ let tracer = null;
 const logsBuffer = [];
 const LOGS_FLUSH_INTERVAL = 1000;
 const LOGS_FLUSH_SIZE = 20;
+
+// Real-time metrics state
+const realtimeMetrics = {
+  fps: 0,
+  scrollDepth: 0,
+  interactions: 0,
+  timeOnPage: 0,
+  activeTime: 0,
+  lcp: null,
+  fid: null,
+  cls: 0,
+  longTasks: 0
+};
+
+// FPS tracking
+let fpsFrameCount = 0;
+let fpsLastTime = performance.now();
+
+// Interaction tracking
+let lastActivityTime = Date.now();
+const IDLE_THRESHOLD = 5000; // 5 seconds of no activity = idle
 
 /**
  * Custom span exporter that converts spans to OTLP JSON
@@ -229,10 +253,28 @@ function flushLogs() {
 }
 
 /**
- * Initialize metrics capture (Web Vitals style)
+ * Initialize metrics capture (Web Vitals + performance metrics)
  */
 export function initMetricsCapture() {
-  // Capture performance metrics periodically
+  // Initialize Web Vitals observers
+  initWebVitals();
+
+  // Initialize FPS counter
+  initFpsCounter();
+
+  // Initialize scroll depth tracking
+  initScrollTracking();
+
+  // Initialize interaction tracking
+  initInteractionTracking();
+
+  // Initialize time on page tracking
+  initTimeTracking();
+
+  // Initialize Long Tasks observer
+  initLongTasksObserver();
+
+  // Capture performance metrics periodically (for OTLP export)
   setInterval(() => {
     const metrics = [];
     const now = Date.now() * 1e6;
@@ -267,6 +309,136 @@ export function initMetricsCapture() {
       }
     });
 
+    // FPS
+    metrics.push({
+      name: 'browser.fps',
+      description: 'Frames per second',
+      unit: '{fps}',
+      gauge: {
+        dataPoints: [{
+          timeUnixNano: String(now),
+          asDouble: realtimeMetrics.fps,
+          attributes: []
+        }]
+      }
+    });
+
+    // Scroll depth
+    metrics.push({
+      name: 'browser.scroll.depth',
+      description: 'Scroll depth percentage',
+      unit: '%',
+      gauge: {
+        dataPoints: [{
+          timeUnixNano: String(now),
+          asDouble: realtimeMetrics.scrollDepth,
+          attributes: []
+        }]
+      }
+    });
+
+    // Interactions
+    metrics.push({
+      name: 'browser.interactions.total',
+      description: 'Total user interactions',
+      unit: '{count}',
+      gauge: {
+        dataPoints: [{
+          timeUnixNano: String(now),
+          asDouble: realtimeMetrics.interactions,
+          attributes: []
+        }]
+      }
+    });
+
+    // Time on page
+    metrics.push({
+      name: 'browser.time.on_page',
+      description: 'Time on page',
+      unit: 's',
+      gauge: {
+        dataPoints: [{
+          timeUnixNano: String(now),
+          asDouble: realtimeMetrics.timeOnPage,
+          attributes: []
+        }]
+      }
+    });
+
+    // Active time
+    metrics.push({
+      name: 'browser.time.active',
+      description: 'Active time (non-idle)',
+      unit: 's',
+      gauge: {
+        dataPoints: [{
+          timeUnixNano: String(now),
+          asDouble: realtimeMetrics.activeTime,
+          attributes: []
+        }]
+      }
+    });
+
+    // CLS (cumulative)
+    metrics.push({
+      name: 'browser.web_vitals.cls',
+      description: 'Cumulative Layout Shift',
+      unit: '{score}',
+      gauge: {
+        dataPoints: [{
+          timeUnixNano: String(now),
+          asDouble: realtimeMetrics.cls,
+          attributes: []
+        }]
+      }
+    });
+
+    // Long tasks count
+    metrics.push({
+      name: 'browser.long_tasks.count',
+      description: 'Number of long tasks (>50ms)',
+      unit: '{count}',
+      gauge: {
+        dataPoints: [{
+          timeUnixNano: String(now),
+          asDouble: realtimeMetrics.longTasks,
+          attributes: []
+        }]
+      }
+    });
+
+    // LCP (if captured)
+    if (realtimeMetrics.lcp !== null) {
+      metrics.push({
+        name: 'browser.web_vitals.lcp',
+        description: 'Largest Contentful Paint',
+        unit: 'ms',
+        gauge: {
+          dataPoints: [{
+            timeUnixNano: String(now),
+            asDouble: realtimeMetrics.lcp,
+            attributes: []
+          }]
+        }
+      });
+    }
+
+    // FID (if captured)
+    if (realtimeMetrics.fid !== null) {
+      metrics.push({
+        name: 'browser.web_vitals.fid',
+        description: 'First Input Delay',
+        unit: 'ms',
+        gauge: {
+          dataPoints: [{
+            timeUnixNano: String(now),
+            asDouble: realtimeMetrics.fid,
+            attributes: []
+          }]
+        }
+      });
+    }
+
     if (metrics.length > 0 && onMetricsExport) {
       const otlpJson = JSON.stringify({
         resourceMetrics: [{
@@ -284,6 +456,166 @@ export function initMetricsCapture() {
       onMetricsExport(otlpJson);
     }
   }, 2000);
+}
+
+/**
+ * Initialize Web Vitals observers (LCP, FID, CLS)
+ */
+function initWebVitals() {
+  // LCP - Largest Contentful Paint
+  try {
+    const lcpObserver = new PerformanceObserver((entryList) => {
+      const entries = entryList.getEntries();
+      const lastEntry = entries[entries.length - 1];
+      realtimeMetrics.lcp = lastEntry.startTime;
+      updateGauges();
+    });
+    lcpObserver.observe({ type: 'largest-contentful-paint', buffered: true });
+  } catch (e) {
+    console.debug('LCP observer not supported');
+  }
+
+  // FID - First Input Delay
+  try {
+    const fidObserver = new PerformanceObserver((entryList) => {
+      const entries = entryList.getEntries();
+      const firstEntry = entries[0];
+      realtimeMetrics.fid = firstEntry.processingStart - firstEntry.startTime;
+      updateGauges();
+    });
+    fidObserver.observe({ type: 'first-input', buffered: true });
+  } catch (e) {
+    console.debug('FID observer not supported');
+  }
+
+  // CLS - Cumulative Layout Shift
+  try {
+    const clsObserver = new PerformanceObserver((entryList) => {
+      for (const entry of entryList.getEntries()) {
+        if (!entry.hadRecentInput) {
+          realtimeMetrics.cls += entry.value;
+        }
+      }
+      updateGauges();
+    });
+    clsObserver.observe({ type: 'layout-shift', buffered: true });
+  } catch (e) {
+    console.debug('CLS observer not supported');
+  }
+}
+
+/**
+ * Initialize FPS counter using requestAnimationFrame
+ */
+function initFpsCounter() {
+  function measureFps() {
+    fpsFrameCount++;
+    const now = performance.now();
+    const elapsed = now - fpsLastTime;
+
+    if (elapsed >= 1000) {
+      realtimeMetrics.fps = Math.round((fpsFrameCount * 1000) / elapsed);
+      fpsFrameCount = 0;
+      fpsLastTime = now;
+      updateGauges();
+    }
+
+    requestAnimationFrame(measureFps);
+  }
+  requestAnimationFrame(measureFps);
+}
+
+/**
+ * Initialize scroll depth tracking
+ */
+function initScrollTracking() {
+  function updateScrollDepth() {
+    const scrollTop = window.scrollY || document.documentElement.scrollTop;
+    const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+    realtimeMetrics.scrollDepth = scrollHeight > 0
+      ? Math.round((scrollTop / scrollHeight) * 100)
+      : 0;
+    updateGauges();
+  }
+
+  window.addEventListener('scroll', updateScrollDepth, { passive: true });
+  updateScrollDepth();
+}
+
+/**
+ * Initialize interaction tracking (clicks, scrolls, keypresses)
+ */
+function initInteractionTracking() {
+  const trackInteraction = () => {
+    realtimeMetrics.interactions++;
+    lastActivityTime = Date.now();
+    updateGauges();
+  };
+
+  window.addEventListener('click', trackInteraction);
+  window.addEventListener('keydown', trackInteraction);
+  window.addEventListener('scroll', trackInteraction, { passive: true });
+}
+
+/**
+ * Initialize time tracking (total and active time)
+ */
+function initTimeTracking() {
+  const startTime = Date.now();
+
+  setInterval(() => {
+    const now = Date.now();
+    realtimeMetrics.timeOnPage = Math.round((now - startTime) / 1000);
+
+    // Only count as active if there was recent activity
+    if (now - lastActivityTime < IDLE_THRESHOLD) {
+      realtimeMetrics.activeTime++;
+    }
+
+    updateGauges();
+  }, 1000);
+}
+
+/**
+ * Initialize Long Tasks observer
+ */
+function initLongTasksObserver() {
+  try {
+    const observer = new PerformanceObserver((entryList) => {
+      for (const entry of entryList.getEntries()) {
+        realtimeMetrics.longTasks++;
+        // Log long tasks
+        console.warn(`[Perf] Long task detected: ${entry.duration.toFixed(0)}ms`);
+      }
+      updateGauges();
+    });
+    observer.observe({ type: 'longtask', buffered: true });
+  } catch (e) {
+    console.debug('Long Tasks observer not supported');
+  }
+}
+
+/**
+ * Update real-time gauges (calls the callback if set)
+ */
+function updateGauges() {
+  if (onGaugeUpdate) {
+    onGaugeUpdate({ ...realtimeMetrics });
+  }
+}
+
+/**
+ * Set callback for real-time gauge updates
+ */
+export function setOnGaugeUpdate(callback) {
+  onGaugeUpdate = callback;
+}
+
+/**
+ * Get current realtime metrics snapshot
+ */
+export function getRealtimeMetrics() {
+  return { ...realtimeMetrics };
 }
 
 /**

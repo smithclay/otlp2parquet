@@ -4,22 +4,22 @@ on:
   workflow_call:
     inputs:
       version:
-        description: 'Version tag (e.g., v0.0.2)'
+        description: 'Version string to display in docs (e.g., v0.0.2, dev-abc1234)'
         required: true
         type: string
       ref:
-        description: 'Git ref to checkout'
+        description: 'Git ref to checkout (branch, tag, or SHA). Defaults to version if not specified.'
         required: false
         type: string
         default: ''
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag (e.g., v0.0.2)'
+        description: 'Version string to display in docs (e.g., v0.0.2, dev-abc1234)'
         required: true
         type: string
       ref:
-        description: 'Git ref to checkout (defaults to version tag)'
+        description: 'Git ref to checkout (branch, tag, or SHA). Defaults to version if not specified.'
         required: false
         type: string
 

@@ -6,10 +6,16 @@ import { getTracer } from './telemetry.js';
  * Initialize playground button handlers
  */
 export function initPlayground() {
+  // Original buttons
   document.getElementById('btn-log').addEventListener('click', handleLogMessage);
   document.getElementById('btn-error').addEventListener('click', handleThrowError);
-  document.getElementById('btn-slow-api').addEventListener('click', handleSlowApi);
+  document.getElementById('btn-slow').addEventListener('click', handleSlowApi);
   document.getElementById('btn-nested').addEventListener('click', handleNestedSpans);
+
+  // New stress test buttons
+  document.getElementById('btn-dom-stress').addEventListener('click', handleDomStress);
+  document.getElementById('btn-layout-shift').addEventListener('click', handleLayoutShift);
+  document.getElementById('btn-long-task').addEventListener('click', handleLongTask);
 }
 
 function handleLogMessage() {
@@ -17,7 +23,9 @@ function handleLogMessage() {
     'User clicked the log button',
     'Processing user interaction',
     'Button click event handled successfully',
-    'Demo log message generated'
+    'Demo log message generated',
+    'Analytics event captured',
+    'User engagement tracked'
   ];
   const msg = messages[Math.floor(Math.random() * messages.length)];
   console.log(`[Playground] ${msg}`);
@@ -81,4 +89,109 @@ async function handleNestedSpans() {
 
   parentSpan.end();
   console.info('[Playground] All nested operations completed');
+}
+
+/**
+ * Add 100 DOM nodes to stress test DOM metrics
+ */
+function handleDomStress() {
+  const tracer = getTracer();
+  const span = tracer?.startSpan('playground.dom-stress');
+
+  console.info('[Playground] Adding 100 DOM nodes...');
+
+  const container = document.createElement('div');
+  container.className = 'stress-test-container';
+  container.style.cssText = 'position:fixed;bottom:10px;right:10px;max-width:200px;max-height:150px;overflow:auto;background:rgba(0,0,0,0.8);padding:8px;border-radius:8px;font-size:10px;z-index:1000;';
+
+  for (let i = 0; i < 100; i++) {
+    const el = document.createElement('span');
+    el.textContent = `N${i} `;
+    el.style.color = `hsl(${(i * 3.6) % 360}, 70%, 60%)`;
+    container.appendChild(el);
+  }
+
+  // Add close button
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = 'X';
+  closeBtn.style.cssText = 'position:absolute;top:2px;right:2px;background:red;color:white;border:none;border-radius:4px;cursor:pointer;font-size:10px;padding:2px 6px;';
+  closeBtn.onclick = () => {
+    container.remove();
+    console.log('[Playground] Stress test container removed');
+  };
+  container.style.position = 'fixed';
+  container.appendChild(closeBtn);
+
+  document.body.appendChild(container);
+
+  span?.setAttribute('nodes.added', 100);
+  span?.end();
+
+  console.info('[Playground] Added 100 DOM nodes (click X to remove)');
+}
+
+/**
+ * Trigger a layout shift by dynamically inserting content
+ */
+function handleLayoutShift() {
+  const tracer = getTracer();
+  const span = tracer?.startSpan('playground.layout-shift');
+
+  console.warn('[Playground] Triggering layout shift...');
+
+  // Find a good place to insert - header area
+  const header = document.querySelector('.header');
+  if (!header) {
+    console.error('[Playground] Could not find header element');
+    span?.end();
+    return;
+  }
+
+  // Create a banner that pushes content down
+  const banner = document.createElement('div');
+  banner.className = 'layout-shift-banner';
+  banner.style.cssText = 'background:linear-gradient(90deg,#ef4444,#f97316);color:white;padding:12px;text-align:center;font-weight:bold;animation:slideIn 0.3s ease-out;';
+  banner.innerHTML = 'This banner caused a layout shift! <button onclick="this.parentElement.remove()" style="margin-left:10px;background:white;color:#ef4444;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold;">Dismiss</button>';
+
+  // Insert at top of header (causes shift)
+  header.insertBefore(banner, header.firstChild);
+
+  span?.setAttribute('shift.type', 'banner-insertion');
+  span?.end();
+
+  console.warn('[Playground] Layout shift triggered - check CLS metric!');
+
+  // Auto-remove after 5 seconds
+  setTimeout(() => {
+    if (banner.parentElement) {
+      banner.remove();
+      console.log('[Playground] Layout shift banner auto-removed');
+    }
+  }, 5000);
+}
+
+/**
+ * Block the main thread for ~100ms to trigger long task detection
+ */
+function handleLongTask() {
+  const tracer = getTracer();
+  const span = tracer?.startSpan('playground.long-task');
+
+  console.warn('[Playground] Blocking main thread for 100ms...');
+
+  const start = performance.now();
+  const blockTime = 100; // ms
+
+  // Busy wait to block main thread
+  while (performance.now() - start < blockTime) {
+    // Intentionally blocking - doing meaningless work
+    Math.sqrt(Math.random() * 1000000);
+  }
+
+  const elapsed = performance.now() - start;
+
+  span?.setAttribute('block.duration_ms', elapsed);
+  span?.end();
+
+  console.warn(`[Playground] Main thread blocked for ${elapsed.toFixed(0)}ms - check Long Tasks metric!`);
 }

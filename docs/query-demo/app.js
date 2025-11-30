@@ -11,7 +11,8 @@ import {
   initMetricsCapture,
   setOnLogsExport,
   setOnTracesExport,
-  setOnMetricsExport
+  setOnMetricsExport,
+  setOnGaugeUpdate
 } from './telemetry.js';
 import { initPlayground } from './playground.js';
 
@@ -37,6 +38,31 @@ const statusTextEl = document.getElementById('status-text');
 const runButton = document.getElementById('run-query');
 const sqlInput = document.getElementById('sql');
 const exampleButtons = document.querySelectorAll('.example');
+const sidebarToggle = document.getElementById('sidebar-toggle');
+const sidebar = document.getElementById('sidebar');
+
+// Gauge elements
+const fpsRing = document.getElementById('fps-ring');
+const fpsValue = document.getElementById('fps-value');
+const scrollRing = document.getElementById('scroll-ring');
+const scrollValue = document.getElementById('scroll-value');
+const interactionsRing = document.getElementById('interactions-ring');
+const interactionsValue = document.getElementById('interactions-value');
+const timeValue = document.getElementById('time-value');
+const activeValue = document.getElementById('active-value');
+const longtasksValue = document.getElementById('longtasks-value');
+const domValue = document.getElementById('dom-value');
+
+// Web Vitals elements
+const lcpValue = document.getElementById('lcp-value');
+const fidValue = document.getElementById('fid-value');
+const clsValue = document.getElementById('cls-value');
+const vitalLcp = document.getElementById('vital-lcp');
+const vitalFid = document.getElementById('vital-fid');
+const vitalCls = document.getElementById('vital-cls');
+
+// Ring circumference for gauge calculations
+const RING_CIRCUMFERENCE = 283; // 2 * PI * 45
 
 // Status helpers
 function updateStatus(message, variant = 'info') {
@@ -44,6 +70,94 @@ function updateStatus(message, variant = 'info') {
   if (variant === 'success') statusEl.classList.add('status--success');
   if (variant === 'error') statusEl.classList.add('status--error');
   statusTextEl.textContent = message;
+}
+
+// Update gauge ring fill
+function setGaugeValue(ring, value, max = 100) {
+  const percent = Math.min(value / max, 1);
+  const offset = RING_CIRCUMFERENCE * (1 - percent);
+  ring.style.strokeDashoffset = offset;
+}
+
+// Update FPS gauge with color coding
+function updateFpsGauge(fps) {
+  fpsValue.textContent = fps;
+  setGaugeValue(fpsRing, fps, 60);
+
+  // Color code: green > 50, yellow 30-50, red < 30
+  fpsRing.classList.remove('gauge-fill--warning', 'gauge-fill--danger');
+  if (fps < 30) {
+    fpsRing.classList.add('gauge-fill--danger');
+  } else if (fps < 50) {
+    fpsRing.classList.add('gauge-fill--warning');
+  }
+}
+
+// Update Web Vitals display with color coding
+function updateWebVitals(metrics) {
+  // LCP: good < 2500ms, needs improvement 2500-4000ms, poor > 4000ms
+  if (metrics.lcp !== null) {
+    lcpValue.textContent = Math.round(metrics.lcp);
+    vitalLcp.classList.remove('vital--good', 'vital--needs-improvement', 'vital--poor');
+    if (metrics.lcp < 2500) {
+      vitalLcp.classList.add('vital--good');
+    } else if (metrics.lcp < 4000) {
+      vitalLcp.classList.add('vital--needs-improvement');
+    } else {
+      vitalLcp.classList.add('vital--poor');
+    }
+  }
+
+  // FID: good < 100ms, needs improvement 100-300ms, poor > 300ms
+  if (metrics.fid !== null) {
+    fidValue.textContent = Math.round(metrics.fid);
+    vitalFid.classList.remove('vital--good', 'vital--needs-improvement', 'vital--poor');
+    if (metrics.fid < 100) {
+      vitalFid.classList.add('vital--good');
+    } else if (metrics.fid < 300) {
+      vitalFid.classList.add('vital--needs-improvement');
+    } else {
+      vitalFid.classList.add('vital--poor');
+    }
+  }
+
+  // CLS: good < 0.1, needs improvement 0.1-0.25, poor > 0.25
+  clsValue.textContent = metrics.cls.toFixed(3);
+  vitalCls.classList.remove('vital--good', 'vital--needs-improvement', 'vital--poor');
+  if (metrics.cls < 0.1) {
+    vitalCls.classList.add('vital--good');
+  } else if (metrics.cls < 0.25) {
+    vitalCls.classList.add('vital--needs-improvement');
+  } else {
+    vitalCls.classList.add('vital--poor');
+  }
+}
+
+// Handle real-time gauge updates from telemetry
+function handleGaugeUpdate(metrics) {
+  updateFpsGauge(metrics.fps);
+
+  scrollValue.textContent = metrics.scrollDepth;
+  setGaugeValue(scrollRing, metrics.scrollDepth, 100);
+
+  interactionsValue.textContent = metrics.interactions;
+  // Cap at 100 for visual display, but show actual count
+  setGaugeValue(interactionsRing, Math.min(metrics.interactions, 100), 100);
+
+  timeValue.textContent = formatTime(metrics.timeOnPage);
+  activeValue.textContent = formatTime(metrics.activeTime);
+  longtasksValue.textContent = metrics.longTasks;
+  domValue.textContent = document.getElementsByTagName('*').length;
+
+  updateWebVitals(metrics);
+}
+
+// Format seconds to human readable
+function formatTime(seconds) {
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}m ${secs}s`;
 }
 
 // DuckDB initialization
@@ -179,6 +293,7 @@ async function initPerspective() {
   await metricsViewer.restore({
     plugin: 'Y Line',
     group_by: ['MetricName'],
+    split_by: [],
     columns: ['Value'],
     sort: [['Timestamp', 'asc']]
   });
@@ -382,6 +497,7 @@ async function init() {
     setOnLogsExport(handleLogsExport);
     setOnTracesExport(handleTracesExport);
     setOnMetricsExport(handleMetricsExport);
+    setOnGaugeUpdate(handleGaugeUpdate);
 
     // Initialize telemetry collection
     updateStatus('Starting telemetry collection...');
@@ -405,6 +521,11 @@ async function init() {
       btn.addEventListener('click', () => {
         sqlInput.value = btn.dataset.query;
       });
+    });
+
+    // Sidebar toggle
+    sidebarToggle.addEventListener('click', () => {
+      sidebar.classList.toggle('collapsed');
     });
 
     updateStatus('Ready! Telemetry is being captured.', 'success');
