@@ -2,7 +2,8 @@
 // Initializes DuckDB, WASM converter, OTel SDK, and Perspective viewers
 
 import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm';
-import perspective from 'https://cdn.jsdelivr.net/npm/@finos/perspective@2.10.1/dist/esm/perspective.js';
+// Use CDN builds from /dist/cdn/ which have bundled WASM
+import perspective from 'https://cdn.jsdelivr.net/npm/@finos/perspective@3.1.0/dist/cdn/perspective.js';
 
 import {
   initTracing,
@@ -120,7 +121,9 @@ async function initWasm() {
 
   try {
     const wasmModule = await import('./wasm/otlp2parquet_core.js');
-    await wasmModule.default();
+    // Explicitly fetch the WASM file to avoid MIME type issues
+    const wasmUrl = new URL('./wasm/otlp2parquet_core_bg.wasm', window.location.href);
+    await wasmModule.default(wasmUrl);
     wasm = wasmModule;
     console.log('WASM converter loaded');
   } catch (e) {
@@ -416,9 +419,9 @@ async function init() {
   }
 }
 
-// Custom elements for Perspective
-import 'https://cdn.jsdelivr.net/npm/@finos/perspective-viewer@2.10.1/dist/esm/perspective-viewer.js';
-import 'https://cdn.jsdelivr.net/npm/@finos/perspective-viewer-datagrid@2.10.1/dist/esm/perspective-viewer-datagrid.js';
-import 'https://cdn.jsdelivr.net/npm/@finos/perspective-viewer-d3fc@2.10.1/dist/esm/perspective-viewer-d3fc.js';
+// Custom elements for Perspective (CDN builds from /dist/cdn/)
+import 'https://cdn.jsdelivr.net/npm/@finos/perspective-viewer@3.1.0/dist/cdn/perspective-viewer.js';
+import 'https://cdn.jsdelivr.net/npm/@finos/perspective-viewer-datagrid@3.1.0/dist/cdn/perspective-viewer-datagrid.js';
+import 'https://cdn.jsdelivr.net/npm/@finos/perspective-viewer-d3fc@3.1.0/dist/cdn/perspective-viewer-d3fc.js';
 
 init();
