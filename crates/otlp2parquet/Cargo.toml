@@ -46,7 +46,7 @@ rand = { version = "0.8", default-features = false, features = ["std", "std_rng"
 # Optional dependencies for smoke tests
 dhat = { version = "0.3", optional = true }
 aws-sdk-cloudformation = { version = "1.55", default-features = false, features = ["rustls", "rt-tokio"], optional = true }
-aws-sdk-cloudwatchlogs = { version = "1.55", default-features = false, features = ["rustls", "rt-tokio"], optional = true }
+aws-sdk-cloudwatchlogs = { version = "1.111", default-features = false, features = ["rustls", "rt-tokio"], optional = true }
 aws-sdk-s3tables = { version = "1.44", default-features = false, features = ["rustls", "rt-tokio"], optional = true }
 
 [dev-dependencies]
