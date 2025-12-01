@@ -15,7 +15,7 @@ opendal = { version = "0.54", default-features = false, features = ["services-s3
 
 # AWS Lambda runtime (provides tokio runtime)
 lambda_runtime = "0.14"
-aws_lambda_events = "0.18"
+aws_lambda_events = "1.0"
 tokio = { workspace = true, features = ["macros"] }
 
 # Utilities
