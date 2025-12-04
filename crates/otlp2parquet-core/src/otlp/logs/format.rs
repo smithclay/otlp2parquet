@@ -46,4 +46,85 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not valid UTF-8"));
     }
+
+    #[test]
+    fn test_parse_json_body() {
+        let json = r#"{
+            "resourceLogs": [{
+                "scopeLogs": [{
+                    "logRecords": [{
+                        "body": { "stringValue": "test" }
+                    }]
+                }]
+            }]
+        }"#;
+
+        let request = parse_otlp_request(json.as_bytes(), InputFormat::Json).expect("Failed to parse");
+        let log = &request.resource_logs[0].scope_logs[0].log_records[0];
+        let body = log.body.as_ref().expect("Body is None");
+
+        if let Some(otlp2parquet_proto::opentelemetry::proto::common::v1::any_value::Value::StringValue(s)) = &body.value {
+            assert_eq!(s, "test");
+        } else {
+            panic!("Body value is not StringValue: {:?}", body.value);
+        }
+    }
+
+    #[test]
+    fn test_parse_json_body_array() {
+        let json = r#"{
+            "resourceLogs": [{
+                "scopeLogs": [{
+                    "logRecords": [{
+                        "body": { "arrayValue": { "values": [ { "stringValue": "test" } ] } }
+                    }]
+                }]
+            }]
+        }"#;
+
+        let request = parse_otlp_request(json.as_bytes(), InputFormat::Json).expect("Failed to parse");
+        let log = &request.resource_logs[0].scope_logs[0].log_records[0];
+        let body = log.body.as_ref().expect("Body is None");
+
+        if let Some(otlp2parquet_proto::opentelemetry::proto::common::v1::any_value::Value::ArrayValue(arr)) = &body.value {
+             let item = &arr.values[0];
+             if let Some(otlp2parquet_proto::opentelemetry::proto::common::v1::any_value::Value::StringValue(s)) = &item.value {
+                 assert_eq!(s, "test");
+             } else {
+                 panic!("Array item value is not StringValue: {:?}", item.value);
+             }
+        } else {
+            panic!("Body value is not ArrayValue");
+        }
+    }
+
+    #[test]
+    fn test_parse_json_kvlist_body() {
+        let json = r#"{
+            "resourceLogs": [{
+                "scopeLogs": [{
+                    "logRecords": [{
+                        "body": { "kvlistValue": { "values": [ { "key": "k", "value": { "stringValue": "v" } } ] } }
+                    }]
+                }]
+            }]
+        }"#;
+
+        let request = parse_otlp_request(json.as_bytes(), InputFormat::Json).expect("Failed to parse");
+        let log = &request.resource_logs[0].scope_logs[0].log_records[0];
+        let body = log.body.as_ref().expect("Body is None");
+
+        if let Some(otlp2parquet_proto::opentelemetry::proto::common::v1::any_value::Value::KvlistValue(kv)) = &body.value {
+             let item = &kv.values[0];
+             assert_eq!(item.key, "k");
+             // item.value is AnyValue
+             if let Some(otlp2parquet_proto::opentelemetry::proto::common::v1::any_value::Value::StringValue(s)) = &item.value.as_ref().unwrap().value {
+                 assert_eq!(s, "v");
+             } else {
+                 panic!("KV item value is not StringValue");
+             }
+        } else {
+            panic!("Body value is not KvlistValue: {:?}", body.value);
+        }
+    }
 }
