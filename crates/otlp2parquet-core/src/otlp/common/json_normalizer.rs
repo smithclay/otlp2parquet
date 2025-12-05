@@ -142,7 +142,7 @@ pub(crate) fn normalise_json_value(value: &mut JsonValue, key_hint: Option<&str>
                     .or_insert_with(|| JsonValue::Array(Vec::new()));
             }
 
-            if let Some(otlp::VALUE) = key_hint {
+            if matches!(key_hint, Some(otlp::VALUE) | Some(otlp::BODY) | Some(otlp::VALUES)) {
                 if !map.contains_key(otlp::VALUE) {
                     let inner = JsonValue::Object(std::mem::take(map));
                     map.insert(otlp::VALUE.to_string(), inner);

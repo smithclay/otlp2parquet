@@ -88,6 +88,8 @@ pub mod otlp {
     pub const DOUBLE_VALUE: &str = "double_value";
     /// Array value variant (repeated AnyValue)
     pub const ARRAY_VALUE: &str = "array_value";
+    /// Array values field
+    pub const VALUES: &str = "values";
     /// Key-value list variant (map/struct)
     pub const KVLIST_VALUE: &str = "kvlist_value";
     /// Bytes value variant
