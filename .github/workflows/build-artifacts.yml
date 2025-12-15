@@ -131,7 +131,7 @@ jobs:
           ref: ${{ inputs.ref && inputs.ref || github.ref }}
 
       - name: Download server binaries
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           pattern: otlp2parquet-cli-*
           path: docker-dist
