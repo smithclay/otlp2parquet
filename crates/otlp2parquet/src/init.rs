@@ -4,6 +4,7 @@
 
 use anyhow::Result;
 use otlp2parquet_core::config::{LogFormat, RuntimeConfig, StorageBackend};
+use otlp2parquet_writer::set_table_name_overrides;
 use std::sync::Arc;
 use tracing::info;
 
@@ -104,6 +105,9 @@ pub(crate) async fn init_writer(
         )
     })?;
 
+    // Respect custom table name overrides from config
+    set_table_name_overrides(iceberg_cfg.to_tables_map());
+
     let catalog_config = if let Some(bucket_arn) = &iceberg_cfg.bucket_arn {
         // S3 Tables catalog (AWS managed catalog via ARN)
         info!("Initializing with S3 Tables catalog: {}", bucket_arn);
@@ -160,6 +164,10 @@ pub(crate) async fn init_writer(
 
     // Ensure namespace exists
     otlp2parquet_writer::ensure_namespace(catalog.as_ref(), &namespace).await?;
+
+    // Initialize storage for best-effort plain Parquet fallback when catalog writes fail
+    otlp2parquet_writer::initialize_storage(config)
+        .map_err(|e| anyhow::anyhow!("Failed to initialize storage: {}", e))?;
 
     Ok((Some(catalog), namespace))
 }

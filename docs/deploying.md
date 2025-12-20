@@ -18,6 +18,14 @@ Or download from [GitHub Releases](https://github.com/smithclay/otlp2parquet/rel
 
 Deploy to Cloudflare's edge network with R2 storage.
 
+??? info "How it works"
+    - **Hot path**: Worker receives OTLP, writes Parquet to R2 immediately
+    - **Cold path**: Cron Worker runs every 5 minutes to register files with Iceberg catalog
+    - **Batching** (optional): Durable Object buffers requests before writing larger Parquet files
+
+    This separation ensures low latency for ingestion while maintaining
+    catalog consistency through scheduled batch commits.
+
 ### Quick Start
 
 ```bash
@@ -42,6 +50,13 @@ wrangler secret put AWS_SECRET_ACCESS_KEY
 
 # 3. Deploy
 wrangler deploy
+```
+
+If using Iceberg catalog:
+```bash
+# Create KV namespace for pending file tracking
+wrangler kv:namespace create PENDING_FILES
+# Update wrangler.toml with the namespace ID
 ```
 
 ### Send test data

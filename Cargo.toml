@@ -76,3 +76,6 @@ aws-config = { version = "1.8", default-features = false, features = ["rustls", 
 
 # Build dependencies
 prost-build = "0.13"
+
+[patch.crates-io]
+icepick = { git = "https://github.com/smithclay/icepick", rev = "ad54c08f491c729e7219b60e2a31833b4d8f51d2" }

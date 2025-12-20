@@ -5,3 +5,12 @@ compatibility_date = "2025-01-15"
 
 [build]
 command = "cargo install -q worker-build && worker-build --release"
+
+# Durable Objects for batching (memory-only, no SQLite)
+[[durable_objects.bindings]]
+name = "BATCHER"
+class_name = "OtlpBatcher"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["OtlpBatcher"]

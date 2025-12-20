@@ -519,6 +519,7 @@ impl SmokeTestHarness for ServerHarness {
                         secret_key: "minioadmin".to_string(),
                     },
                 },
+                prefix: None, // Server tests write to root of bucket
             },
             catalog_token: None, // Nessie doesn't require authentication
         }

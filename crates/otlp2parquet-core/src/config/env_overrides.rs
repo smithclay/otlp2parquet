@@ -48,7 +48,10 @@ pub fn apply_env_overrides<E: EnvSource>(config: &mut RuntimeConfig, env: &E) ->
     if let Some(val) = get_env_u64(env, "BATCH_MAX_AGE_SECS")? {
         config.batch.max_age_secs = val;
     }
-    if let Some(val) = get_env_bool(env, "BATCHING_ENABLED")? {
+    // Support both BATCH_ENABLED (canonical) and BATCHING_ENABLED (legacy)
+    if let Some(val) = get_env_bool(env, "BATCH_ENABLED")? {
+        config.batch.enabled = val;
+    } else if let Some(val) = get_env_bool(env, "BATCHING_ENABLED")? {
         config.batch.enabled = val;
     }
 
@@ -112,22 +115,49 @@ pub fn apply_env_overrides<E: EnvSource>(config: &mut RuntimeConfig, env: &E) ->
     if let Some(endpoint) = get_raw_env_string(env, "AWS_ENDPOINT_URL")? {
         ensure_r2(config).endpoint = Some(endpoint);
     }
+    if let Some(prefix) = get_env_string(env, "R2_PREFIX")? {
+        // Normalize prefix: ensure it ends with "/" if non-empty
+        let normalized = if prefix.is_empty() {
+            None
+        } else if prefix.ends_with('/') {
+            Some(prefix)
+        } else {
+            Some(format!("{}/", prefix))
+        };
+        ensure_r2(config).prefix = normalized;
+    }
 
     // Note: AWS_REGION should be set directly in wrangler.toml [vars] for Cloudflare Workers
     // WASM cannot use std::env::set_var, so OpenDAL reads it from worker::Env via get_raw_env_string above
 
     // Iceberg configuration
-    if config.iceberg.is_none()
-        && (has_any(
-            env,
-            &[
-                "ICEBERG_REST_URI",
-                "ICEBERG_NAMESPACE",
-                "ICEBERG_WAREHOUSE",
-                "ICEBERG_BUCKET_ARN",
-            ],
-        ))
-    {
+    let iceberg_keys = &[
+        "ICEBERG_REST_URI",
+        "ICEBERG_NAMESPACE",
+        "ICEBERG_WAREHOUSE",
+        "ICEBERG_BUCKET_ARN",
+    ];
+    let has_iceberg_env = has_any(env, iceberg_keys);
+
+    // Debug: log each key check individually
+    for key in iceberg_keys {
+        let val = env.get(key);
+        tracing::info!(
+            key = %key,
+            has_value = val.is_some(),
+            value = ?val,
+            "Checking iceberg env var"
+        );
+    }
+
+    tracing::info!(
+        has_iceberg_env = has_iceberg_env,
+        iceberg_is_none = config.iceberg.is_none(),
+        "Checking for iceberg env vars"
+    );
+
+    if config.iceberg.is_none() && has_iceberg_env {
+        tracing::info!("Creating default iceberg config from env vars");
         config.iceberg = Some(Default::default());
     }
 
@@ -142,6 +172,7 @@ pub fn apply_env_overrides<E: EnvSource>(config: &mut RuntimeConfig, env: &E) ->
             iceberg.warehouse = Some(warehouse);
         }
         if let Some(namespace) = get_env_string(env, "ICEBERG_NAMESPACE")? {
+            tracing::info!(namespace = %namespace, "Setting iceberg namespace from env");
             iceberg.namespace = Some(namespace);
         }
         if let Some(catalog_name) = get_env_string(env, "ICEBERG_CATALOG_NAME")? {
@@ -202,6 +233,7 @@ fn ensure_r2(config: &mut RuntimeConfig) -> &mut R2Config {
         access_key_id: String::new(),
         secret_access_key: String::new(),
         endpoint: None,
+        prefix: None,
     })
 }
 

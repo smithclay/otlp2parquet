@@ -36,6 +36,10 @@ pub struct CloudflareArgs {
     #[arg(long)]
     pub logging: Option<bool>,
 
+    /// Enable batching with Durable Objects
+    #[arg(long)]
+    pub batching: Option<bool>,
+
     /// Release version to use (default: current CLI version)
     #[arg(long)]
     pub release: Option<String>,
@@ -131,6 +135,14 @@ pub fn run(args: CloudflareArgs) -> Result<()> {
             .interact()?,
     };
 
+    let enable_batching = match args.batching {
+        Some(enabled) => enabled,
+        None => Confirm::new()
+            .with_prompt("Enable batching with Durable Objects?")
+            .default(true)
+            .interact()?,
+    };
+
     let version = args
         .release
         .unwrap_or_else(|| format!("v{}", env!("CARGO_PKG_VERSION")));
@@ -159,7 +171,16 @@ pub fn run(args: CloudflareArgs) -> Result<()> {
         .replace(
             "{{BASIC_AUTH_ENABLED}}",
             if enable_basic_auth { "true" } else { "false" },
-        );
+        )
+        .replace(
+            "{{BATCH_ENABLED}}",
+            if enable_batching { "true" } else { "false" },
+        )
+        .replace("{{BATCH_MAX_ROWS}}", "10000")
+        .replace("{{BATCH_MAX_AGE_SECS}}", "60")
+        // For Iceberg mode, add placeholder for KV namespace ID
+        // Users will replace this after creating the namespace
+        .replace("{{KV_NAMESPACE_ID}}", "REPLACE_WITH_KV_NAMESPACE_ID");
 
     // Process conditional blocks
     let content = process_conditional_blocks(
@@ -171,6 +192,7 @@ pub fn run(args: CloudflareArgs) -> Result<()> {
             ("ICEBERG", use_iceberg),
             ("BASICAUTH", enable_basic_auth),
             ("LOGGING", enable_logging),
+            ("BATCHING", enable_batching),
         ],
     );
 
@@ -183,6 +205,16 @@ pub fn run(args: CloudflareArgs) -> Result<()> {
     println!("Next steps:");
     println!("  1. Create R2 bucket (if needed):");
     println!("     wrangler r2 bucket create {}", bucket_name);
+    if use_iceberg {
+        println!();
+        println!("     IMPORTANT: Enable R2 Data Catalog on the bucket:");
+        println!(
+            "     - Go to Cloudflare Dashboard > R2 > {} > Settings",
+            bucket_name
+        );
+        println!("     - Enable 'Data Catalog' under 'Iceberg catalog'");
+        println!("     - This is required for Iceberg table registration to work");
+    }
     println!();
     println!("  2. Set secrets (R2 S3-Compatible API credentials):");
     println!("     wrangler secret put AWS_ACCESS_KEY_ID");
@@ -197,8 +229,13 @@ pub fn run(args: CloudflareArgs) -> Result<()> {
         println!("     wrangler secret put OTLP2PARQUET_BASIC_AUTH_USERNAME");
         println!("     wrangler secret put OTLP2PARQUET_BASIC_AUTH_PASSWORD");
     }
-    println!();
-    println!("  3. Deploy:");
+    if use_iceberg {
+        println!("  3. Create KV namespace for pending files:");
+        println!("     wrangler kv namespace create PENDING_FILES");
+        println!("     Then update wrangler.toml with the namespace ID");
+        println!();
+    }
+    println!("  {}. Deploy:", if use_iceberg { "4" } else { "3" });
     println!("     wrangler deploy");
     println!();
 

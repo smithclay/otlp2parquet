@@ -61,3 +61,6 @@ template.yaml
 
 # WASM demo build output (committed for GitHub Pages)
 # docs/query-demo/wasm/
+
+# Local planning docs
+docs/plans/

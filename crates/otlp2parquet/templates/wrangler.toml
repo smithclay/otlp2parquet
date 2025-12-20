@@ -27,6 +27,31 @@ cpu_ms = 2000
 binding = "LOGS_BUCKET"
 bucket_name = "{{BUCKET_NAME}}"
 
+{{#ICEBERG}}
+# KV namespace for tracking pending Parquet files (Iceberg mode only)
+[[kv_namespaces]]
+binding = "PENDING_FILES"
+id = "{{KV_NAMESPACE_ID}}"
+preview_id = "{{KV_NAMESPACE_ID}}"
+{{/ICEBERG}}
+
+{{#BATCHING}}
+# Durable Objects for batching (SQLite-backed for persistence across hibernation)
+[[durable_objects.bindings]]
+name = "BATCHER"
+class_name = "OtlpBatcherV2"
+
+# Self service binding for DO to call back to Worker (for KV receipt writes)
+[[services]]
+binding = "SELF"
+service = "{{WORKER_NAME}}"
+
+# Migration: SQLite storage for DO (persists across hibernation)
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["OtlpBatcherV2"]
+{{/BATCHING}}
+
 [vars]
 OTLP2PARQUET_STORAGE_BACKEND = "r2"
 OTLP2PARQUET_R2_BUCKET = "{{BUCKET_NAME}}"
@@ -41,13 +66,16 @@ AWS_ENDPOINT_URL = "https://{{ACCOUNT_ID}}.r2.cloudflarestorage.com"
 OTLP2PARQUET_CATALOG_MODE = "{{CATALOG_MODE}}"
 {{#ICEBERG}}
 CLOUDFLARE_BUCKET_NAME = "{{BUCKET_NAME}}"
-CLOUDFLARE_API_TOKEN = "{{CLOUDFLARE_API_TOKEN}}"
 {{/ICEBERG}}
 # Basic authentication
 OTLP2PARQUET_BASIC_AUTH_ENABLED = "{{BASIC_AUTH_ENABLED}}"
 {{#BASICAUTH}}
 # Username and password are set via wrangler secret
 {{/BASICAUTH}}
+# Batching configuration
+OTLP2PARQUET_BATCH_ENABLED = "{{BATCH_ENABLED}}"
+OTLP2PARQUET_BATCH_MAX_ROWS = "{{BATCH_MAX_ROWS}}"
+OTLP2PARQUET_BATCH_MAX_AGE_SECS = "{{BATCH_MAX_AGE_SECS}}"
 
 {{#LOGGING}}
 [observability]
@@ -57,3 +85,16 @@ head_sampling_rate = 1
 invocation_logs = true
 persist = true
 {{/LOGGING}}
+
+{{#LOGGING}}
+# Usage metrics via Analytics Engine (bytes/rows/files per signal type)
+[[analytics_engine_datasets]]
+binding = "METRICS"
+dataset = "otlp2parquet_usage"
+{{/LOGGING}}
+
+{{#ICEBERG}}
+# Cron trigger for catalog sync (every 5 minutes)
+[triggers]
+crons = ["*/5 * * * *"]
+{{/ICEBERG}}

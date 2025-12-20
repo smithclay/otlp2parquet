@@ -7,18 +7,21 @@ use worker::Response;
 
 /// Error classification with HTTP status code mapping
 #[derive(Debug)]
-#[allow(dead_code)]
+#[non_exhaustive]
 pub enum OtlpErrorKind {
     // 400-level: Client errors
-    InvalidRequest(String),  // 400 - Malformed OTLP data, parsing failures
-    Unauthorized(String),    // 401 - Auth failures
-    PayloadTooLarge(String), // 413 - Request body exceeds limit
+    /// 400 - Malformed OTLP data, parsing failures
+    InvalidRequest(String),
+    /// 401 - Auth failures
+    Unauthorized(String),
+    /// 413 - Request body exceeds limit
+    PayloadTooLarge(String),
 
     // 500-level: Server errors
-    ConfigError(ConfigValidationError), // 500 - Misconfiguration
-    InternalError(String),              // 500 - Unexpected internal failures
-    StorageError(String),               // 502 - R2/storage backend issues
-    CatalogError(String),               // 502 - Catalog service issues
+    /// 500 - Misconfiguration
+    ConfigError(ConfigValidationError),
+    /// 502 - R2/storage backend issues
+    StorageError(String),
 }
 
 impl OtlpErrorKind {
@@ -29,9 +32,7 @@ impl OtlpErrorKind {
             Self::Unauthorized(_) => 401,
             Self::PayloadTooLarge(_) => 413,
             Self::ConfigError(_) => 500,
-            Self::InternalError(_) => 500,
             Self::StorageError(_) => 502,
-            Self::CatalogError(_) => 502,
         }
     }
 
@@ -42,22 +43,18 @@ impl OtlpErrorKind {
             Self::Unauthorized(_) => "Unauthorized",
             Self::PayloadTooLarge(_) => "PayloadTooLarge",
             Self::ConfigError(_) => "ConfigError",
-            Self::InternalError(_) => "InternalError",
             Self::StorageError(_) => "StorageError",
-            Self::CatalogError(_) => "CatalogError",
         }
     }
 
     /// Get human-readable error message
     pub fn message(&self) -> String {
         match self {
-            Self::InvalidRequest(msg) => msg.clone(),
-            Self::Unauthorized(msg) => msg.clone(),
-            Self::PayloadTooLarge(msg) => msg.clone(),
+            Self::InvalidRequest(msg)
+            | Self::Unauthorized(msg)
+            | Self::PayloadTooLarge(msg)
+            | Self::StorageError(msg) => msg.clone(),
             Self::ConfigError(err) => err.message(),
-            Self::InternalError(msg) => msg.clone(),
-            Self::StorageError(msg) => msg.clone(),
-            Self::CatalogError(msg) => msg.clone(),
         }
     }
 
@@ -72,7 +69,7 @@ impl OtlpErrorKind {
 
 /// Configuration validation errors with specific diagnostic messages
 #[derive(Debug)]
-#[allow(dead_code)]
+#[non_exhaustive]
 pub enum ConfigValidationError {
     /// Some required variables are missing
     MissingRequired {
@@ -93,8 +90,6 @@ pub enum ConfigValidationError {
         value: String,
         expected: &'static str,
     },
-    /// Configuration has conflicting settings
-    ConflictingConfig { issue: String, resolution: String },
 }
 
 impl ConfigValidationError {
@@ -109,7 +104,6 @@ impl ConfigValidationError {
             Self::InvalidValue { var_name, .. } => {
                 format!("Invalid configuration value for {}", var_name)
             }
-            Self::ConflictingConfig { issue, .. } => issue.clone(),
         }
     }
 
@@ -147,7 +141,6 @@ impl ConfigValidationError {
                     var_name, value, expected
                 )
             }
-            Self::ConflictingConfig { resolution, .. } => resolution.clone(),
         }
     }
 }
@@ -199,9 +192,10 @@ mod tests {
             413
         );
         assert_eq!(
-            OtlpErrorKind::ConfigError(ConfigValidationError::ConflictingConfig {
-                issue: "test".into(),
-                resolution: "fix".into()
+            OtlpErrorKind::ConfigError(ConfigValidationError::MissingRequired {
+                component: "Test",
+                missing_vars: vec!["VAR"],
+                hint: "fix".into()
             })
             .status_code(),
             500

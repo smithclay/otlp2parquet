@@ -2008,8 +2008,7 @@ dependencies = [
 [[package]]
 name = "icepick"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85a86b19239e5a3f4efc31650d9f21c50b5e366533e678ff3608d8134131df86"
+source = "git+https://github.com/smithclay/icepick?rev=ad54c08f491c729e7219b60e2a31833b4d8f51d2#ad54c08f491c729e7219b60e2a31833b4d8f51d2"
 dependencies = [
  "apache-avro",
  "arrow",
@@ -2707,14 +2706,24 @@ name = "otlp2parquet-cloudflare"
 version = "0.2.2"
 dependencies = [
  "arrow",
+ "async-trait",
  "base64 0.22.1",
+ "bytes",
  "flate2",
+ "futures",
+ "indexmap 2.12.1",
  "once_cell",
  "otlp2parquet-core",
  "otlp2parquet-handlers",
  "otlp2parquet-writer",
  "serde",
  "serde_json",
+ "subtle",
+ "time",
+ "tracing",
+ "tracing-subscriber",
+ "tracing-web",
+ "uuid",
  "wasm-bindgen",
  "worker",
 ]
@@ -3986,6 +3995,7 @@ checksum = "91e7d9e3bb61134e77bde20dd4825b97c010155709965fedf0f49bb138e52a9d"
 dependencies = [
  "deranged",
  "itoa",
+ "js-sys",
  "num-conv",
  "powerfmt",
  "serde",
@@ -4269,6 +4279,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-log"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee855f1f400bd0e5c02d150ae5de3840039a3f54b025156404e34c23c03f47c3"
+dependencies = [
+ "log",
+ "once_cell",
+ "tracing-core",
+]
+
+[[package]]
 name = "tracing-serde"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4291,10 +4312,26 @@ dependencies = [
  "serde",
  "serde_json",
  "sharded-slab",
+ "smallvec",
  "thread_local",
+ "time",
  "tracing",
  "tracing-core",
+ "tracing-log",
  "tracing-serde",
+]
+
+[[package]]
+name = "tracing-web"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9e6a141feebd51f8d91ebfd785af50fca223c570b86852166caa3b141defe7c"
+dependencies = [
+ "js-sys",
+ "tracing-core",
+ "tracing-subscriber",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -4762,9 +4799,9 @@ checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
 
 [[package]]
 name = "worker"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c297e1a9f0e31ca0ba7e655977412bd85771278dafe5b84fc46f72b5caef5b6d"
+checksum = "42c76c5889873a2c309365ad4503810c007d3c25fbb4e9fa9e4e23c4ceb3c7f2"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4792,9 +4829,9 @@ dependencies = [
 
 [[package]]
 name = "worker-macros"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6d57d9439ad92355f1e561bbbb33abf403125850c9b25ea6be4371b8bebcd4e"
+checksum = "62c62584d037bad33789a6a5d605b3fccea1c52de9251d06f9d44054170dc612"
 dependencies = [
  "async-trait",
  "proc-macro2",
@@ -4808,9 +4845,9 @@ dependencies = [
 
 [[package]]
 name = "worker-sys"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5abe9e356c630837d9dd7ee465946f809368b110672fdf1334ff64f89290981"
+checksum = "72ddd412fd62c6eeffc1dd85e6ae5960a33b534f44a733df75b6e7519972bc74"
 dependencies = [
  "cfg-if",
  "js-sys",

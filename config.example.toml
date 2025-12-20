@@ -27,7 +27,8 @@
 # Important:
 #   - Server: Batching enabled by default (recommended for continuous ingestion)
 #   - Lambda: Batching disabled by default (event-driven, process per request)
-#   - Workers: Batching disabled by default (memory constraints)
+#   - Workers: Batching supported via Durable Objects with SQLite storage
+#              Set enabled=true to use DO-based batching (requires DO bindings in wrangler.toml)
 #
 # Trade-offs:
 #   - Larger batches = more memory usage, longer flush intervals
@@ -57,6 +58,38 @@ max_age_secs = 10
 # false = Write immediately per request (required for Lambda/Workers)
 # Platform defaults: Server=true, Lambda=false, Workers=false
 enabled = true
+
+
+# ==============================================================================
+# Cloudflare Workers Batching (with Durable Objects)
+# ==============================================================================
+# When running on Cloudflare Workers with Durable Objects enabled, batching
+# uses memory-only buffering within the Durable Object.
+#
+# Architecture:
+#   1. Worker receives OTLP request, parses and converts to Arrow
+#   2. Arrow batches routed to per-service Durable Objects
+#   3. DO accumulates batches in memory (data loss on eviction is acceptable for telemetry)
+#   4. Alarms trigger periodic flush to R2 when thresholds exceeded
+#
+# To enable:
+#   1. Set batch.enabled = true in config
+#   2. Configure wrangler.toml with DO bindings:
+#      [[durable_objects.bindings]]
+#      name = "BATCHER"
+#      class_name = "OtlpBatcher"
+#
+# Environment variables for Workers batching (set in wrangler.toml [vars]):
+#   OTLP2PARQUET_BATCH_MAX_ROWS = 50000      # Flush at 50k records
+#   OTLP2PARQUET_BATCH_MAX_BYTES = 10485760  # Flush at 10MB
+#   OTLP2PARQUET_BATCH_MAX_AGE_SECS = 60     # Flush after 60 seconds
+#
+# Recommended Workers batch settings (lower than Server due to DO constraints):
+# [batch]
+# enabled = true
+# max_rows = 50_000       # Flush at 50k records (vs 200k for Server)
+# max_bytes = 10_485_760  # Flush at 10MB (vs 128MB for Server)
+# max_age_secs = 60       # Flush after 60 seconds (vs 10s for Server)
 
 
 # ==============================================================================

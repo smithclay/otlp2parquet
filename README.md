@@ -41,7 +41,7 @@ duckdb -c "SELECT * FROM './data/logs/**/*.parquet'"
 - **Keep monitoring data around a long time** Parquet on S3 can be 90% cheaper than large monitoring vendors for long-term analytics.
 - **Query with good tools** — duckDB, Spark, Athena, Trino, Pandas
 - **Easy Iceberg** — Optional catalog support, including [S3 Tables](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-tables.html) and [R2 Data Catalog](https://developers.cloudflare.com/r2/data-catalog/)
-- **Deploy anywhere** — Local binary, Cloudflare Workers (WASM), AWS Lambda. In basic testing, converting to Parquet with a Lambda or Worker around $0.01 to $0.02 per uncompressed GB of log data in compute.
+- **Deploy anywhere** — Local binary, Cloudflare Workers (WASM), AWS Lambda. In basic testing, converting to Parquet with a Lambda or Worker costs around $0.01 to $0.02 per uncompressed GB of log data in compute.
 
 ## Deploy to the Cloud
 

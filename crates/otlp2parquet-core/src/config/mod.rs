@@ -206,6 +206,9 @@ pub struct R2Config {
     pub access_key_id: String,
     pub secret_access_key: String,
     pub endpoint: Option<String>,
+    /// Optional path prefix for all stored files (e.g., "smoke-abc123/")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
 }
 
 /// Server-specific configuration
@@ -431,6 +434,13 @@ impl IcebergConfig {
 }
 
 impl RuntimeConfig {
+    /// Namespace used for catalog operations (defaults to "otlp")
+    pub fn catalog_namespace(&self) -> String {
+        self.iceberg
+            .as_ref()
+            .and_then(|c| c.namespace.clone())
+            .unwrap_or_else(|| "otlp".to_string())
+    }
     /// Load configuration from all sources with priority
     #[cfg(not(target_arch = "wasm32"))]
     pub fn load() -> Result<Self> {
@@ -569,6 +579,7 @@ fn platform_defaults(platform: Platform) -> RuntimeConfig {
                 access_key_id: String::new(),
                 secret_access_key: String::new(),
                 endpoint: None,
+                prefix: None,
             }),
         },
     };

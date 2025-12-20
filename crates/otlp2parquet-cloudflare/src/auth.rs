@@ -2,7 +2,8 @@
 //
 // Optional HTTP Basic Auth that can be enabled via environment variables
 
-use worker::{console_error, Env, Request, Response};
+use subtle::ConstantTimeEq;
+use worker::{Env, Request, Response};
 
 use crate::errors;
 
@@ -37,15 +38,21 @@ pub fn parse_basic_auth_header(
     Ok((parts[0].to_string(), parts[1].to_string()))
 }
 
-/// Validate credentials against expected values
+/// Validate credentials against expected values using constant-time comparison.
+///
+/// This prevents timing attacks by ensuring both username and password are
+/// always compared in full, regardless of where they differ.
 pub fn validate_credentials(
     username: &str,
     password: &str,
     expected_user: &str,
     expected_pass: &str,
 ) -> bool {
-    // Constant-time comparison to prevent timing attacks
-    username == expected_user && password == expected_pass
+    // Constant-time comparison to prevent timing attacks.
+    // Both comparisons always execute fully regardless of intermediate results.
+    let user_match = username.as_bytes().ct_eq(expected_user.as_bytes());
+    let pass_match = password.as_bytes().ct_eq(expected_pass.as_bytes());
+    (user_match & pass_match).into()
 }
 
 /// Check basic authentication if enabled via environment variables
@@ -59,11 +66,34 @@ pub fn check_basic_auth(
     let request_id = request_id.map(|s| s.to_string());
 
     // Check if basic auth is enabled
-    let auth_enabled = env
-        .var("OTLP2PARQUET_BASIC_AUTH_ENABLED")
-        .ok()
-        .and_then(|v| v.to_string().parse::<bool>().ok())
-        .unwrap_or(false);
+    let auth_var = env.var("OTLP2PARQUET_BASIC_AUTH_ENABLED").ok();
+    let auth_enabled = match auth_var {
+        None => false,
+        Some(v) => {
+            let value = v.to_string();
+            match value.parse::<bool>() {
+                Ok(b) => b,
+                Err(_) => {
+                    // Invalid value like "yes", "1", etc.
+                    let error = errors::OtlpErrorKind::ConfigError(
+                        errors::ConfigValidationError::InvalidValue {
+                            var_name: "OTLP2PARQUET_BASIC_AUTH_ENABLED",
+                            value,
+                            expected: "'true' or 'false'",
+                        },
+                    );
+                    let status_code = error.status_code();
+                    let error_response =
+                        errors::ErrorResponse::from_error(error, request_id.clone());
+                    return Err(error_response
+                        .into_response(status_code)
+                        .unwrap_or_else(|_| {
+                            Response::error("Invalid configuration value", status_code).unwrap()
+                        }));
+                }
+            }
+        }
+    };
 
     if !auth_enabled {
         return Ok(());
@@ -83,14 +113,10 @@ pub fn check_basic_auth(
 
     // If auth is enabled but credentials not configured, return config error
     let (Some(expected_user), Some(expected_pass)) = (expected_username, expected_password) else {
-        if let Some(ref rid) = request_id {
-            console_error!(
-                "[{}] Basic auth enabled but credentials not configured",
-                rid
-            );
-        } else {
-            console_error!("Basic auth enabled but credentials not configured");
-        }
+        tracing::error!(
+            request_id = ?request_id,
+            "Basic auth enabled but credentials not configured"
+        );
 
         let error = errors::OtlpErrorKind::ConfigError(errors::ConfigValidationError::MissingRequired {
             component: "Authentication",
@@ -134,11 +160,7 @@ pub fn check_basic_auth(
     let (username, password) = match parse_basic_auth_header(&auth_header) {
         Ok(creds) => creds,
         Err(e) => {
-            if let Some(ref rid) = request_id {
-                console_error!("[{}] Failed to parse auth header: {}", rid, e);
-            } else {
-                console_error!("Failed to parse auth header: {}", e);
-            }
+            tracing::warn!(request_id = ?request_id, error = %e, "Failed to parse auth header");
 
             let error = errors::OtlpErrorKind::Unauthorized(format!(
                 "Invalid authentication format: {}. Expected 'Basic <base64>' header.",
@@ -157,11 +179,7 @@ pub fn check_basic_auth(
     if validate_credentials(&username, &password, &expected_user, &expected_pass) {
         Ok(())
     } else {
-        if let Some(ref rid) = request_id {
-            console_error!("[{}] Invalid credentials provided", rid);
-        } else {
-            console_error!("Invalid credentials provided");
-        }
+        tracing::warn!(request_id = ?request_id, "Invalid credentials provided");
 
         let error =
             errors::OtlpErrorKind::Unauthorized("Invalid username or password.".to_string());

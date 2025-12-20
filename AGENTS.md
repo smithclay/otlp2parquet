@@ -30,6 +30,12 @@ Ingest OTLP logs/metrics/traces over HTTP (protobuf/JSON/JSONL), convert to Arro
 - Platform catalog options: Lambda (S3 Tables ARN or REST), Server (Nessie/Glue REST or none), Cloudflare (R2 Data Catalog or none).
 - **Best-effort catalog commits**: Parquet files are always written to storage first. Catalog registration happens after—if it fails, data is still safely stored and a warning is logged.
 
+## Cloudflare Workers Batching
+- **Durable Objects (DO)**: Optional batching via `OtlpBatcher` DO accumulates records in memory, flushes on row count (`OTLP2PARQUET_BATCH_MAX_ROWS`) or age (`OTLP2PARQUET_BATCH_MAX_AGE_SECS`) thresholds.
+- **DO-to-Worker callback**: DOs cannot access KV bindings directly (Cloudflare limitation). When DO flushes Parquet to R2, it calls back to the main Worker via self-service binding (`env.service("SELF")`) to store KV receipts for catalog sync.
+- **KV receipts**: When catalog mode is enabled, pending Parquet files are tracked in KV (`PENDING_FILES` binding) with keys like `pending:{timestamp_ms}:{uuid}`. A cron trigger syncs these to the R2 Data Catalog.
+- **Wrangler config**: Template at `crates/otlp2parquet/templates/wrangler.toml` uses conditional blocks (`{{#BATCHING}}...{{/BATCHING}}`) for DO bindings, self-service binding, and migrations.
+
 ## Coding Standards
 - Use `tracing::*` macros only; no `println!/eprintln!` in production paths.
 - Avoid `unwrap/expect` in prod; propagate errors with context.

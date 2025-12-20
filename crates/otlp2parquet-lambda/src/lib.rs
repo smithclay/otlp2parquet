@@ -8,6 +8,7 @@
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use otlp2parquet_core::config::{RuntimeConfig, StorageBackend};
 use otlp2parquet_core::parquet::encoding::set_parquet_row_group_size;
+use otlp2parquet_writer::set_table_name_overrides;
 use std::sync::Arc;
 
 mod handlers;
@@ -185,6 +186,9 @@ pub async fn run() -> Result<(), Error> {
             Error::from("Lambda requires iceberg configuration (rest_uri or bucket_arn) when catalog_mode=iceberg")
         })?;
 
+        // Respect custom table name overrides from config
+        set_table_name_overrides(iceberg_cfg.to_tables_map());
+
         let catalog_config = if !iceberg_cfg.rest_uri.is_empty() {
             // REST catalog (Nessie, Glue REST, etc.)
             tracing::info!(
@@ -255,6 +259,10 @@ pub async fn run() -> Result<(), Error> {
         otlp2parquet_writer::ensure_namespace(catalog.as_ref(), &namespace)
             .await
             .map_err(|e| Error::from(format!("Failed to ensure namespace: {}", e)))?;
+
+        // Initialize storage for best-effort plain Parquet fallback if catalog writes fail
+        otlp2parquet_writer::initialize_storage(&config)
+            .map_err(|e| Error::from(format!("Failed to initialize storage: {}", e)))?;
 
         (Some(catalog), namespace)
     } else {

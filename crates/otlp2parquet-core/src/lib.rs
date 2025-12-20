@@ -22,7 +22,7 @@ pub mod types;
 // Re-export commonly used types
 pub use otlp::{InputFormat, LogMetadata};
 pub use schema::{otel_logs_schema, otel_metrics_gauge_schema};
-pub use types::{Blake3Hash, ParquetWriteResult, SignalType};
+pub use types::{Blake3Hash, MetricType, ParquetWriteResult, SignalKey, SignalType};
 
 /// Parse OTLP log data and convert to Arrow RecordBatch
 ///

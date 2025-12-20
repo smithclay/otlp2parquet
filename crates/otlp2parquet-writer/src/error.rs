@@ -3,6 +3,35 @@
 use otlp2parquet_core::SignalType;
 use thiserror::Error;
 
+/// Redact a secret for safe logging, showing first 4 and last 4 characters.
+///
+/// Examples:
+/// - "lTkWygojZsXFtfv07Rlzw80moyduOwJcZJ63grtT" -> "lTkW...grtT"
+/// - "short" -> "s]***[t" (for secrets < 10 chars)
+/// - "" -> "(empty)"
+pub fn redact_secret(secret: &str) -> String {
+    if secret.is_empty() {
+        return "(empty)".to_string();
+    }
+    if secret.len() < 10 {
+        // For short secrets, show first and last char only
+        let first = secret.chars().next().unwrap_or('?');
+        let last = secret.chars().last().unwrap_or('?');
+        return format!("{}***{}", first, last);
+    }
+    // Show first 4 and last 4 characters
+    let prefix: String = secret.chars().take(4).collect();
+    let suffix: String = secret
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    format!("{}...{}", prefix, suffix)
+}
+
 /// Error codes for programmatic handling
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorCode {
@@ -47,12 +76,14 @@ impl ErrorCode {
 #[derive(Debug, Error)]
 pub enum WriterError {
     /// Catalog initialization failed
-    #[error("[{code}] Catalog initialization failed for '{catalog_type}' at '{endpoint}': {reason}\n\nTroubleshooting:\n  • Verify catalog is reachable: curl {endpoint}\n  • Check credentials are valid\n  • Ensure catalog service is running\n\nSee: {docs_url}")]
+    #[error("[{code}] Catalog initialization failed for '{catalog_type}' at '{endpoint}': {reason}\n\nCredentials used:\n{credentials_used}\n\nTroubleshooting:\n  • Verify catalog is reachable: curl {endpoint}\n  • Check credentials are valid and have correct permissions\n  • Ensure the secret values match your working configuration\n  • Ensure catalog service is running\n\nSee: {docs_url}")]
     CatalogInit {
         code: &'static str,
         catalog_type: String,
         endpoint: String,
         reason: String,
+        /// Redacted credentials for debugging (e.g., "api_token: lTkW...grtT")
+        credentials_used: String,
         docs_url: String,
     },
 
@@ -103,16 +134,32 @@ pub enum WriterError {
 }
 
 impl WriterError {
-    /// Create a catalog init error with error code
-    pub fn catalog_init(catalog_type: String, endpoint: String, reason: String) -> Self {
+    /// Create a catalog init error with error code and redacted credentials
+    pub fn catalog_init_with_credentials(
+        catalog_type: String,
+        endpoint: String,
+        reason: String,
+        credentials_used: String,
+    ) -> Self {
         let code_enum = ErrorCode::E001CatalogUnreachable;
         Self::CatalogInit {
             code: code_enum.as_str(),
             catalog_type,
             endpoint,
             reason,
+            credentials_used,
             docs_url: code_enum.docs_url(),
         }
+    }
+
+    /// Create a catalog init error with error code (no credentials info)
+    pub fn catalog_init(catalog_type: String, endpoint: String, reason: String) -> Self {
+        Self::catalog_init_with_credentials(
+            catalog_type,
+            endpoint,
+            reason,
+            "  (no credential info available)".to_string(),
+        )
     }
 
     /// Create a table operation error with error code
@@ -160,3 +207,41 @@ impl WriterError {
 
 /// Result type alias for WriterError
 pub type Result<T> = std::result::Result<T, WriterError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_redact_secret_empty() {
+        assert_eq!(redact_secret(""), "(empty)");
+    }
+
+    #[test]
+    fn test_redact_secret_short() {
+        assert_eq!(redact_secret("abc"), "a***c");
+        assert_eq!(redact_secret("12345678"), "1***8");
+    }
+
+    #[test]
+    fn test_redact_secret_long() {
+        // Token-like secret
+        assert_eq!(
+            redact_secret("lTkWygojZsXFtfv07Rlzw80moyduOwJcZJ63grtT"),
+            "lTkW...grtT"
+        );
+        // Access key ID
+        assert_eq!(
+            redact_secret("e12dcf5a655bfd1917be71c51eb60f35"),
+            "e12d...0f35"
+        );
+    }
+
+    #[test]
+    fn test_redact_secret_boundary() {
+        // Exactly 10 chars - should use long format
+        assert_eq!(redact_secret("1234567890"), "1234...7890");
+        // 9 chars - should use short format
+        assert_eq!(redact_secret("123456789"), "1***9");
+    }
+}

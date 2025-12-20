@@ -1,7 +1,8 @@
 //! Catalog initialization and management
 
-use crate::error::{Result, WriterError};
+use crate::error::{redact_secret, Result, WriterError};
 use icepick::catalog::{Catalog, CatalogOptions};
+use icepick::error::Error as CatalogError;
 use icepick::NamespaceIdent;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -147,6 +148,12 @@ pub async fn initialize_catalog(config: CatalogConfig) -> Result<Arc<dyn Catalog
                     .with_timeout(Duration::from_secs(60));
             }
 
+            // Capture redacted token for error messages before moving
+            let redacted_token = token
+                .as_ref()
+                .map(|t| redact_secret(t))
+                .unwrap_or_else(|| "(anonymous)".to_string());
+
             if let Some(token) = token {
                 tracing::debug!("Using Bearer token authentication");
                 builder = builder.with_bearer_token(&token);
@@ -156,7 +163,13 @@ pub async fn initialize_catalog(config: CatalogConfig) -> Result<Arc<dyn Catalog
             }
 
             let catalog = builder.build().map_err(|e| {
-                WriterError::catalog_init("REST".to_string(), uri.to_string(), e.to_string())
+                let credentials_used = format!("  • bearer_token: {}", redacted_token);
+                WriterError::catalog_init_with_credentials(
+                    "REST".to_string(),
+                    uri.to_string(),
+                    e.to_string(),
+                    credentials_used,
+                )
             })?;
 
             tracing::info!(
@@ -191,10 +204,18 @@ pub async fn initialize_catalog(config: CatalogConfig) -> Result<Arc<dyn Catalog
             )
             .await
             .map_err(|e| {
-                WriterError::catalog_init(
+                // Format redacted credentials for debugging
+                let credentials_used = format!(
+                    "  • api_token: {}\n  • access_key_id: {}\n  • secret_access_key: {}",
+                    redact_secret(&api_token),
+                    redact_secret(&access_key_id),
+                    redact_secret(&secret_access_key)
+                );
+                WriterError::catalog_init_with_credentials(
                     "R2 Data Catalog".to_string(),
                     format!("account={}, bucket={}", account_id, bucket_name),
                     e.to_string(),
+                    credentials_used,
                 )
             })?;
 
@@ -210,19 +231,15 @@ pub async fn initialize_catalog(config: CatalogConfig) -> Result<Arc<dyn Catalog
 
 /// Ensure namespace exists in catalog
 ///
-/// Attempts to create the namespace. If creation fails (typically because it already exists),
-/// logs a debug message and continues. This best-effort approach prioritizes availability over
-/// strict error handling.
+/// Attempts to create the namespace. If creation fails because it already exists (HTTP 409
+/// Conflict), this is expected and logged at debug level. Other failures are logged at warn
+/// level but still return Ok for best-effort availability.
 ///
 /// # Observability
 ///
 /// - Success: Logs at `info` level with namespace name
-/// - Already exists: Logs at `debug` level (error ignored)
-/// - Other failures: Logs at `debug` level (error ignored)
-///
-/// This function does not distinguish between "already exists" and other failures because
-/// icepick's error types don't currently expose that semantic distinction. Once icepick
-/// provides structured errors, this can be refined.
+/// - Already exists (Conflict): Logs at `debug` level
+/// - Other failures: Logs at `warn` level (continues anyway)
 ///
 /// # Arguments
 /// * `catalog` - Catalog instance
@@ -230,6 +247,7 @@ pub async fn initialize_catalog(config: CatalogConfig) -> Result<Arc<dyn Catalog
 ///
 /// # Returns
 /// Always returns `Ok(())` - namespace creation failures are logged but not propagated
+/// to maintain availability for the write path
 pub async fn ensure_namespace(catalog: &dyn Catalog, namespace: &str) -> Result<()> {
     let namespace_ident = NamespaceIdent::new(vec![namespace.to_string()]);
 
@@ -241,11 +259,19 @@ pub async fn ensure_namespace(catalog: &dyn Catalog, namespace: &str) -> Result<
             tracing::info!("Created namespace: {}", namespace);
             Ok(())
         }
+        Err(CatalogError::Conflict { .. }) => {
+            // HTTP 409 - namespace already exists, this is expected
+            tracing::debug!("Namespace '{}' already exists", namespace);
+            Ok(())
+        }
         Err(e) => {
-            tracing::debug!(
-                "Namespace '{}' may already exist: {} (ignoring)",
-                namespace,
-                e
+            // Other errors (network, permission, etc.) - log at warn level but continue
+            // to maintain availability. The subsequent table operations will fail if
+            // the namespace truly doesn't exist.
+            tracing::warn!(
+                namespace = %namespace,
+                error = %e,
+                "Failed to create namespace (continuing anyway)"
             );
             Ok(())
         }

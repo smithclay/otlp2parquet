@@ -204,13 +204,17 @@ clean-wasm-demo: ## Remove demo WASM artifacts
 #
 
 .PHONY: clean
-clean: ## Remove build artifacts
+clean: ## Remove build artifacts (including WASM/Cloudflare build)
 	@cargo clean
 	@rm -rf target/lambda
+	@rm -rf crates/otlp2parquet-cloudflare/build/
+	@rm -f crates/otlp2parquet-cloudflare/wrangler-smoke-*.toml
+	@echo "Cleaned all build artifacts"
 
 .PHONY: clean-wasm
 clean-wasm: ## Remove WASM-specific artifacts
 	@rm -f $(WASM_OPTIMIZED) $(WASM_COMPRESSED)
+	@rm -rf crates/otlp2parquet-cloudflare/build/
 	@echo "Cleaned WASM artifacts"
 
 #

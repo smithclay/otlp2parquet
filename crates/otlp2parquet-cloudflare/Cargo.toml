@@ -15,7 +15,7 @@ otlp2parquet-writer = { path = "../otlp2parquet-writer" }
 otlp2parquet-handlers = { path = "../otlp2parquet-handlers", default-features = false }
 
 # Cloudflare Workers runtime
-worker = "0.7"
+worker = "0.7.1"
 wasm-bindgen = "0.2.106"
 
 # Utilities
@@ -24,4 +24,16 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 arrow = { workspace = true }
 base64 = "0.22"
+bytes = "1"
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+tracing = "0.1"
+tracing-web = "0.1"
+tracing-subscriber = { version = "0.3", features = ["time", "json"] }
+time = { version = "0.3", features = ["wasm-bindgen"] }
+subtle = "2.5"  # Constant-time comparison for auth (WASM-compatible, no_std)
+uuid = { version = "1", features = ["v4", "js"] }
+async-trait = "0.1"
+futures = "0.3"  # For parallel DO routing
+indexmap = "2"  # O(1) lookup + ordered eviction for idempotency tracking
+
+[dev-dependencies]

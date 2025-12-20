@@ -186,6 +186,11 @@ pub async fn process_metrics(
                     message: e.to_string(),
                 })?;
 
+        // Skip empty subsets to avoid wasted work
+        if batches_by_type.is_empty() {
+            continue;
+        }
+
         // Count total data points
         total_data_points += metadata.gauge_count
             + metadata.sum_count

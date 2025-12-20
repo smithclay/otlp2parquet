@@ -6,6 +6,7 @@ use once_cell::sync::OnceCell;
 use otlp2parquet_core::config::{RuntimeConfig, StorageBackend};
 
 static OPERATOR: OnceCell<opendal::Operator> = OnceCell::new();
+static STORAGE_PREFIX: OnceCell<Option<String>> = OnceCell::new();
 
 /// Initialize storage operator from RuntimeConfig
 ///
@@ -68,6 +69,9 @@ pub fn initialize_storage(config: &RuntimeConfig) -> crate::Result<()> {
                 crate::WriterError::write_failure("r2 config required for R2 backend".to_string())
             })?;
 
+            // Store the prefix for path generation
+            let _ = STORAGE_PREFIX.set(r2.prefix.clone());
+
             // Use endpoint from config if provided, otherwise construct from account_id
             let endpoint = r2
                 .endpoint
@@ -93,8 +97,14 @@ pub fn initialize_storage(config: &RuntimeConfig) -> crate::Result<()> {
     };
 
     match OPERATOR.set(operator) {
-        Ok(_) => Ok(()),
-        Err(_) => Ok(()), // another thread initialized first
+        Ok(_) => {
+            tracing::debug!("Storage operator initialized");
+            Ok(())
+        }
+        Err(_) => {
+            tracing::debug!("Storage operator already initialized by another call");
+            Ok(())
+        }
     }
 }
 
@@ -103,4 +113,19 @@ pub fn initialize_storage(config: &RuntimeConfig) -> crate::Result<()> {
 /// Returns None if operator has not been initialized via `initialize_storage`.
 pub(crate) fn get_operator() -> Option<&'static opendal::Operator> {
     OPERATOR.get()
+}
+
+/// Get the configured storage prefix (e.g., "smoke-abc123/")
+///
+/// Returns None if no prefix is configured. The prefix always ends with "/" if present.
+pub(crate) fn get_storage_prefix() -> Option<&'static str> {
+    STORAGE_PREFIX
+        .get()
+        .and_then(|opt| opt.as_ref())
+        .map(|s| s.as_str())
+}
+
+/// Clone the global storage operator for external users (e.g., catalog registration).
+pub fn get_operator_clone() -> Option<opendal::Operator> {
+    OPERATOR.get().cloned()
 }

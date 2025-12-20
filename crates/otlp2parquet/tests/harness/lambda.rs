@@ -409,6 +409,7 @@ impl SmokeTestHarness for LambdaHarness {
                     endpoint: None,
                     credentials: S3Credentials::FromEnvironment,
                 },
+                prefix: None, // Lambda tests write to root of bucket
             },
             catalog_token: None, // S3 Tables uses IAM authentication
         }

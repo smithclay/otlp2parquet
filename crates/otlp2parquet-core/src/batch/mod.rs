@@ -4,6 +4,8 @@
 // This reduces the number of storage writes and improves compression efficiency.
 //
 
+pub mod ipc;
+
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
