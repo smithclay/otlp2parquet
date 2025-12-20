@@ -18,14 +18,6 @@ Or download from [GitHub Releases](https://github.com/smithclay/otlp2parquet/rel
 
 Deploy to Cloudflare's edge network with R2 storage.
 
-??? info "How it works"
-    - **Hot path**: Worker receives OTLP, writes Parquet to R2 immediately
-    - **Cold path**: Cron Worker runs every 5 minutes to register files with Iceberg catalog
-    - **Batching** (optional): Durable Object buffers requests before writing larger Parquet files
-
-    This separation ensures low latency for ingestion while maintaining
-    catalog consistency through scheduled batch commits.
-
 ### Quick Start
 
 ```bash
@@ -87,6 +79,103 @@ curl -X POST https://your-worker.workers.dev/v1/logs \
     - **Memory limit**: WASM has ~128MB memory; batches over 48MB are rejected. Split large payloads upstream.
 
 ---
+
+### Architecture
+
+```mermaid
+flowchart TB
+    subgraph Client
+        OC[OTel Collector]
+    end
+
+    subgraph Worker["Cloudflare Worker"]
+        direction TB
+        H[HTTP Handler]
+        R{Batching<br/>enabled?}
+        DW[Direct Write]
+        RC[Receipt Handler]
+        CS[Catalog Sync]
+    end
+
+    subgraph DO["Durable Object (per signal+service)"]
+        direction TB
+        I[Ingest]
+        SQL[(SQLite<br/>Buffer)]
+        AL{{Alarm}}
+        FL[Flush]
+    end
+
+    subgraph Storage
+        R2[(R2 Bucket)]
+        KV[(KV Namespace)]
+        IC[Iceberg Catalog]
+    end
+
+    OC -->|OTLP/HTTP| H
+    H --> R
+    R -->|No| DW
+    R -->|Yes| I
+
+    I -->|Store Arrow IPC| SQL
+    I -.->|Schedule| AL
+    SQL -->|Threshold or timeout| FL
+    AL -->|Trigger| FL
+
+    FL -->|Write Parquet| R2
+    FL -->|"SELF binding"| RC
+    RC -->|Store receipt| KV
+
+    DW -->|Write Parquet| R2
+    DW -.->|If catalog enabled| KV
+
+    CS -->|"Cron (5 min)"| KV
+    KV -->|Pending files| CS
+    CS -->|Register tables| IC
+
+    style DO fill:#f9f,stroke:#333
+    style SQL fill:#ffd,stroke:#333
+    style AL fill:#ffd,stroke:#333
+```
+
+??? info "How it works"
+    **Without batching (default):**
+
+    - Worker receives OTLP request
+    - Immediately converts to Parquet and writes to R2
+    - If catalog enabled, stores receipt in KV for later sync
+
+    **With batching enabled:**
+
+    - Worker routes request to Durable Object (DO) based on signal type + service name
+    - DO buffers Arrow IPC batches in SQLite (survives hibernation)
+    - Flushes to R2 when row count or age threshold is exceeded
+    - After R2 write, DO calls back to Worker via `SELF` binding to store KV receipt
+    - Cron trigger runs every 5 minutes to sync pending files to Iceberg catalog
+
+    **Why DOs can't write KV directly:**
+
+    Cloudflare Durable Objects cannot access KV bindings (platform limitation).
+    The `SELF` service binding allows the DO to call back to the main Worker,
+    which has KV access.
+
+??? note "Batching configuration"
+    Enable batching with environment variables:
+
+    | Variable | Default | Description |
+    |----------|---------|-------------|
+    | `OTLP2PARQUET_BATCHING_ENABLED` | `false` | Enable DO batching |
+    | `OTLP2PARQUET_BATCH_MAX_ROWS` | `50000` | Flush after N rows |
+    | `OTLP2PARQUET_BATCH_MAX_AGE_SECS` | `60` | Flush after N seconds |
+    | `OTLP2PARQUET_BATCH_MAX_BYTES` | `10485760` | Flush after N bytes |
+
+    Batching is recommended for high-throughput scenarios to reduce R2 write operations
+    and create larger, more efficient Parquet files.
+
+??? info "Dead-letter queue recovery"
+    If R2 writes fail after 5 retries, data is preserved in a dead-letter queue at
+    `failed/{signal}/{service}/{timestamp}.ipc`. These files contain Arrow IPC batches
+    in a custom format (`OTLPIPC1` magic header). To recover, list files with
+    `aws s3 ls s3://bucket/failed/`, then deserialize using Arrow IPC and rewrite as Parquet.
 
 ## AWS Lambda
 

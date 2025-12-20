@@ -17,7 +17,7 @@ repos:
     hooks:
       - id: check-yaml
         name: Check YAML files
-        exclude: ^(.*template.*\.yaml|\.aws-sam/.*\.yaml)$
+        exclude: ^(.*template.*\.yaml|\.aws-sam/.*\.yaml|mkdocs\.yml)$
       - id: check-toml
         name: Check TOML files
         exclude: ^(.*templates/.*\.toml)$
