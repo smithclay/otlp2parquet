@@ -12,7 +12,7 @@ exclude = ["examples/generate-parquet-testdata"]
 resolver = "2"
 
 [workspace.package]
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 authors = ["otlp2parquet Contributors"]
 license = "Apache-2.0"
@@ -43,9 +43,9 @@ opt-level = 3
 
 [workspace.dependencies]
 # Internal crates - all use workspace version
-otlp2parquet-proto = { version = "0.2.2", path = "crates/otlp2parquet-proto" }
-otlp2parquet-core = { version = "0.2.2", path = "crates/otlp2parquet-core" }
-otlp2parquet-writer = { version = "0.2.2", path = "crates/otlp2parquet-writer" }
+otlp2parquet-proto = { version = "0.3.0", path = "crates/otlp2parquet-proto" }
+otlp2parquet-core = { version = "0.3.0", path = "crates/otlp2parquet-core" }
+otlp2parquet-writer = { version = "0.3.0", path = "crates/otlp2parquet-writer" }
 
 # Arrow/Parquet - MINIMAL features only
 arrow = { version = "56.2", default-features = false, features = ["ipc"] }
