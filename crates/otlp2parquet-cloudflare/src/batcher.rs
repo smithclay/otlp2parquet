@@ -10,8 +10,7 @@ use crate::r#do::config::{
     MAX_WRITE_RETRIES, WASM_MAX_FLUSH_BYTES,
 };
 use crate::r#do::types::{
-    BatchGroup, BatchKey, IngestResponse, PendingBufferContext, PendingReceipt,
-    PendingReceiptOwned, RecentBatches,
+    BatchGroup, BatchKey, IngestResponse, PendingBufferContext, PendingReceipt, RecentBatches,
 };
 use bytes::Bytes;
 use otlp2parquet_core::batch::ipc::{deserialize_batches, validate_ipc_header};
@@ -20,10 +19,7 @@ use otlp2parquet_core::SignalKey;
 use otlp2parquet_writer::{write_multi_batch, WriteMultiBatchRequest};
 use std::cell::RefCell;
 use std::str::FromStr;
-use worker::{
-    durable_object, Date, DurableObject, Env, Headers, Method, Request, RequestInit, Response,
-    Result, State,
-};
+use worker::{durable_object, Date, DurableObject, Env, Request, Response, Result, State};
 
 /// Durable Object that accumulates Arrow RecordBatches via SQLite storage,
 /// flushing to R2 when size or time thresholds are exceeded.
@@ -68,85 +64,6 @@ impl OtlpBatcherV2 {
         }
 
         Ok(self.cached_config.borrow().as_ref().unwrap().clone())
-    }
-
-    /// Send a receipt to the main Worker so it can persist to KV (DOs cannot write KV directly).
-    /// Uses a self service binding to avoid needing to know the Worker's public URL.
-    #[tracing::instrument(
-        name = "do.send_receipt",
-        skip(self, receipt),
-        fields(
-            path = %receipt.path,
-            table = %receipt.table,
-            rows = receipt.rows,
-            error = tracing::field::Empty,
-        )
-    )]
-    async fn send_receipt_to_worker(&self, receipt: &PendingReceipt<'_>) -> Result<()> {
-        tracing::debug!("send_receipt_to_worker: getting SELF service binding");
-        // Use service binding to call back to main Worker (avoids URL chicken-and-egg problem)
-        let service = self.env.service("SELF").map_err(|e| {
-            tracing::error!(error = %e, "SELF service binding not found");
-            tracing::Span::current().record("error", tracing::field::display(&e));
-            worker::Error::RustError(format!(
-                "SELF service binding not configured: {}. Add [[services]] binding in wrangler.toml",
-                e
-            ))
-        })?;
-        tracing::debug!("Got SELF service binding");
-
-        let headers = Headers::new();
-        headers.set("Content-Type", "application/json")?;
-
-        let mut init = RequestInit::new();
-        init.with_method(Method::Post);
-        init.with_headers(headers);
-        init.with_body(Some(
-            serde_json::to_string(receipt)
-                .map_err(|e| worker::Error::RustError(format!("receipt serialize failed: {}", e)))?
-                .into(),
-        ));
-
-        // Use relative URL with service binding - no need to know public hostname
-        let req = Request::new_with_init("https://self/__internal/receipt", &init)?;
-        tracing::debug!("Calling service.fetch_request");
-        let resp = service.fetch_request(req).await?;
-        tracing::debug!(status = resp.status_code(), "Service response received");
-
-        if !(200..300).contains(&resp.status_code()) {
-            let err = worker::Error::RustError(format!(
-                "Receipt callback failed with status {}",
-                resp.status_code()
-            ));
-            tracing::Span::current().record("error", tracing::field::display(&err));
-            return Err(err);
-        }
-
-        Ok(())
-    }
-
-    /// Retry any previously failed receipt before attempting a new write.
-    async fn retry_pending_receipt(&self) -> Result<()> {
-        if let Some(pending) = crate::r#do::storage::take_pending_receipt(&self.state)? {
-            let path = pending.path.clone();
-            let table = pending.table.clone();
-            let receipt = PendingReceipt {
-                path: &path,
-                table: &table,
-                rows: pending.rows,
-                timestamp_ms: pending.timestamp_ms,
-            };
-
-            if let Err(e) = self.send_receipt_to_worker(&receipt).await {
-                // Put it back for the next attempt (re-store in SQLite)
-                crate::r#do::storage::set_pending_receipt(&self.state, &pending)?;
-                return Err(worker::Error::RustError(format!(
-                    "Receipt forwarding failed: {} (path={})",
-                    e, path
-                )));
-            }
-        }
-        Ok(())
     }
 
     /// Validate IPC headers and deserialize Arrow batches.
@@ -355,15 +272,14 @@ impl OtlpBatcherV2 {
         };
 
         tracing::debug!(path = %path, table = %table_name, "Sending receipt to Worker");
-        if let Err(e) = self.send_receipt_to_worker(&receipt).await {
+        if let Err(e) = crate::r#do::receipts::send_receipt_to_worker(&self.env, &receipt).await {
             tracing::error!(error = %e, path = %path, "Receipt forwarding failed");
-            let pending = PendingReceiptOwned {
-                path: path.to_string(),
-                table: table_name,
-                rows: total_rows,
-                timestamp_ms: Date::now().as_millis() as i64,
-            };
-            crate::r#do::storage::set_pending_receipt(&self.state, &pending)?;
+            crate::r#do::receipts::store_pending_receipt(
+                &self.state,
+                path,
+                table_name,
+                total_rows,
+            )?;
             let _ = crate::r#do::storage::clear_first_event_timestamp(&self.state);
             return Err(worker::Error::RustError(format!(
                 "Receipt forwarding failed: {} (path={})",
@@ -416,7 +332,7 @@ impl OtlpBatcherV2 {
         );
 
         // Retry any previously failed receipt first
-        self.retry_pending_receipt().await?;
+        crate::r#do::receipts::retry_pending_receipt(&self.state, &self.env).await?;
 
         // Get DO state for signal/service info
         let do_state = crate::r#do::storage::get_do_state(&self.state)?;

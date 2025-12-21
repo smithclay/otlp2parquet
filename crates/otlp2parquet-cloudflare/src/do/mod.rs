@@ -2,5 +2,6 @@
 
 pub mod config;
 pub mod dlq;
+pub mod receipts;
 pub mod storage;
 pub mod types;
