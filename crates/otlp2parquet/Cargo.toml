@@ -20,7 +20,7 @@ otlp2parquet-writer = { workspace = true }
 arrow = { workspace = true }
 parquet = { workspace = true }
 prost = { workspace = true }
-opendal = { version = "0.54", default-features = false, features = ["services-fs", "services-s3"] }
+opendal = { version = "0.55", default-features = false, features = ["services-fs", "services-s3"] }
 chrono = { workspace = true }
 
 # HTTP server
@@ -56,7 +56,7 @@ criterion = { version = "0.5", default-features = false, features = ["html_repor
 otlp2parquet-proto = { path = "../otlp2parquet-proto" }
 flate2 = "1.0"
 # Integration tests
-opendal = { version = "0.54", default-features = false, features = ["services-memory"] }
+opendal = { version = "0.55", default-features = false, features = ["services-memory"] }
 # Docker e2e tests
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 aws-config = { version = "1.8", default-features = false, features = ["rustls", "behavior-version-latest", "rt-tokio"] }
