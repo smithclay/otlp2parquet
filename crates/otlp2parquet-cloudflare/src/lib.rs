@@ -14,11 +14,13 @@ mod do_config;
 mod errors;
 mod handlers;
 mod request;
+mod tracing_context;
 
 // Re-export Durable Object classes at crate root for worker-build
 pub use batcher::OtlpBatcherLegacy; // Migration stub for renamed old class
 pub use batcher::OtlpBatcherV2;
 pub use otlp2parquet_core::{MetricType, SignalKey};
+pub use tracing_context::TraceContext;
 
 use tracing_subscriber::fmt::format::Pretty;
 use tracing_subscriber::fmt::time::UtcTime;
