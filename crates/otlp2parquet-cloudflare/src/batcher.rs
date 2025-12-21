@@ -6,11 +6,11 @@
 use crate::do_config::ensure_storage_initialized;
 use crate::parse_do_id;
 use crate::r#do::config::{
-    ensure_alarm, get_batch_config, BACKPRESSURE_THRESHOLD_BYTES, MAX_CHUNK_BYTES,
-    MAX_INGEST_IPC_BYTES, MAX_WRITE_RETRIES, WASM_MAX_FLUSH_BYTES,
+    ensure_alarm, get_batch_config, BACKPRESSURE_THRESHOLD_BYTES, MAX_INGEST_IPC_BYTES,
+    MAX_WRITE_RETRIES, WASM_MAX_FLUSH_BYTES,
 };
 use crate::r#do::types::{
-    BatchGroup, BatchKey, DoState, IngestResponse, PendingBufferContext, PendingReceipt,
+    BatchGroup, BatchKey, IngestResponse, PendingBufferContext, PendingReceipt,
     PendingReceiptOwned, RecentBatches,
 };
 use bytes::Bytes;
@@ -18,10 +18,8 @@ use otlp2parquet_core::batch::ipc::{deserialize_batches, validate_ipc_header};
 use otlp2parquet_core::config::{CatalogMode, RuntimeConfig};
 use otlp2parquet_core::SignalKey;
 use otlp2parquet_writer::{write_multi_batch, WriteMultiBatchRequest};
-use serde::Deserialize;
 use std::cell::RefCell;
 use std::str::FromStr;
-use worker::SqlStorageValue;
 use worker::{
     durable_object, Date, DurableObject, Env, Headers, Method, Request, RequestInit, Response,
     Result, State,
@@ -70,265 +68,6 @@ impl OtlpBatcherV2 {
         }
 
         Ok(self.cached_config.borrow().as_ref().unwrap().clone())
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // SQLite storage helpers (persist across hibernation)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// Store a batch blob in SQLite, splitting into chunks if necessary.
-    ///
-    /// Large blobs are split into MAX_CHUNK_BYTES (512KB) chunks to avoid
-    /// SQLite's blob size limit (~2MB in Cloudflare DO). All chunks share
-    /// the same `chunk_group_id` and are ordered by `chunk_index`.
-    fn store_batch(&self, blob: &[u8], rows: i64) -> Result<()> {
-        let chunk_group_id = uuid::Uuid::new_v4().to_string();
-        let sql = self.state.storage().sql();
-
-        for (chunk_index, chunk) in blob.chunks(MAX_CHUNK_BYTES).enumerate() {
-            sql.exec(
-                "INSERT INTO batches (chunk_group_id, chunk_index, blob, bytes, rows) VALUES (?, ?, ?, ?, ?)",
-                Some(vec![
-                    SqlStorageValue::String(chunk_group_id.clone()),
-                    SqlStorageValue::Integer(chunk_index as i64),
-                    SqlStorageValue::Blob(chunk.to_vec()),
-                    SqlStorageValue::Integer(chunk.len() as i64),
-                    SqlStorageValue::Integer(rows),
-                ]),
-            )?;
-        }
-        Ok(())
-    }
-
-    /// Get total bytes and rows of pending batches.
-    ///
-    /// Bytes are summed across all chunks. Rows are counted once per chunk group
-    /// (since the same row count is stored on each chunk within a group).
-    fn get_batch_totals(&self) -> Result<(i64, i64)> {
-        let sql = self.state.storage().sql();
-        // Sum all chunk bytes, but only count rows once per group (chunk_index = 0)
-        let cursor = sql.exec(
-            "SELECT COALESCE(SUM(bytes), 0) as total_bytes,
-                    COALESCE(SUM(CASE WHEN chunk_index = 0 THEN rows ELSE 0 END), 0) as total_rows
-             FROM batches",
-            None,
-        )?;
-        #[derive(Deserialize)]
-        struct Totals {
-            total_bytes: i64,
-            total_rows: i64,
-        }
-        let row: Totals = cursor
-            .one()
-            .map_err(|e| worker::Error::RustError(format!("Failed to get batch totals: {}", e)))?;
-        Ok((row.total_bytes, row.total_rows))
-    }
-
-    /// Get count of pending batch groups (not individual chunks).
-    fn get_batch_count(&self) -> Result<i64> {
-        let sql = self.state.storage().sql();
-        let cursor = sql.exec(
-            "SELECT COUNT(DISTINCT chunk_group_id) as cnt FROM batches",
-            None,
-        )?;
-        #[derive(Deserialize)]
-        struct Count {
-            cnt: i64,
-        }
-        let row: Count = cursor
-            .one()
-            .map_err(|e| worker::Error::RustError(format!("Failed to get batch count: {}", e)))?;
-        Ok(row.cnt)
-    }
-
-    /// Load batch groups for flush, up to the specified byte limit (FIFO order).
-    ///
-    /// Returns the oldest batch groups that fit within `max_bytes`. Each group's
-    /// chunks are reassembled into the original IPC blob. Groups are NOT deleted
-    /// from SQLite - call `delete_batch_groups()` after successful write.
-    fn load_batches_for_flush(&self, max_bytes: usize) -> Result<Vec<BatchGroup>> {
-        let sql = self.state.storage().sql();
-
-        // Step 1: Get group metadata ordered by FIFO (earliest id = oldest)
-        #[derive(Deserialize)]
-        struct GroupMeta {
-            chunk_group_id: String,
-            #[allow(dead_code)]
-            first_id: i64,
-            total_bytes: i64,
-            rows: i64,
-        }
-
-        let groups_cursor = sql.exec(
-            "SELECT chunk_group_id, MIN(id) as first_id, SUM(bytes) as total_bytes, MAX(rows) as rows
-             FROM batches
-             GROUP BY chunk_group_id
-             ORDER BY first_id",
-            None,
-        )?;
-
-        let groups: Vec<GroupMeta> = groups_cursor.to_array()?.into_iter().collect();
-
-        // Step 2: Select groups until we hit max_bytes (FIFO)
-        let mut selected_groups: Vec<GroupMeta> = Vec::new();
-        let mut accumulated_bytes: usize = 0;
-
-        for group in groups {
-            let group_bytes = group.total_bytes as usize;
-            // Always include at least one group (even if it exceeds max_bytes)
-            // to avoid stalling if a single batch is larger than the limit
-            if accumulated_bytes + group_bytes > max_bytes && !selected_groups.is_empty() {
-                break;
-            }
-            accumulated_bytes += group_bytes;
-            selected_groups.push(group);
-        }
-
-        if selected_groups.is_empty() {
-            return Ok(vec![]);
-        }
-
-        // Step 3: Load and reassemble chunks for selected groups
-        let mut batch_groups = Vec::with_capacity(selected_groups.len());
-
-        for group_meta in selected_groups {
-            let chunks_cursor = sql.exec(
-                "SELECT blob, bytes FROM batches WHERE chunk_group_id = ? ORDER BY chunk_index",
-                Some(vec![SqlStorageValue::String(
-                    group_meta.chunk_group_id.clone(),
-                )]),
-            )?;
-
-            // Reassemble chunks using raw() iterator for proper blob handling
-            let mut reassembled = Vec::new();
-            let mut total_bytes: usize = 0;
-
-            for row_result in chunks_cursor.raw() {
-                let row = row_result.map_err(|e| {
-                    worker::Error::RustError(format!("Failed to read chunk row: {}", e))
-                })?;
-
-                let mut iter = row.into_iter();
-                if let Some(SqlStorageValue::Blob(chunk_data)) = iter.next() {
-                    total_bytes += chunk_data.len();
-                    reassembled.extend_from_slice(&chunk_data);
-                }
-            }
-
-            batch_groups.push(BatchGroup {
-                chunk_group_id: group_meta.chunk_group_id,
-                reassembled_blob: Bytes::from(reassembled),
-                total_bytes,
-                rows: group_meta.rows,
-            });
-        }
-
-        Ok(batch_groups)
-    }
-
-    /// Delete specific batch groups from SQLite after successful flush.
-    fn delete_batch_groups(&self, groups: &[BatchGroup]) -> Result<()> {
-        let sql = self.state.storage().sql();
-        for group in groups {
-            sql.exec(
-                "DELETE FROM batches WHERE chunk_group_id = ?",
-                Some(vec![SqlStorageValue::String(group.chunk_group_id.clone())]),
-            )?;
-        }
-        Ok(())
-    }
-
-    /// Get persistent DO state from SQLite.
-    fn get_do_state(&self) -> Result<DoState> {
-        let sql = self.state.storage().sql();
-        let cursor = sql.exec(
-            "SELECT signal_type, service_name, first_event_timestamp, pending_receipt FROM state WHERE id = 1",
-            None,
-        )?;
-        #[derive(Deserialize, Default)]
-        struct StateRow {
-            signal_type: Option<String>,
-            service_name: Option<String>,
-            first_event_timestamp: Option<i64>,
-            pending_receipt: Option<String>,
-        }
-        let row: StateRow = cursor.one().unwrap_or_default();
-        Ok(DoState {
-            signal_type: row.signal_type,
-            service_name: row.service_name,
-            first_event_timestamp: row.first_event_timestamp,
-            pending_receipt: row.pending_receipt,
-        })
-    }
-
-    /// Set signal type and service name (identity) in SQLite.
-    fn set_identity(&self, signal_type: &str, service_name: &str) -> Result<()> {
-        let sql = self.state.storage().sql();
-        sql.exec(
-            "UPDATE state SET signal_type = ?, service_name = ? WHERE id = 1",
-            Some(vec![
-                SqlStorageValue::String(signal_type.to_string()),
-                SqlStorageValue::String(service_name.to_string()),
-            ]),
-        )?;
-        Ok(())
-    }
-
-    /// Update first event timestamp (only if earlier than existing).
-    fn update_first_event_timestamp(&self, timestamp_micros: i64) -> Result<()> {
-        let sql = self.state.storage().sql();
-        sql.exec(
-            "UPDATE state SET first_event_timestamp = ?
-             WHERE id = 1 AND (first_event_timestamp IS NULL OR first_event_timestamp > ?)",
-            Some(vec![
-                SqlStorageValue::Integer(timestamp_micros),
-                SqlStorageValue::Integer(timestamp_micros),
-            ]),
-        )?;
-        Ok(())
-    }
-
-    /// Clear first event timestamp after successful flush.
-    fn clear_first_event_timestamp(&self) -> Result<()> {
-        let sql = self.state.storage().sql();
-        sql.exec(
-            "UPDATE state SET first_event_timestamp = NULL WHERE id = 1",
-            None,
-        )?;
-        Ok(())
-    }
-
-    /// Set pending receipt (JSON serialized).
-    fn set_pending_receipt(&self, receipt: &PendingReceiptOwned) -> Result<()> {
-        let json = serde_json::to_string(receipt)
-            .map_err(|e| worker::Error::RustError(format!("Failed to serialize receipt: {}", e)))?;
-        let sql = self.state.storage().sql();
-        sql.exec(
-            "UPDATE state SET pending_receipt = ? WHERE id = 1",
-            Some(vec![SqlStorageValue::String(json)]),
-        )?;
-        Ok(())
-    }
-
-    /// Clear pending receipt after successful forwarding.
-    fn clear_pending_receipt(&self) -> Result<()> {
-        let sql = self.state.storage().sql();
-        sql.exec("UPDATE state SET pending_receipt = NULL WHERE id = 1", None)?;
-        Ok(())
-    }
-
-    /// Get and clear pending receipt (for retry).
-    fn take_pending_receipt(&self) -> Result<Option<PendingReceiptOwned>> {
-        let state = self.get_do_state()?;
-        if let Some(json) = state.pending_receipt {
-            let receipt: PendingReceiptOwned = serde_json::from_str(&json).map_err(|e| {
-                worker::Error::RustError(format!("Failed to deserialize receipt: {}", e))
-            })?;
-            self.clear_pending_receipt()?;
-            Ok(Some(receipt))
-        } else {
-            Ok(None)
-        }
     }
 
     /// Write failed batches to dead-letter queue (R2 failed/ prefix) for manual recovery.
@@ -433,7 +172,7 @@ impl OtlpBatcherV2 {
 
     /// Retry any previously failed receipt before attempting a new write.
     async fn retry_pending_receipt(&self) -> Result<()> {
-        if let Some(pending) = self.take_pending_receipt()? {
+        if let Some(pending) = crate::r#do::storage::take_pending_receipt(&self.state)? {
             let path = pending.path.clone();
             let table = pending.table.clone();
             let receipt = PendingReceipt {
@@ -445,7 +184,7 @@ impl OtlpBatcherV2 {
 
             if let Err(e) = self.send_receipt_to_worker(&receipt).await {
                 // Put it back for the next attempt (re-store in SQLite)
-                self.set_pending_receipt(&pending)?;
+                crate::r#do::storage::set_pending_receipt(&self.state, &pending)?;
                 return Err(worker::Error::RustError(format!(
                     "Receipt forwarding failed: {} (path={})",
                     e, path
@@ -621,17 +360,21 @@ impl OtlpBatcherV2 {
         // Only delete batch groups if DLQ write succeeded
         // If DLQ failed, keep batches in SQLite for future retry
         if dlq_success {
-            let sql = self.state.storage().sql();
-            for group_id in group_ids {
-                let _ = sql.exec(
-                    "DELETE FROM batches WHERE chunk_group_id = ?",
-                    Some(vec![SqlStorageValue::String(group_id.clone())]),
-                );
-            }
+            // Delete groups by constructing temporary BatchGroup structs with just the IDs
+            let groups_to_delete: Vec<BatchGroup> = group_ids
+                .iter()
+                .map(|id| BatchGroup {
+                    chunk_group_id: id.clone(),
+                    reassembled_blob: Bytes::new(),
+                    total_bytes: 0,
+                    rows: 0,
+                })
+                .collect();
+            let _ = crate::r#do::storage::delete_batch_groups(&self.state, &groups_to_delete);
         }
 
         *self.write_retry_count.borrow_mut() = 0;
-        let _ = self.clear_first_event_timestamp();
+        let _ = crate::r#do::storage::clear_first_event_timestamp(&self.state);
 
         Err(worker::Error::RustError(format!(
             "Write failed after {} retries, {}: {}",
@@ -676,8 +419,8 @@ impl OtlpBatcherV2 {
                 rows: total_rows,
                 timestamp_ms: Date::now().as_millis() as i64,
             };
-            self.set_pending_receipt(&pending)?;
-            let _ = self.clear_first_event_timestamp();
+            crate::r#do::storage::set_pending_receipt(&self.state, &pending)?;
+            let _ = crate::r#do::storage::clear_first_event_timestamp(&self.state);
             return Err(worker::Error::RustError(format!(
                 "Receipt forwarding failed: {} (path={})",
                 e, path
@@ -721,7 +464,7 @@ impl OtlpBatcherV2 {
         )
     )]
     async fn flush(&self) -> Result<()> {
-        let (initial_bytes, initial_rows) = self.get_batch_totals()?;
+        let (initial_bytes, initial_rows) = crate::r#do::storage::get_batch_totals(&self.state)?;
         worker::console_log!(
             "[DO] flush() called: pending_bytes={}, pending_rows={}",
             initial_bytes,
@@ -732,7 +475,7 @@ impl OtlpBatcherV2 {
         self.retry_pending_receipt().await?;
 
         // Get DO state for signal/service info
-        let do_state = self.get_do_state()?;
+        let do_state = crate::r#do::storage::get_do_state(&self.state)?;
         let signal_type_str = match do_state.signal_type {
             Some(s) => s,
             None => {
@@ -766,7 +509,8 @@ impl OtlpBatcherV2 {
             iteration += 1;
 
             // Load batch groups up to memory limit (FIFO order)
-            let batch_groups = self.load_batches_for_flush(WASM_MAX_FLUSH_BYTES)?;
+            let batch_groups =
+                crate::r#do::storage::load_batches_for_flush(&self.state, WASM_MAX_FLUSH_BYTES)?;
             if batch_groups.is_empty() {
                 tracing::debug!(
                     iterations = iteration - 1,
@@ -837,7 +581,7 @@ impl OtlpBatcherV2 {
                                 uuid::Uuid::new_v4()
                             );
                             let _ = self.write_dlq_batch(&dlq_path, &[first_blob]).await;
-                            self.delete_batch_groups(&[first_group])?;
+                            crate::r#do::storage::delete_batch_groups(&self.state, &[first_group])?;
                             continue; // Try next batch in loop
                         }
 
@@ -868,7 +612,7 @@ impl OtlpBatcherV2 {
                             uuid::Uuid::new_v4()
                         );
                         let _ = self.write_dlq_batch(&dlq_path, &[first_blob]).await;
-                        self.delete_batch_groups(&[first_group])?;
+                        crate::r#do::storage::delete_batch_groups(&self.state, &[first_group])?;
                         continue; // Try next batch in loop
                     }
                 } else {
@@ -918,7 +662,7 @@ impl OtlpBatcherV2 {
                         .await?;
 
                     // Delete successfully flushed batch groups
-                    self.delete_batch_groups(&batch_groups)?;
+                    crate::r#do::storage::delete_batch_groups(&self.state, &batch_groups)?;
 
                     // Emit usage metrics
                     self.emit_usage_metrics(&signal_key, total_bytes, total_rows);
@@ -935,8 +679,8 @@ impl OtlpBatcherV2 {
         }
 
         // Clear state after all batches successfully flushed
-        let _ = self.clear_first_event_timestamp();
-        let _ = self.clear_pending_receipt();
+        let _ = crate::r#do::storage::clear_first_event_timestamp(&self.state);
+        let _ = crate::r#do::storage::clear_pending_receipt(&self.state);
 
         Ok(())
     }
@@ -953,7 +697,7 @@ impl OtlpBatcherV2 {
         )
     )]
     async fn handle_ingest(&self, mut req: Request) -> Result<Response> {
-        let state = self.get_do_state()?;
+        let state = crate::r#do::storage::get_do_state(&self.state)?;
         worker::console_log!(
             "[DO] handle_ingest() called: signal={:?}, service={:?}",
             state.signal_type.as_deref().unwrap_or("unknown"),
@@ -1003,7 +747,7 @@ impl OtlpBatcherV2 {
         };
 
         if is_duplicate {
-            let (total_bytes, total_rows) = self.get_batch_totals()?;
+            let (total_bytes, total_rows) = crate::r#do::storage::get_batch_totals(&self.state)?;
             return Response::from_json(&IngestResponse {
                 status: "accepted".to_string(),
                 buffered_records: total_rows,
@@ -1018,7 +762,7 @@ impl OtlpBatcherV2 {
             .and_then(|v| v.parse::<i64>().ok())
             .filter(|v| *v > 0)
         {
-            self.update_first_event_timestamp(header_ts)?;
+            crate::r#do::storage::update_first_event_timestamp(&self.state, header_ts)?;
         }
 
         // Get raw bytes as Bytes (zero-copy)
@@ -1042,7 +786,7 @@ impl OtlpBatcherV2 {
         }
 
         // Backpressure check - reject when accepting batch would exceed threshold.
-        let (current_bytes, _) = self.get_batch_totals()?;
+        let (current_bytes, _) = crate::r#do::storage::get_batch_totals(&self.state)?;
         let projected_bytes = (current_bytes as usize).saturating_add(ipc_bytes.len());
         if projected_bytes > BACKPRESSURE_THRESHOLD_BYTES {
             tracing::warn!(
@@ -1065,10 +809,10 @@ impl OtlpBatcherV2 {
         tracing::Span::current().record("record_count", record_count);
 
         // Store batch in SQLite (persists across hibernation, chunked if large)
-        self.store_batch(&ipc_bytes, record_count)?;
+        crate::r#do::storage::store_batch(&self.state, &ipc_bytes, record_count)?;
 
         let (max_rows, max_bytes, max_age_secs) = get_batch_config(&self.env);
-        let (total_bytes, total_rows) = self.get_batch_totals()?;
+        let (total_bytes, total_rows) = crate::r#do::storage::get_batch_totals(&self.state)?;
         let row_threshold_hit = max_rows > 0 && total_rows >= max_rows;
 
         worker::console_log!(
@@ -1090,8 +834,8 @@ impl OtlpBatcherV2 {
             );
             if let Err(e) = self.flush().await {
                 // Ensure a retry alarm if data or receipts are pending so we don't stall.
-                let batch_count = self.get_batch_count()?;
-                let do_state = self.get_do_state()?;
+                let batch_count = crate::r#do::storage::get_batch_count(&self.state)?;
+                let do_state = crate::r#do::storage::get_do_state(&self.state)?;
                 if batch_count > 0 || do_state.pending_receipt.is_some() {
                     if let Err(alarm_err) = ensure_alarm(&self.state, max_age_secs).await {
                         tracing::warn!(
@@ -1104,7 +848,7 @@ impl OtlpBatcherV2 {
                 return Err(e);
             }
             self.state.storage().delete_alarm().await?;
-            let batch_count = self.get_batch_count()?;
+            let batch_count = crate::r#do::storage::get_batch_count(&self.state)?;
             if batch_count > 0 {
                 ensure_alarm(&self.state, max_age_secs).await?;
             }
@@ -1113,7 +857,7 @@ impl OtlpBatcherV2 {
             ensure_alarm(&self.state, max_age_secs).await?;
         }
 
-        let (final_bytes, final_rows) = self.get_batch_totals()?;
+        let (final_bytes, final_rows) = crate::r#do::storage::get_batch_totals(&self.state)?;
         tracing::Span::current().record("buffered_bytes", final_bytes);
         Response::from_json(&IngestResponse {
             status: "accepted".to_string(),
@@ -1126,44 +870,7 @@ impl OtlpBatcherV2 {
 impl DurableObject for OtlpBatcherV2 {
     fn new(state: State, env: Env) -> Self {
         // Initialize SQLite schema (idempotent, runs on every wake)
-        // sql.exec() is synchronous per Cloudflare docs
-        let sql = state.storage().sql();
-        // Check if batches table has new schema (chunk_group_id column)
-        // If old schema exists, drop it (one-time migration, data loss acceptable per design)
-        let has_new_schema = sql
-            .exec("SELECT chunk_group_id FROM batches LIMIT 1", None)
-            .is_ok();
-        if !has_new_schema {
-            let _ = sql.exec("DROP TABLE IF EXISTS batches", None);
-        }
-        // Create batches table with chunking support
-        let _ = sql.exec(
-            "CREATE TABLE IF NOT EXISTS batches (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                chunk_group_id TEXT NOT NULL,
-                chunk_index INTEGER NOT NULL,
-                blob BLOB NOT NULL,
-                bytes INTEGER NOT NULL,
-                rows INTEGER NOT NULL
-            )",
-            None,
-        );
-        // Index for efficient chunk group queries (reassembly and FIFO ordering)
-        let _ = sql.exec(
-            "CREATE INDEX IF NOT EXISTS idx_batches_chunk_group ON batches(chunk_group_id)",
-            None,
-        );
-        let _ = sql.exec(
-            "CREATE TABLE IF NOT EXISTS state (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                signal_type TEXT,
-                service_name TEXT,
-                first_event_timestamp INTEGER,
-                pending_receipt TEXT
-            )",
-            None,
-        );
-        let _ = sql.exec("INSERT OR IGNORE INTO state (id) VALUES (1)", None);
+        let _ = crate::r#do::storage::init_schema(&state);
 
         Self {
             state,
@@ -1176,7 +883,7 @@ impl DurableObject for OtlpBatcherV2 {
 
     async fn fetch(&self, req: Request) -> Result<Response> {
         // Load identity from SQLite (persists across hibernation)
-        let state = self.get_do_state()?;
+        let state = crate::r#do::storage::get_do_state(&self.state)?;
 
         // If identity not set, parse from URL query param and persist
         if state.signal_type.is_none() || state.service_name.is_none() {
@@ -1185,7 +892,7 @@ impl DurableObject for OtlpBatcherV2 {
                 Some(name) => {
                     if let Some((sig, svc)) = parse_do_id(&name) {
                         // Persist identity to SQLite (survives hibernation)
-                        self.set_identity(sig, svc)?;
+                        crate::r#do::storage::set_identity(&self.state, sig, svc)?;
                     } else {
                         // Name param present but malformed
                         tracing::error!(
@@ -1213,7 +920,7 @@ impl DurableObject for OtlpBatcherV2 {
         }
 
         // Double-check initialization from SQLite
-        let state = self.get_do_state()?;
+        let state = crate::r#do::storage::get_do_state(&self.state)?;
         if state.signal_type.is_none() || state.service_name.is_none() {
             tracing::error!("Durable Object initialization incomplete after parsing");
             return Response::error("Internal error: DO initialization failed", 500);
@@ -1224,8 +931,8 @@ impl DurableObject for OtlpBatcherV2 {
 
     async fn alarm(&self) -> Result<Response> {
         // Load state from SQLite (survives hibernation!)
-        let state = self.get_do_state()?;
-        let (total_bytes, total_rows) = self.get_batch_totals()?;
+        let state = crate::r#do::storage::get_do_state(&self.state)?;
+        let (total_bytes, total_rows) = crate::r#do::storage::get_batch_totals(&self.state)?;
 
         worker::console_log!(
             "[DO] ALARM TRIGGERED! signal={:?}, service={:?}, pending_bytes={}, pending_rows={}",
@@ -1249,8 +956,8 @@ impl DurableObject for OtlpBatcherV2 {
                 // Data is preserved in SQLite for next alarm/request retry
 
                 // Re-schedule alarm for retry only if data or receipts are still pending
-                let batch_count = self.get_batch_count()?;
-                let do_state = self.get_do_state()?;
+                let batch_count = crate::r#do::storage::get_batch_count(&self.state)?;
+                let do_state = crate::r#do::storage::get_do_state(&self.state)?;
                 if batch_count > 0 || do_state.pending_receipt.is_some() {
                     let (_, _, max_age_secs) = get_batch_config(&self.env);
                     if let Err(alarm_err) = ensure_alarm(&self.state, max_age_secs).await {
