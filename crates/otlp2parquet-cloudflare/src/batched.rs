@@ -8,7 +8,6 @@ use arrow::record_batch::RecordBatch;
 use otlp2parquet_core::batch::ipc::serialize_batch;
 use otlp2parquet_core::InputFormat;
 use serde::Deserialize;
-use uuid::Uuid;
 use worker::{Env, Headers, Method, Request, RequestInit, Response, Result};
 
 /// Response from Durable Object ingest endpoint.
@@ -41,6 +40,18 @@ fn invalid_request_response(message: String, request_id: &str) -> Response {
 }
 
 /// Handle batched logs - parse, convert to Arrow, route to DO.
+#[tracing::instrument(
+    name = "otlp.parse",
+    skip(ctx, body),
+    fields(
+        request_id = %ctx.request_id,
+        signal_type = "logs",
+        service_name = tracing::field::Empty,
+        record_count = tracing::field::Empty,
+        bytes = body.len(),
+        error = tracing::field::Empty,
+    )
+)]
 pub async fn handle_batched_logs(
     ctx: &BatchContext<'_>,
     body: &[u8],
@@ -49,6 +60,7 @@ pub async fn handle_batched_logs(
     let (batch, metadata) = match otlp2parquet_core::parse_otlp_to_arrow(body, format) {
         Ok(result) => result,
         Err(e) => {
+            tracing::Span::current().record("error", e.to_string().as_str());
             tracing::error!(
                 request_id = %ctx.request_id,
                 error = ?e,
@@ -61,6 +73,9 @@ pub async fn handle_batched_logs(
         }
     };
 
+    tracing::Span::current().record("service_name", &*metadata.service_name);
+    tracing::Span::current().record("record_count", metadata.record_count);
+
     tracing::debug!(
         request_id = %ctx.request_id,
         service = %metadata.service_name,
@@ -70,6 +85,7 @@ pub async fn handle_batched_logs(
 
     route_to_batcher(
         ctx.env,
+        ctx.trace_ctx,
         SignalKey::Logs,
         &metadata.service_name,
         &[batch],
@@ -79,6 +95,18 @@ pub async fn handle_batched_logs(
 }
 
 /// Handle batched traces - parse, convert to Arrow, route to DO.
+#[tracing::instrument(
+    name = "otlp.parse",
+    skip(ctx, body),
+    fields(
+        request_id = %ctx.request_id,
+        signal_type = "traces",
+        service_name = tracing::field::Empty,
+        record_count = tracing::field::Empty,
+        bytes = body.len(),
+        error = tracing::field::Empty,
+    )
+)]
 pub async fn handle_batched_traces(
     ctx: &BatchContext<'_>,
     body: &[u8],
@@ -89,6 +117,7 @@ pub async fn handle_batched_traces(
     let request = match traces::parse_otlp_trace_request(body, format) {
         Ok(result) => result,
         Err(e) => {
+            tracing::Span::current().record("error", e.to_string().as_str());
             tracing::error!(
                 request_id = %ctx.request_id,
                 error = ?e,
@@ -104,6 +133,7 @@ pub async fn handle_batched_traces(
     let (batches, metadata) = match traces::TraceArrowConverter::convert(&request) {
         Ok(result) => result,
         Err(e) => {
+            tracing::Span::current().record("error", e.to_string().as_str());
             tracing::error!(
                 request_id = %ctx.request_id,
                 error = ?e,
@@ -116,6 +146,9 @@ pub async fn handle_batched_traces(
         }
     };
 
+    tracing::Span::current().record("service_name", &*metadata.service_name);
+    tracing::Span::current().record("record_count", metadata.span_count);
+
     tracing::debug!(
         request_id = %ctx.request_id,
         service = %metadata.service_name,
@@ -125,6 +158,7 @@ pub async fn handle_batched_traces(
 
     route_to_batcher(
         ctx.env,
+        ctx.trace_ctx,
         SignalKey::Traces,
         &metadata.service_name,
         &batches,
@@ -134,6 +168,18 @@ pub async fn handle_batched_traces(
 }
 
 /// Handle batched metrics - parse, convert to Arrow, route to DOs in parallel.
+#[tracing::instrument(
+    name = "otlp.parse",
+    skip(ctx, body),
+    fields(
+        request_id = %ctx.request_id,
+        signal_type = "metrics",
+        service_name = tracing::field::Empty,
+        record_count = tracing::field::Empty,
+        bytes = body.len(),
+        error = tracing::field::Empty,
+    )
+)]
 pub async fn handle_batched_metrics(
     ctx: &BatchContext<'_>,
     body: &[u8],
@@ -145,6 +191,7 @@ pub async fn handle_batched_metrics(
     let request = match metrics::parse_otlp_request(body, format) {
         Ok(result) => result,
         Err(e) => {
+            tracing::Span::current().record("error", e.to_string().as_str());
             tracing::error!(
                 request_id = %ctx.request_id,
                 error = ?e,
@@ -161,6 +208,7 @@ pub async fn handle_batched_metrics(
     let (batches, metadata) = match converter.convert(request) {
         Ok(result) => result,
         Err(e) => {
+            tracing::Span::current().record("error", e.to_string().as_str());
             tracing::error!(
                 request_id = %ctx.request_id,
                 error = ?e,
@@ -172,6 +220,15 @@ pub async fn handle_batched_metrics(
             ));
         }
     };
+
+    let total_record_count = metadata.gauge_count
+        + metadata.sum_count
+        + metadata.histogram_count
+        + metadata.exponential_histogram_count
+        + metadata.summary_count;
+
+    tracing::Span::current().record("service_name", metadata.service_name());
+    tracing::Span::current().record("record_count", total_record_count);
 
     tracing::debug!(
         request_id = %ctx.request_id,
@@ -206,6 +263,7 @@ pub async fn handle_batched_metrics(
 
             Some(route_single_metric(
                 ctx.env,
+                ctx.trace_ctx,
                 ctx.request_id,
                 signal_key,
                 service_name,
@@ -241,6 +299,7 @@ fn parse_metric_type(metric_type_str: &str, request_id: &str) -> Option<MetricTy
 /// Route a single metric batch to its DO.
 async fn route_single_metric(
     env: &Env,
+    trace_ctx: &TraceContext,
     request_id: &str,
     signal_key: SignalKey,
     service_name: &str,
@@ -253,7 +312,15 @@ async fn route_single_metric(
         records = batch.num_rows(),
         "Routing batch to DO"
     );
-    route_to_batcher(env, signal_key, service_name, &[batch], first_timestamp).await
+    route_to_batcher(
+        env,
+        trace_ctx,
+        signal_key,
+        service_name,
+        &[batch],
+        first_timestamp,
+    )
+    .await
 }
 
 /// Aggregate buffered stats from multiple DO responses.
@@ -297,8 +364,19 @@ async fn aggregate_do_responses(results: Vec<Response>, request_id: &str) -> Res
 }
 
 /// Route Arrow batches to a Durable Object for batching.
+#[tracing::instrument(
+    name = "otlp.route_to_do",
+    skip(env, trace_ctx, batches),
+    fields(
+        signal_key = %signal_key,
+        service_name = %service_name,
+        batch_count = batches.len(),
+        error = tracing::field::Empty,
+    )
+)]
 async fn route_to_batcher(
     env: &Env,
+    trace_ctx: &TraceContext,
     signal_key: SignalKey,
     service_name: &str,
     batches: &[RecordBatch],
@@ -311,7 +389,6 @@ async fn route_to_batcher(
 
     let mut latest_records: i64 = 0;
     let mut latest_bytes: i64 = 0;
-    let request_id = Uuid::new_v4().to_string();
 
     for (batch_index, batch) in batches.iter().enumerate() {
         let ipc_bytes = serialize_batch(batch)
@@ -320,12 +397,14 @@ async fn route_to_batcher(
         let headers = Headers::new();
         headers.set("Content-Type", "application/vnd.apache.arrow.stream")?;
         headers.set("X-Record-Count", &(batch.num_rows() as i64).to_string())?;
-        headers.set("X-Request-Id", &request_id)?;
+        headers.set("X-Request-Id", &trace_ctx.request_id)?;
         headers.set("X-Batch-Index", &batch_index.to_string())?;
         headers.set(
             "X-First-Timestamp-Micros",
             &first_timestamp_micros.to_string(),
         )?;
+        // Propagate trace context headers to Durable Object
+        headers.set("traceparent", &trace_ctx.traceparent())?;
 
         let mut init = RequestInit::new();
         init.with_method(Method::Post);
