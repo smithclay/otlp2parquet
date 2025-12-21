@@ -214,6 +214,16 @@ pub async fn sync_catalog(env: &Env) -> Result<()> {
 }
 
 /// Sync catalog with pending files and return a report (used by test hook).
+#[tracing::instrument(
+    name = "catalog.sync",
+    skip(env),
+    fields(
+        namespace = tracing::field::Empty,
+        pending_files = tracing::field::Empty,
+        tables_processed = tracing::field::Empty,
+        error = tracing::field::Empty,
+    )
+)]
 pub async fn sync_catalog_with_report(env: &Env) -> Result<CatalogSyncReport> {
     // Get KV namespace
     let kv = match env.kv("PENDING_FILES") {
@@ -231,6 +241,8 @@ pub async fn sync_catalog_with_report(env: &Env) -> Result<CatalogSyncReport> {
         return Ok(CatalogSyncReport::empty());
     }
 
+    tracing::Span::current().record("pending_files", pending.len());
+
     tracing::info!(
         count = pending.len(),
         "Found pending files for catalog commit"
@@ -239,6 +251,7 @@ pub async fn sync_catalog_with_report(env: &Env) -> Result<CatalogSyncReport> {
     // Initialize storage and catalog
     let config = ensure_storage_initialized(env)?;
     let namespace = resolve_namespace(&config, env);
+    tracing::Span::current().record("namespace", namespace.as_str());
     let catalog = init_catalog_from_env(env, &config, &namespace).await?;
 
     // Get bucket name for constructing absolute S3 URIs (required by Iceberg spec)
@@ -309,6 +322,8 @@ pub async fn sync_catalog_with_report(env: &Env) -> Result<CatalogSyncReport> {
     }
 
     delete_committed_keys(&kv, committed_keys).await;
+
+    tracing::Span::current().record("tables_processed", report.tables.len());
 
     Ok(report)
 }
@@ -535,6 +550,16 @@ pub async fn init_catalog_from_env(
 }
 
 /// Commit files to Iceberg table using icepick's register API.
+#[tracing::instrument(
+    name = "catalog.commit_table",
+    skip(catalog, files),
+    fields(
+        table = %table_name,
+        namespace = %namespace,
+        file_count = files.len(),
+        error = tracing::field::Empty,
+    )
+)]
 async fn commit_files_to_table(
     catalog: &dyn Catalog,
     table_name: &str,
@@ -543,16 +568,23 @@ async fn commit_files_to_table(
     bucket: &str,
 ) -> Result<()> {
     let operator = otlp2parquet_writer::get_operator_clone().ok_or_else(|| {
-        worker::Error::RustError(
-            "Storage operator not initialized; call initialize_storage first".to_string(),
-        )
+        let error = "Storage operator not initialized; call initialize_storage first";
+        tracing::Span::current().record("error", error);
+        worker::Error::RustError(error.to_string())
     })?;
     let registrar = RealRegistrar {
         catalog,
         file_io: FileIO::new(operator),
         bucket: bucket.to_string(),
     };
-    commit_files_with_registrar(&registrar, table_name, files, namespace).await
+
+    match commit_files_with_registrar(&registrar, table_name, files, namespace).await {
+        Ok(result) => Ok(result),
+        Err(e) => {
+            tracing::Span::current().record("error", tracing::field::display(&e));
+            Err(e)
+        }
+    }
 }
 
 /// Trait for registering pending Parquet files to Iceberg catalog.
