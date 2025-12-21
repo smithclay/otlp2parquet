@@ -4,7 +4,7 @@
 
 use crate::do_config::apply_namespace_fallback;
 use crate::do_config::WorkerEnvSource;
-use crate::{auth, batched, catalog_worker, errors, handlers};
+use crate::{auth, batched, catalog_worker, errors, handlers, TraceContext};
 use flate2::read::GzDecoder;
 use once_cell::sync::OnceCell;
 use otlp2parquet_core::config::{CatalogMode, Platform, RuntimeConfig};
@@ -53,6 +53,14 @@ fn maybe_decompress(
 
 /// Internal endpoint for Durable Objects to submit KV receipts.
 /// This is only callable via the SELF service binding (internal to the Worker).
+#[tracing::instrument(
+    name = "otlp.receipt",
+    skip(req, env),
+    fields(
+        path = tracing::field::Empty,
+        table = tracing::field::Empty,
+    )
+)]
 async fn handle_receipt(mut req: Request, env: &Env) -> Result<Response> {
     tracing::debug!("handle_receipt called");
 
@@ -67,6 +75,10 @@ async fn handle_receipt(mut req: Request, env: &Env) -> Result<Response> {
         worker::Error::RustError(format!("Invalid receipt payload: {}", e))
     })?;
     tracing::debug!(path = %payload.path, table = %payload.table, "Parsed receipt payload");
+
+    // Record fields in the span
+    tracing::Span::current().record("path", payload.path.as_str());
+    tracing::Span::current().record("table", payload.table.as_str());
 
     let key = format!("pending:{}:{}", payload.timestamp_ms, Uuid::new_v4());
     let value = serde_json::to_string(&payload)
@@ -107,19 +119,39 @@ async fn handle_sync_catalog(env: &Env) -> Result<Response> {
 /// Handle OTLP HTTP POST request and write to R2.
 ///
 /// This is the main request handler called by the Worker fetch event.
+#[tracing::instrument(
+    name = "otlp.request",
+    skip(req, env, _ctx),
+    fields(
+        request_id = tracing::field::Empty,
+        signal_type = tracing::field::Empty,
+        service_name = tracing::field::Empty,
+        record_count = tracing::field::Empty,
+        bytes = tracing::field::Empty,
+        error = tracing::field::Empty,
+    )
+)]
 pub(crate) async fn handle(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
     tracing::debug!("handle_otlp_request: start");
-    // Use Cloudflare's built-in request ID (CF-Ray header)
-    let request_id = req
-        .headers()
-        .get("cf-ray")
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| "unknown".to_string());
-    tracing::debug!(request_id = %request_id, "Processing request");
+
+    // Extract headers into owned Strings for TraceContext
+    let request_id_header = req.headers().get("x-request-id").ok().flatten();
+    let traceparent_header = req.headers().get("traceparent").ok().flatten();
+
+    // Extract or create trace context from incoming headers
+    let trace_ctx = TraceContext::from_headers(|name| match name {
+        "x-request-id" | "X-Request-Id" => request_id_header.as_deref(),
+        "traceparent" | "Traceparent" => traceparent_header.as_deref(),
+        _ => None,
+    });
+
+    // Record request_id in the span
+    tracing::Span::current().record("request_id", trace_ctx.request_id.as_str());
+    tracing::debug!(request_id = %trace_ctx.request_id, "Processing request");
 
     // Only accept POST requests
     if req.method() != Method::Post {
+        tracing::Span::current().record("error", "method_not_allowed");
         return Response::error("Method not allowed", 405);
     }
 
@@ -136,12 +168,19 @@ pub(crate) async fn handle(mut req: Request, env: Env, _ctx: Context) -> Result<
         "/v1/logs" => "logs",
         "/v1/traces" => "traces",
         "/v1/metrics" => "metrics",
-        _ => return Response::error("Not found", 404),
+        _ => {
+            tracing::Span::current().record("error", "not_found");
+            return Response::error("Not found", 404);
+        }
     };
+
+    // Record signal_type in the span
+    tracing::Span::current().record("signal_type", signal);
 
     tracing::debug!("Checking auth");
     // Check basic authentication if enabled
-    if let Err(response) = auth::check_basic_auth(&req, &env, Some(&request_id)) {
+    if let Err(response) = auth::check_basic_auth(&req, &env, Some(&trace_ctx.request_id)) {
+        tracing::Span::current().record("error", "auth_failed");
         return Ok(response);
     }
 
@@ -150,7 +189,8 @@ pub(crate) async fn handle(mut req: Request, env: Env, _ctx: Context) -> Result<
     let config = CONFIG
         .get_or_try_init(|| load_worker_config(&env))
         .map_err(|e| {
-            tracing::error!(request_id = %request_id, error = ?e, "Failed to load configuration");
+            tracing::Span::current().record("error", "config_error");
+            tracing::error!(request_id = %trace_ctx.request_id, error = ?e, "Failed to load configuration");
             e
         })?;
     tracing::debug!("Config loaded successfully");
@@ -159,12 +199,13 @@ pub(crate) async fn handle(mut req: Request, env: Env, _ctx: Context) -> Result<
     // Catalog is handled by Cron Worker, not hot path
     // Just ensure storage is initialized for plain Parquet writes
     otlp2parquet_writer::initialize_storage(config).map_err(|e| {
-        tracing::error!(request_id = %request_id, error = ?e, "Failed to initialize storage");
+        tracing::Span::current().record("error", "storage_init_failed");
+        tracing::error!(request_id = %trace_ctx.request_id, error = ?e, "Failed to initialize storage");
         let error = errors::OtlpErrorKind::StorageError(format!(
             "Failed to initialize R2 storage: {}. Verify AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and OTLP2PARQUET_R2_BUCKET are correctly configured.",
             e
         ));
-        let error_response = errors::ErrorResponse::from_error(error, Some(request_id.clone()));
+        let error_response = errors::ErrorResponse::from_error(error, Some(trace_ctx.request_id.clone()));
         worker::Error::RustError(serde_json::to_string(&error_response).unwrap_or_default())
     })?;
 
@@ -193,14 +234,21 @@ pub(crate) async fn handle(mut req: Request, env: Env, _ctx: Context) -> Result<
     })?;
 
     // Decompress if gzip-encoded (OTel collectors typically send gzip by default)
-    let body_bytes =
-        match maybe_decompress(&raw_body, content_encoding.as_deref(), Some(&request_id)) {
-            Ok(bytes) => bytes,
-            Err(response) => return Ok(response),
-        };
+    let body_bytes = match maybe_decompress(
+        &raw_body,
+        content_encoding.as_deref(),
+        Some(&trace_ctx.request_id),
+    ) {
+        Ok(bytes) => bytes,
+        Err(response) => return Ok(response),
+    };
+
+    // Record bytes in the span
+    tracing::Span::current().record("bytes", body_bytes.len());
 
     // Check payload size AFTER decompression (prevents zip bombs)
     if body_bytes.len() > max_payload_bytes {
+        tracing::Span::current().record("error", "payload_too_large");
         tracing::error!(
             payload_bytes = body_bytes.len(),
             max_bytes = max_payload_bytes,
@@ -213,7 +261,7 @@ pub(crate) async fn handle(mut req: Request, env: Env, _ctx: Context) -> Result<
             max_payload_bytes / (1024 * 1024)
         ));
         let status_code = error.status_code();
-        return errors::ErrorResponse::from_error(error, Some(request_id))
+        return errors::ErrorResponse::from_error(error, Some(trace_ctx.request_id.clone()))
             .into_response(status_code);
     }
 
@@ -224,7 +272,8 @@ pub(crate) async fn handle(mut req: Request, env: Env, _ctx: Context) -> Result<
     if batching_enabled {
         let ctx = batched::BatchContext {
             env: &env,
-            request_id: &request_id,
+            request_id: &trace_ctx.request_id,
+            trace_ctx: &trace_ctx,
         };
         return match signal {
             "logs" => batched::handle_batched_logs(&ctx, &body_bytes, format).await,
@@ -262,7 +311,7 @@ pub(crate) async fn handle(mut req: Request, env: Env, _ctx: Context) -> Result<
                 format,
                 content_type,
                 &namespace,
-                &request_id,
+                &trace_ctx.request_id,
                 catalog_ref,
             )
             .await
@@ -273,7 +322,7 @@ pub(crate) async fn handle(mut req: Request, env: Env, _ctx: Context) -> Result<
                 format,
                 content_type,
                 &namespace,
-                &request_id,
+                &trace_ctx.request_id,
                 catalog_ref,
             )
             .await
@@ -284,7 +333,7 @@ pub(crate) async fn handle(mut req: Request, env: Env, _ctx: Context) -> Result<
                 format,
                 content_type,
                 &namespace,
-                &request_id,
+                &trace_ctx.request_id,
                 catalog_ref,
             )
             .await

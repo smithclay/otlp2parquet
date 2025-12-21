@@ -3,7 +3,7 @@
 //! These handlers parse OTLP data, convert to Arrow, and route to Durable Objects
 //! for batching before writing to R2.
 
-use crate::{errors, make_do_id, MetricType, SignalKey};
+use crate::{errors, make_do_id, MetricType, SignalKey, TraceContext};
 use arrow::record_batch::RecordBatch;
 use otlp2parquet_core::batch::ipc::serialize_batch;
 use otlp2parquet_core::InputFormat;
@@ -25,6 +25,10 @@ struct DoIngestResponse {
 pub struct BatchContext<'a> {
     pub env: &'a Env,
     pub request_id: &'a str,
+    /// TraceContext for propagating distributed tracing headers to Durable Objects.
+    /// Will be used in subsequent tasks for header propagation.
+    #[allow(dead_code)]
+    pub trace_ctx: &'a TraceContext,
 }
 
 /// Convert an error message to a structured InvalidRequest error response.
