@@ -234,8 +234,15 @@ pub fn run(args: CloudflareArgs) -> Result<()> {
         println!("     wrangler kv namespace create PENDING_FILES");
         println!("     Then update wrangler.toml with the namespace ID");
         println!();
+        println!("  4. Enable snapshot expiration (reduces catalog metadata bloat):");
+        println!(
+            "     npx wrangler r2 bucket catalog snapshot-expiration enable {} \\",
+            bucket_name
+        );
+        println!("       --token <CLOUDFLARE_API_TOKEN> --older-than-days 1 --retain-last 1");
+        println!();
     }
-    println!("  {}. Deploy:", if use_iceberg { "4" } else { "3" });
+    println!("  {}. Deploy:", if use_iceberg { "5" } else { "3" });
     println!("     wrangler deploy");
     println!();
 

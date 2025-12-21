@@ -49,7 +49,21 @@ If using Iceberg catalog:
 # Create KV namespace for pending file tracking
 wrangler kv:namespace create PENDING_FILES
 # Update wrangler.toml with the namespace ID
+
+# Enable snapshot expiration to reduce metadata bloat (recommended)
+npx wrangler r2 bucket catalog snapshot-expiration enable my-bucket \
+  --token <CLOUDFLARE_API_TOKEN> \
+  --older-than-days 1 \
+  --retain-last 1
 ```
+
+??? note "Snapshot expiration"
+    R2 Data Catalog creates snapshots for every table commit. Over time, this can cause metadata bloat.
+    Enable snapshot expiration to automatically clean up old snapshots.
+
+    The `--token` must be a Cloudflare API token with **R2 Storage** and **R2 Data Catalog** read/write permissions.
+    The API also supports hourly values (e.g., `--older-than-days` can be replaced with direct API calls using `"1h"`).
+    See [Cloudflare docs](https://developers.cloudflare.com/r2/data-catalog/manage-catalogs/#enable-snapshot-expiration) for details.
 
 ### Send test data
 
