@@ -70,51 +70,6 @@ impl OtlpBatcherV2 {
         Ok(self.cached_config.borrow().as_ref().unwrap().clone())
     }
 
-    /// Write failed batches to dead-letter queue (R2 failed/ prefix) for manual recovery.
-    /// This is called after MAX_WRITE_RETRIES have been exhausted.
-    ///
-    /// # Format
-    /// ```text
-    /// [8 bytes] Magic + version: "OTLPIPC1"
-    /// [4 bytes] Number of blobs (u32 LE)
-    /// For each blob:
-    ///   [4 bytes] Blob length (u32 LE)
-    ///   [N bytes] Blob data (Arrow IPC)
-    /// ```
-    ///
-    /// To recover, read magic, verify version, then iterate blobs and deserialize
-    /// each as Arrow IPC using `otlp2parquet_core::batch::ipc::deserialize_batches`.
-    async fn write_dlq_batch(&self, path: &str, blobs: &[Bytes]) -> Result<()> {
-        use otlp2parquet_writer::get_operator_clone;
-
-        let operator = get_operator_clone().ok_or_else(|| {
-            worker::Error::RustError("Storage operator not initialized for DLQ write".to_string())
-        })?;
-
-        // Format: [magic][version][num_blobs][blob1_len][blob1_data]...
-        let mut dlq_data = Vec::new();
-        dlq_data.extend_from_slice(b"OTLPIPC1"); // Magic + version (8 bytes)
-        dlq_data.extend_from_slice(&(blobs.len() as u32).to_le_bytes());
-
-        for blob in blobs {
-            if blob.len() > u32::MAX as usize {
-                return Err(worker::Error::RustError(format!(
-                    "Blob size {} exceeds u32::MAX",
-                    blob.len()
-                )));
-            }
-            let len = blob.len() as u32;
-            dlq_data.extend_from_slice(&len.to_le_bytes());
-            dlq_data.extend_from_slice(blob);
-        }
-
-        operator
-            .write(path, dlq_data)
-            .await
-            .map(|_| ())
-            .map_err(|e| worker::Error::RustError(format!("DLQ write failed: {}", e)))
-    }
-
     /// Send a receipt to the main Worker so it can persist to KV (DOs cannot write KV directly).
     /// Uses a self service binding to avoid needing to know the Worker's public URL.
     #[tracing::instrument(
@@ -317,15 +272,9 @@ impl OtlpBatcherV2 {
             MAX_WRITE_RETRIES
         );
 
-        let dlq_path = format!(
-            "failed/{}/{}/{}-{}.ipc",
-            ctx.signal_type_str,
-            ctx.service_name,
-            Date::now().as_millis(),
-            uuid::Uuid::new_v4()
-        );
+        let dlq_path = crate::r#do::dlq::build_dlq_path(&ctx.signal_type_str, &ctx.service_name);
 
-        let dlq_success = match self.write_dlq_batch(&dlq_path, &ctx.blobs).await {
+        let dlq_success = match crate::r#do::dlq::write_dlq_batch(&dlq_path, &ctx.blobs).await {
             Ok(()) => {
                 tracing::warn!(
                     dlq_path = %dlq_path,
@@ -342,17 +291,12 @@ impl OtlpBatcherV2 {
                 );
 
                 // Emit metric for alerting on DLQ failure
-                if let Ok(metrics) = self.env.analytics_engine("METRICS") {
-                    use worker::AnalyticsEngineDataPointBuilder;
-
-                    let _ = AnalyticsEngineDataPointBuilder::new()
-                        .indexes(["dlq_failure"])
-                        .add_blob(ctx.signal_type_str.as_str())
-                        .add_double(ctx.bytes as f64)
-                        .add_double(ctx.rows as f64)
-                        .add_double(1.0)
-                        .write_to(&metrics);
-                }
+                crate::r#do::dlq::emit_dlq_failure_metric(
+                    &self.env,
+                    &ctx.signal_type_str,
+                    ctx.bytes,
+                    ctx.rows,
+                );
                 false
             }
         };
@@ -573,14 +517,10 @@ impl OtlpBatcherV2 {
                                 "Single batch exceeds WASM memory limit, moving to DLQ"
                             );
                             // Move to DLQ and continue with next batch
-                            let dlq_path = format!(
-                                "failed/{}/{}/{}-{}.ipc",
-                                signal_type_str,
-                                service_name,
-                                Date::now().as_millis(),
-                                uuid::Uuid::new_v4()
-                            );
-                            let _ = self.write_dlq_batch(&dlq_path, &[first_blob]).await;
+                            let dlq_path =
+                                crate::r#do::dlq::build_dlq_path(&signal_type_str, &service_name);
+                            let _ =
+                                crate::r#do::dlq::write_dlq_batch(&dlq_path, &[first_blob]).await;
                             crate::r#do::storage::delete_batch_groups(&self.state, &[first_group])?;
                             continue; // Try next batch in loop
                         }
@@ -604,14 +544,9 @@ impl OtlpBatcherV2 {
                         );
                         let first_group = batch_groups.into_iter().next().unwrap();
                         let first_blob = blobs.into_iter().next().unwrap();
-                        let dlq_path = format!(
-                            "failed/{}/{}/{}-{}.ipc",
-                            signal_type_str,
-                            service_name,
-                            Date::now().as_millis(),
-                            uuid::Uuid::new_v4()
-                        );
-                        let _ = self.write_dlq_batch(&dlq_path, &[first_blob]).await;
+                        let dlq_path =
+                            crate::r#do::dlq::build_dlq_path(&signal_type_str, &service_name);
+                        let _ = crate::r#do::dlq::write_dlq_batch(&dlq_path, &[first_blob]).await;
                         crate::r#do::storage::delete_batch_groups(&self.state, &[first_group])?;
                         continue; // Try next batch in loop
                     }
