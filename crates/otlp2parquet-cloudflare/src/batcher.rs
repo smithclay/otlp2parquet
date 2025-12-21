@@ -568,11 +568,22 @@ impl OtlpBatcherV2 {
 
     /// Send a receipt to the main Worker so it can persist to KV (DOs cannot write KV directly).
     /// Uses a self service binding to avoid needing to know the Worker's public URL.
+    #[tracing::instrument(
+        name = "do.send_receipt",
+        skip(self, receipt),
+        fields(
+            path = %receipt.path,
+            table = %receipt.table,
+            rows = receipt.rows,
+            error = tracing::field::Empty,
+        )
+    )]
     async fn send_receipt_to_worker(&self, receipt: &PendingReceipt<'_>) -> Result<()> {
         tracing::debug!("send_receipt_to_worker: getting SELF service binding");
         // Use service binding to call back to main Worker (avoids URL chicken-and-egg problem)
         let service = self.env.service("SELF").map_err(|e| {
             tracing::error!(error = %e, "SELF service binding not found");
+            tracing::Span::current().record("error", tracing::field::display(&e));
             worker::Error::RustError(format!(
                 "SELF service binding not configured: {}. Add [[services]] binding in wrangler.toml",
                 e
@@ -599,10 +610,12 @@ impl OtlpBatcherV2 {
         tracing::debug!(status = resp.status_code(), "Service response received");
 
         if !(200..300).contains(&resp.status_code()) {
-            return Err(worker::Error::RustError(format!(
+            let err = worker::Error::RustError(format!(
                 "Receipt callback failed with status {}",
                 resp.status_code()
-            )));
+            ));
+            tracing::Span::current().record("error", tracing::field::display(&err));
+            return Err(err);
         }
 
         Ok(())
@@ -669,6 +682,16 @@ impl OtlpBatcherV2 {
     /// since we use load-then-delete-on-success pattern. The `group_ids` are
     /// passed to DLQ handler for cleanup if batches are moved to dead-letter queue.
     #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(
+        name = "do.write_parquet",
+        skip(self, record_batches, ctx, group_ids),
+        fields(
+            signal_key = %signal_key,
+            namespace,
+            rows = record_batches.iter().map(|b| b.num_rows()).sum::<usize>(),
+            error = tracing::field::Empty,
+        )
+    )]
     async fn write_with_retries(
         &self,
         record_batches: &[arrow::record_batch::RecordBatch],
@@ -678,6 +701,7 @@ impl OtlpBatcherV2 {
         ctx: PendingBufferContext,
         group_ids: &[String],
     ) -> Result<String> {
+        tracing::Span::current().record("namespace", namespace);
         let req = WriteMultiBatchRequest {
             catalog: None,
             namespace,
@@ -715,7 +739,9 @@ impl OtlpBatcherV2 {
                         MAX_WRITE_RETRIES
                     );
                     // Batches remain in SQLite - no restore needed with new pattern
-                    Err(worker::Error::RustError(format!("Write failed: {}", e)))
+                    let err = worker::Error::RustError(format!("Write failed: {}", e));
+                    tracing::Span::current().record("error", tracing::field::display(&err));
+                    Err(err)
                 }
             }
         }
@@ -872,6 +898,18 @@ impl OtlpBatcherV2 {
     ///
     /// Uses partial flush pattern: loads oldest batch groups up to memory limit,
     /// writes them, deletes them, and loops until all batches are flushed.
+    #[tracing::instrument(
+        name = "do.flush",
+        skip(self),
+        fields(
+            signal_key = tracing::field::Empty,
+            service_name = tracing::field::Empty,
+            total_bytes = tracing::field::Empty,
+            total_rows = tracing::field::Empty,
+            iterations = tracing::field::Empty,
+            error = tracing::field::Empty,
+        )
+    )]
     async fn flush(&self) -> Result<()> {
         let (initial_bytes, initial_rows) = self.get_batch_totals()?;
         worker::console_log!(
@@ -906,6 +944,12 @@ impl OtlpBatcherV2 {
             worker::Error::RustError(format!("Invalid signal key '{}': {}", signal_type_str, e))
         })?;
 
+        // Record span fields
+        tracing::Span::current().record("signal_key", signal_key.to_string().as_str());
+        tracing::Span::current().record("service_name", service_name.as_str());
+        tracing::Span::current().record("total_bytes", initial_bytes);
+        tracing::Span::current().record("total_rows", initial_rows);
+
         // Partial flush loop: process batches in chunks up to WASM_MAX_FLUSH_BYTES
         let mut iteration = 0;
         loop {
@@ -918,6 +962,7 @@ impl OtlpBatcherV2 {
                     iterations = iteration - 1,
                     "Flush complete, no more batches"
                 );
+                tracing::Span::current().record("iterations", iteration - 1);
                 break;
             }
 
@@ -1072,6 +1117,8 @@ impl OtlpBatcherV2 {
                     // Batches remain in SQLite for retry (or were moved to DLQ)
                     // Break the loop and let the alarm retry later
                     tracing::error!(error = %e, iteration, "Flush iteration failed");
+                    tracing::Span::current().record("error", tracing::field::display(&e));
+                    tracing::Span::current().record("iterations", iteration);
                     return Err(e);
                 }
             }
@@ -1085,6 +1132,16 @@ impl OtlpBatcherV2 {
     }
 
     /// Handle ingest request - accumulate in SQLite, flush on threshold.
+    #[tracing::instrument(
+        name = "do.ingest",
+        skip(self, req),
+        fields(
+            request_id = tracing::field::Empty,
+            record_count = tracing::field::Empty,
+            buffered_bytes = tracing::field::Empty,
+            error = tracing::field::Empty,
+        )
+    )]
     async fn handle_ingest(&self, mut req: Request) -> Result<Response> {
         let state = self.get_do_state()?;
         worker::console_log!(
@@ -1101,7 +1158,11 @@ impl OtlpBatcherV2 {
             .and_then(|v| v.parse::<u32>().ok());
 
         let (req_id, idx) = match (request_id.as_ref(), batch_index) {
-            (Some(id), Some(idx)) => (id.clone(), idx),
+            (Some(id), Some(idx)) => {
+                // Record request_id for correlation
+                tracing::Span::current().record("request_id", id.as_str());
+                (id.clone(), idx)
+            }
             _ => {
                 // Missing headers indicates a bug in the caller or direct external access.
                 // Reject with 400 to surface the issue rather than silently skip idempotency.
@@ -1110,6 +1171,10 @@ impl OtlpBatcherV2 {
                     has_batch_index = batch_index.is_some(),
                     "Missing required idempotency headers (X-Request-Id, X-Batch-Index)"
                 );
+                let err = worker::Error::RustError(
+                    "Missing required headers: X-Request-Id and X-Batch-Index".to_string(),
+                );
+                tracing::Span::current().record("error", tracing::field::display(&err));
                 return Response::error(
                     "Missing required headers: X-Request-Id and X-Batch-Index",
                     400,
@@ -1186,6 +1251,9 @@ impl OtlpBatcherV2 {
             .unwrap_or(0)
             .max(0);
 
+        // Record the record count for this batch
+        tracing::Span::current().record("record_count", record_count);
+
         // Store batch in SQLite (persists across hibernation, chunked if large)
         self.store_batch(&ipc_bytes, record_count)?;
 
@@ -1222,6 +1290,7 @@ impl OtlpBatcherV2 {
                         );
                     }
                 }
+                tracing::Span::current().record("error", tracing::field::display(&e));
                 return Err(e);
             }
             self.state.storage().delete_alarm().await?;
@@ -1235,6 +1304,7 @@ impl OtlpBatcherV2 {
         }
 
         let (final_bytes, final_rows) = self.get_batch_totals()?;
+        tracing::Span::current().record("buffered_bytes", final_bytes);
         Response::from_json(&IngestResponse {
             status: "accepted".to_string(),
             buffered_records: final_rows,
