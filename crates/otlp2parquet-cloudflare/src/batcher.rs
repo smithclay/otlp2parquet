@@ -5,13 +5,16 @@
 
 use crate::do_config::ensure_storage_initialized;
 use crate::parse_do_id;
+use crate::r#do::types::{
+    BatchGroup, BatchKey, DoState, IngestResponse, PendingBufferContext, PendingReceipt,
+    PendingReceiptOwned, RecentBatches,
+};
 use bytes::Bytes;
-use indexmap::IndexSet;
 use otlp2parquet_core::batch::ipc::{deserialize_batches, validate_ipc_header};
 use otlp2parquet_core::config::{CatalogMode, RuntimeConfig};
 use otlp2parquet_core::SignalKey;
 use otlp2parquet_writer::{write_multi_batch, WriteMultiBatchRequest};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::cell::RefCell;
 use std::str::FromStr;
 use worker::SqlStorageValue;
@@ -19,54 +22,6 @@ use worker::{
     durable_object, Date, DurableObject, Env, Headers, Method, Request, RequestInit, Response,
     Result, State,
 };
-
-/// 1024 recent batch keys for idempotency deduplication.
-/// Each key is ~50 bytes (UUID + u32), so max ~50KB memory overhead.
-/// Sized for typical burst retry scenarios without unbounded growth.
-const MAX_RECENT_BATCH_KEYS: usize = 1024;
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct BatchKey {
-    request_id: String,
-    batch_index: u32,
-}
-
-/// Tracks recently seen batch keys for idempotency with bounded memory.
-/// Uses IndexSet for O(1) lookup and O(1) ordered eviction (FIFO).
-struct RecentBatches {
-    keys: IndexSet<BatchKey>,
-}
-
-impl RecentBatches {
-    fn new() -> Self {
-        Self {
-            keys: IndexSet::new(),
-        }
-    }
-
-    /// Record a batch key. Returns true if the key was already seen.
-    fn record(&mut self, key: BatchKey) -> bool {
-        if self.keys.contains(&key) {
-            return true;
-        }
-
-        // Enforce bounded history - evict oldest entry (index 0)
-        if self.keys.len() >= MAX_RECENT_BATCH_KEYS {
-            self.keys.shift_remove_index(0);
-        }
-
-        self.keys.insert(key);
-        false
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct PendingReceiptOwned {
-    path: String,
-    table: String,
-    rows: usize,
-    timestamp_ms: i64,
-}
 
 /// Default batch configuration values
 const DEFAULT_MAX_ROWS: i64 = 50_000;
@@ -97,51 +52,6 @@ const BACKPRESSURE_THRESHOLD_BYTES: usize = 50_000_000;
 /// Balances recovery from transient R2 errors vs. not blocking the DO indefinitely.
 /// At 5 retries with default delays, max wait is ~2 seconds.
 const MAX_WRITE_RETRIES: u32 = 5;
-
-/// Response from DO back to Worker
-#[derive(Serialize)]
-struct IngestResponse {
-    status: String,
-    buffered_records: i64,
-    buffered_bytes: i64,
-}
-
-/// Pending receipt delivered back to the main Worker for KV tracking.
-#[derive(Serialize)]
-struct PendingReceipt<'a> {
-    path: &'a str,
-    table: &'a str,
-    rows: usize,
-    timestamp_ms: i64,
-}
-
-/// Context for pending buffer data during flush operations.
-/// Groups related fields to reduce function argument counts.
-struct PendingBufferContext {
-    blobs: Vec<Bytes>,
-    bytes: usize,
-    rows: i64,
-    signal_type_str: String,
-    service_name: String,
-}
-
-/// Persistent DO state stored in SQLite (survives hibernation).
-#[derive(Default)]
-struct DoState {
-    signal_type: Option<String>,
-    service_name: Option<String>,
-    first_event_timestamp: Option<i64>,
-    pending_receipt: Option<String>,
-}
-
-/// A group of chunks that together form one Arrow IPC batch.
-/// Used during flush to load and reassemble chunked batches.
-struct BatchGroup {
-    chunk_group_id: String,
-    reassembled_blob: Bytes,
-    total_bytes: usize,
-    rows: i64,
-}
 
 /// Durable Object that accumulates Arrow RecordBatches via SQLite storage,
 /// flushing to R2 when size or time thresholds are exceeded.

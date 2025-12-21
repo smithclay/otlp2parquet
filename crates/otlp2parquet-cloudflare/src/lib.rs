@@ -10,6 +10,8 @@ mod auth;
 mod batched;
 mod batcher;
 mod catalog_worker;
+#[allow(clippy::module_inception)]
+mod r#do;
 mod do_config;
 mod errors;
 mod handlers;
