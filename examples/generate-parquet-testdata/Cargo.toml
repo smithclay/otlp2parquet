@@ -9,4 +9,4 @@ otlp2parquet-core = { path = "../../crates/otlp2parquet-core" }
 otlp2parquet-proto = { path = "../../crates/otlp2parquet-proto" }
 arrow = { version = "56.2", default-features = false, features = ["ipc"] }
 parquet = { version = "56.2", default-features = false, features = ["snap", "arrow", "async"] }
-prost = { version = "0.13", default-features = false, features = ["std"] }
+prost = { version = "0.14", default-features = false, features = ["std"] }

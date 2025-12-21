@@ -58,13 +58,9 @@ pub(crate) enum HttpLambdaResponse {
 
 /// Build API Gateway v1 response from internal response data
 pub(crate) fn build_api_gateway_v1_response(data: HttpResponseData) -> HttpLambdaResponse {
-    let mut response = ApiGatewayProxyResponse {
-        status_code: data.status_code as i64,
-        headers: Default::default(),
-        multi_value_headers: Default::default(),
-        body: Some(Body::Text(data.body)),
-        is_base64_encoded: false,
-    };
+    let mut response = ApiGatewayProxyResponse::default();
+    response.status_code = data.status_code as i64;
+    response.body = Some(Body::Text(data.body));
     response
         .headers
         .insert(CONTENT_TYPE, HeaderValue::from_static(data.content_type));
@@ -73,27 +69,22 @@ pub(crate) fn build_api_gateway_v1_response(data: HttpResponseData) -> HttpLambd
 
 /// Build API Gateway v2 (HTTP API) response from internal response data
 pub(crate) fn build_api_gateway_v2_response(data: HttpResponseData) -> HttpLambdaResponse {
-    let mut headers = aws_lambda_events::http::HeaderMap::new();
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static(data.content_type));
-    HttpLambdaResponse::ApiGatewayV2(ApiGatewayV2httpResponse {
-        status_code: data.status_code as i64,
-        headers,
-        multi_value_headers: Default::default(),
-        body: Some(Body::Text(data.body)),
-        is_base64_encoded: false,
-        cookies: vec![],
-    })
+    let mut response = ApiGatewayV2httpResponse::default();
+    response.status_code = data.status_code as i64;
+    response.body = Some(Body::Text(data.body));
+    response
+        .headers
+        .insert(CONTENT_TYPE, HeaderValue::from_static(data.content_type));
+    HttpLambdaResponse::ApiGatewayV2(response)
 }
 
 /// Build Function URL response from internal response data
 pub(crate) fn build_function_url_response(data: HttpResponseData) -> HttpLambdaResponse {
-    let mut headers = aws_lambda_events::http::HeaderMap::new();
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static(data.content_type));
-    HttpLambdaResponse::FunctionUrl(LambdaFunctionUrlResponse {
-        status_code: data.status_code as i64,
-        headers,
-        body: Some(data.body),
-        is_base64_encoded: false,
-        cookies: Vec::new(),
-    })
+    let mut response = LambdaFunctionUrlResponse::default();
+    response.status_code = data.status_code as i64;
+    response.body = Some(data.body);
+    response
+        .headers
+        .insert(CONTENT_TYPE, HeaderValue::from_static(data.content_type));
+    HttpLambdaResponse::FunctionUrl(response)
 }
