@@ -1,6 +1,4 @@
 //! Durable Object for OTLP batching.
 
+pub mod config;
 pub mod types;
-
-#[allow(unused_imports)]
-pub use types::*;

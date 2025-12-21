@@ -5,6 +5,10 @@
 
 use crate::do_config::ensure_storage_initialized;
 use crate::parse_do_id;
+use crate::r#do::config::{
+    ensure_alarm, get_batch_config, BACKPRESSURE_THRESHOLD_BYTES, MAX_CHUNK_BYTES,
+    MAX_INGEST_IPC_BYTES, MAX_WRITE_RETRIES, WASM_MAX_FLUSH_BYTES,
+};
 use crate::r#do::types::{
     BatchGroup, BatchKey, DoState, IngestResponse, PendingBufferContext, PendingReceipt,
     PendingReceiptOwned, RecentBatches,
@@ -22,36 +26,6 @@ use worker::{
     durable_object, Date, DurableObject, Env, Headers, Method, Request, RequestInit, Response,
     Result, State,
 };
-
-/// Default batch configuration values
-const DEFAULT_MAX_ROWS: i64 = 50_000;
-const DEFAULT_MAX_BYTES: i64 = 10_485_760; // 10MB
-const DEFAULT_MAX_AGE_SECS: i64 = 60;
-
-/// 512KB - Maximum size for a single SQLite blob.
-/// Cloudflare DO SQLite has a ~2MB limit per blob, but we use 512KB
-/// for safety margin and to align with typical memory page sizes.
-const MAX_CHUNK_BYTES: usize = 512 * 1024;
-
-/// 48MB - Maximum Arrow memory bytes to flush in a single write operation.
-/// WASM environments have ~128MB memory limit; Parquet writing requires
-/// buffer + Arrow arrays simultaneously. Must match WASM_MAX_BUFFER_BYTES in write.rs.
-const WASM_MAX_FLUSH_BYTES: usize = 48 * 1024 * 1024;
-
-/// 16MB - Maximum IPC bytes to accept per batch at ingest.
-/// Arrow in-memory representation can be 2-3x larger than IPC serialized form,
-/// so we use 1/3 of WASM_MAX_FLUSH_BYTES as a conservative ingest limit.
-const MAX_INGEST_IPC_BYTES: usize = 16 * 1024 * 1024;
-
-/// 50MB - Cloudflare Workers have ~128MB memory limit per isolate.
-/// This leaves headroom for Arrow buffers, DO state, and runtime overhead.
-/// Exceeding this triggers 503 backpressure before OOM kills the isolate.
-const BACKPRESSURE_THRESHOLD_BYTES: usize = 50_000_000;
-
-/// 5 retries with exponential backoff before DLQ.
-/// Balances recovery from transient R2 errors vs. not blocking the DO indefinitely.
-/// At 5 retries with default delays, max wait is ~2 seconds.
-const MAX_WRITE_RETRIES: u32 = 5;
 
 /// Durable Object that accumulates Arrow RecordBatches via SQLite storage,
 /// flushing to R2 when size or time thresholds are exceeded.
@@ -355,80 +329,6 @@ impl OtlpBatcherV2 {
         } else {
             Ok(None)
         }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Configuration helpers
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// Get batch config from environment
-    fn get_batch_config(&self) -> (i64, i64, i64) {
-        let max_rows = self
-            .env
-            .var("OTLP2PARQUET_BATCH_MAX_ROWS")
-            .ok()
-            .and_then(|v| v.to_string().parse().ok())
-            .unwrap_or(DEFAULT_MAX_ROWS);
-
-        let max_bytes = self
-            .env
-            .var("OTLP2PARQUET_BATCH_MAX_BYTES")
-            .ok()
-            .and_then(|v| v.to_string().parse().ok())
-            .unwrap_or(DEFAULT_MAX_BYTES);
-
-        let max_age_secs = self
-            .env
-            .var("OTLP2PARQUET_BATCH_MAX_AGE_SECS")
-            .ok()
-            .and_then(|v| v.to_string().parse().ok())
-            .unwrap_or(DEFAULT_MAX_AGE_SECS);
-
-        (max_rows, max_bytes, max_age_secs)
-    }
-
-    /// Ensure alarm is set for time-based flush.
-    ///
-    /// IMPORTANT: workers-rs `set_alarm(i64)` interprets i64 as an OFFSET in milliseconds
-    /// from the current time, NOT an absolute timestamp! This is a common source of bugs.
-    /// See: https://docs.rs/worker/latest/src/worker/durable.rs.html
-    async fn ensure_alarm(&self, max_age_secs: i64) -> Result<()> {
-        let storage = self.state.storage();
-
-        // Check if alarm already set (returns Option<i64> timestamp - absolute time)
-        let existing: Option<i64> = storage.get_alarm().await?;
-
-        let needs_reset = match existing {
-            None => {
-                worker::console_log!("[DO] No alarm set, will create one");
-                true
-            }
-            Some(_alarm_time) => {
-                // Alarm exists, don't reset it - let it fire naturally
-                // This avoids repeatedly pushing the alarm forward on each request
-                worker::console_log!("[DO] Alarm already set, keeping existing");
-                false
-            }
-        };
-
-        if needs_reset {
-            // CRITICAL FIX: set_alarm(i64) treats i64 as OFFSET, not timestamp!
-            // Pass the offset in milliseconds (e.g., 10000 for 10 seconds)
-            let offset_ms = max_age_secs * 1000;
-            storage.set_alarm(offset_ms).await?;
-            worker::console_log!(
-                "[DO] Set alarm: offset_ms={}, fires_in={}s",
-                offset_ms,
-                max_age_secs
-            );
-            tracing::debug!(
-                max_age_secs,
-                offset_ms,
-                "Set alarm for flush (offset-based)"
-            );
-        }
-
-        Ok(())
     }
 
     /// Write failed batches to dead-letter queue (R2 failed/ prefix) for manual recovery.
@@ -1167,7 +1067,7 @@ impl OtlpBatcherV2 {
         // Store batch in SQLite (persists across hibernation, chunked if large)
         self.store_batch(&ipc_bytes, record_count)?;
 
-        let (max_rows, max_bytes, max_age_secs) = self.get_batch_config();
+        let (max_rows, max_bytes, max_age_secs) = get_batch_config(&self.env);
         let (total_bytes, total_rows) = self.get_batch_totals()?;
         let row_threshold_hit = max_rows > 0 && total_rows >= max_rows;
 
@@ -1193,7 +1093,7 @@ impl OtlpBatcherV2 {
                 let batch_count = self.get_batch_count()?;
                 let do_state = self.get_do_state()?;
                 if batch_count > 0 || do_state.pending_receipt.is_some() {
-                    if let Err(alarm_err) = self.ensure_alarm(max_age_secs).await {
+                    if let Err(alarm_err) = ensure_alarm(&self.state, max_age_secs).await {
                         tracing::warn!(
                             error = ?alarm_err,
                             "Failed to schedule alarm after flush error"
@@ -1206,11 +1106,11 @@ impl OtlpBatcherV2 {
             self.state.storage().delete_alarm().await?;
             let batch_count = self.get_batch_count()?;
             if batch_count > 0 {
-                self.ensure_alarm(max_age_secs).await?;
+                ensure_alarm(&self.state, max_age_secs).await?;
             }
         } else {
             // Ensure alarm is set for time-based flush
-            self.ensure_alarm(max_age_secs).await?;
+            ensure_alarm(&self.state, max_age_secs).await?;
         }
 
         let (final_bytes, final_rows) = self.get_batch_totals()?;
@@ -1352,8 +1252,8 @@ impl DurableObject for OtlpBatcherV2 {
                 let batch_count = self.get_batch_count()?;
                 let do_state = self.get_do_state()?;
                 if batch_count > 0 || do_state.pending_receipt.is_some() {
-                    let (_, _, max_age_secs) = self.get_batch_config();
-                    if let Err(alarm_err) = self.ensure_alarm(max_age_secs).await {
+                    let (_, _, max_age_secs) = get_batch_config(&self.env);
+                    if let Err(alarm_err) = ensure_alarm(&self.state, max_age_secs).await {
                         tracing::warn!(
                             error = ?alarm_err,
                             "Failed to reschedule alarm after flush failure"
