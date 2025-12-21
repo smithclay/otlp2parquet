@@ -8,7 +8,6 @@
 
 mod auth;
 mod batched;
-mod batcher;
 mod catalog_worker;
 #[allow(clippy::module_inception)]
 mod r#do;
@@ -19,9 +18,9 @@ mod request;
 mod tracing_context;
 
 // Re-export Durable Object classes at crate root for worker-build
-pub use batcher::OtlpBatcherLegacy; // Migration stub for renamed old class
-pub use batcher::OtlpBatcherV2;
 pub use otlp2parquet_core::{MetricType, SignalKey};
+pub use r#do::OtlpBatcherLegacy; // Migration stub for renamed old class
+pub use r#do::OtlpBatcherV2;
 pub use tracing_context::TraceContext;
 
 use tracing_subscriber::fmt::format::Pretty;
