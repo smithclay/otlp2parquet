@@ -109,7 +109,7 @@ If catalog registration fails (network error, conflict), the data is still safel
 <details>
 <summary>Caveats</summary>
 
-- **Batching**: Serverless deployments write one file per request. Don't write a lot of small files or your performance and cloud bill will explode. Use an OTel Collector upstream to batch, or enable S3 Tables / R2 Data Catalog for automatic compaction.
+- **Batching**: Use an OTel Collector upstream to batch, or enable S3 Tables / R2 Data Catalog for automatic compaction or snapshot pruning. There is experimental batching support available in the Cloudflare Worker implementation.
 - **Schema**: Uses ClickHouse-compatible column names. Will converge with OTel Arrow (OTAP) when it stabilizes.
 - **Status**: Functional but evolving. API may change.
 

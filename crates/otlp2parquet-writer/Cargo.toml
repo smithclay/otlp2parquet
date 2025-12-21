@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-icepick = { version = "0.2.0", default-features = false }
+icepick = { version = "0.3", default-features = false }
 otlp2parquet-core = { workspace = true }
 arrow = { workspace = true }
 anyhow = "1"
