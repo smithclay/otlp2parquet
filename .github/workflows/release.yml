@@ -100,7 +100,7 @@ jobs:
       attestations: write
     steps:
       - name: Download pre-built images
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           pattern: otlp2parquet-image-*
           path: images
@@ -187,7 +187,7 @@ jobs:
           ref: ${{ needs.prepare.outputs.commit }}
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           pattern: otlp2parquet-*
           path: artifacts

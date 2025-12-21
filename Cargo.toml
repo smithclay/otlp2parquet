@@ -52,7 +52,7 @@ arrow = { version = "56.2", default-features = false, features = ["ipc"] }
 parquet = { version = "56.2", default-features = false, features = ["snap", "arrow", "async"] }
 
 # OTLP Protocol - minimal
-prost = { version = "0.13", default-features = false, features = ["std"] }
+prost = { version = "0.14", default-features = false, features = ["std"] }
 
 # Core utilities - minimal, no tokio (platforms provide their own runtimes)
 serde = { version = "1", default-features = false, features = ["derive"] }
@@ -75,7 +75,7 @@ aws-credential-types = { version = "1.2", default-features = false }
 aws-config = { version = "1.8", default-features = false, features = ["rustls", "behavior-version-latest", "rt-tokio"] }
 
 # Build dependencies
-prost-build = "0.13"
+prost-build = "0.14"
 
 [patch.crates-io]
 icepick = { git = "https://github.com/smithclay/icepick", rev = "ad54c08f491c729e7219b60e2a31833b4d8f51d2" }
