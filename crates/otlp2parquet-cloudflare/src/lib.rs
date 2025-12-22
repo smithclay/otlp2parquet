@@ -7,13 +7,13 @@
 //! Entry point is #[event(fetch)] macro, not main().
 
 mod auth;
-mod batched;
 mod catalog_worker;
 #[allow(clippy::module_inception)]
 mod r#do;
 mod do_config;
 mod errors;
 mod handlers;
+mod ingest;
 mod request;
 mod tracing_context;
 

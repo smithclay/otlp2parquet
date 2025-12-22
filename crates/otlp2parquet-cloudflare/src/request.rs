@@ -4,7 +4,7 @@
 
 use crate::do_config::apply_namespace_fallback;
 use crate::do_config::WorkerEnvSource;
-use crate::{auth, batched, catalog_worker, errors, handlers, TraceContext};
+use crate::{auth, catalog_worker, errors, handlers, ingest, TraceContext};
 use flate2::read::GzDecoder;
 use once_cell::sync::OnceCell;
 use otlp2parquet_core::config::{CatalogMode, Platform, RuntimeConfig};
@@ -270,15 +270,15 @@ pub(crate) async fn handle(mut req: Request, env: Env, _ctx: Context) -> Result<
 
     // Route to batching or direct handler based on config
     if batching_enabled {
-        let ctx = batched::BatchContext {
+        let ctx = ingest::BatchContext {
             env: &env,
             request_id: &trace_ctx.request_id,
             trace_ctx: &trace_ctx,
         };
         return match signal {
-            "logs" => batched::handle_batched_logs(&ctx, &body_bytes, format).await,
-            "traces" => batched::handle_batched_traces(&ctx, &body_bytes, format).await,
-            "metrics" => batched::handle_batched_metrics(&ctx, &body_bytes, format).await,
+            "logs" => ingest::handle_batched_logs(&ctx, &body_bytes, format).await,
+            "traces" => ingest::handle_batched_traces(&ctx, &body_bytes, format).await,
+            "metrics" => ingest::handle_batched_metrics(&ctx, &body_bytes, format).await,
             _ => unreachable!("signal validated above"),
         };
     }
