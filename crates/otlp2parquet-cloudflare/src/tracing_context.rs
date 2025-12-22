@@ -2,7 +2,7 @@
 //!
 //! This module provides TraceContext for generating and propagating distributed tracing
 //! headers across Worker -> DO -> Worker hops. It follows the W3C Trace Context spec
-//! (https://www.w3.org/TR/trace-context/) and generates request IDs for correlation.
+//! (<https://www.w3.org/TR/trace-context/>) and generates request IDs for correlation.
 
 use uuid::Uuid;
 
