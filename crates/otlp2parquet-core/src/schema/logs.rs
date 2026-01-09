@@ -13,7 +13,7 @@ use std::sync::{Arc, OnceLock};
 
 use crate::otlp::field_names::{arrow as field, semconv};
 
-/// Helper to create a Field with PARQUET:field_id metadata for Iceberg compatibility
+/// Helper to create a Field with PARQUET:field_id metadata for tooling compatibility
 fn field_with_id(name: &str, data_type: DataType, nullable: bool, id: i32) -> Field {
     let metadata = HashMap::from([("PARQUET:field_id".to_string(), id.to_string())]);
     Field::new(name, data_type, nullable).with_metadata(metadata)
@@ -31,14 +31,13 @@ pub fn otel_logs_schema_arc() -> Arc<Schema> {
 }
 
 fn build_schema() -> Schema {
-    // S3 Tables doesn't support complex types (Map, Struct) - use JSON-encoded strings instead
-    // This matches the Iceberg schema definition in iceberg_schemas::logs_schema()
+    // Use JSON-encoded strings for complex types (Map, Struct) for broad query-engine support
     let string_type = DataType::Utf8;
 
     let fields = vec![
         // ============ Common Fields (IDs 1-20) ============
         // Shared across all signal types for cross-signal queries and schema evolution
-        // Iceberg v1/v2 only supports microsecond precision timestamps
+        // Use microsecond precision timestamps for broad engine compatibility
         field_with_id(
             field::TIMESTAMP,
             DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),

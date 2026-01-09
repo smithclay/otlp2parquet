@@ -1,19 +1,17 @@
 //! Flush orchestration for batched OTLP data.
 //!
 //! Handles the entire flush lifecycle:
-//! 1. Retry pending receipts
-//! 2. Load batches from SQLite in memory-limited chunks
-//! 3. Validate and deserialize Arrow IPC
-//! 4. Write Parquet to R2 with retry logic
-//! 5. Handle DLQ fallback for persistent failures
-//! 6. Forward receipts for catalog tracking
-//! 7. Emit usage metrics
+//! 1. Load batches from SQLite in memory-limited chunks
+//! 2. Validate and deserialize Arrow IPC
+//! 3. Write Parquet to R2 with retry logic
+//! 4. Handle DLQ fallback for persistent failures
+//! 5. Emit usage metrics
 
 use crate::r#do::config::{MAX_WRITE_RETRIES, WASM_MAX_FLUSH_BYTES};
 use crate::r#do::types::PendingBufferContext;
 use bytes::Bytes;
 use otlp2parquet_core::batch::ipc::{deserialize_batches, validate_ipc_header};
-use otlp2parquet_core::config::{CatalogMode, RuntimeConfig};
+use otlp2parquet_core::config::RuntimeConfig;
 use otlp2parquet_core::SignalKey;
 use otlp2parquet_writer::{write_multi_batch, WriteMultiBatchRequest};
 use std::cell::RefCell;
@@ -39,7 +37,7 @@ use worker::{Date, Env, Result, State};
 pub async fn flush(
     state: &State,
     env: &Env,
-    config: &RuntimeConfig,
+    _config: &RuntimeConfig,
     write_retry_count: &RefCell<u32>,
 ) -> Result<()> {
     let (initial_bytes, initial_rows) = crate::r#do::storage::get_batch_totals(state)?;
@@ -48,9 +46,6 @@ pub async fn flush(
         initial_bytes,
         initial_rows
     );
-
-    // Retry any previously failed receipt first
-    crate::r#do::receipts::retry_pending_receipt(state, env).await?;
 
     // Get DO state for signal/service info
     let do_state = crate::r#do::storage::get_do_state(state)?;
@@ -69,7 +64,6 @@ pub async fn flush(
         }
     };
 
-    let namespace = config.catalog_namespace();
     let signal_key = SignalKey::from_str(&signal_type_str).map_err(|e| {
         worker::Error::RustError(format!("Invalid signal key '{}': {}", signal_type_str, e))
     })?;
@@ -153,7 +147,16 @@ pub async fn flush(
                     // Move to DLQ and continue with next batch
                     let dlq_path =
                         crate::r#do::dlq::build_dlq_path(&signal_type_str, &service_name);
-                    let _ = crate::r#do::dlq::write_dlq_batch(&dlq_path, &[first_blob]).await;
+                    if let Err(e) =
+                        crate::r#do::dlq::write_dlq_batch(&dlq_path, &[first_blob]).await
+                    {
+                        tracing::error!(
+                            error = %e,
+                            dlq_path = %dlq_path,
+                            bytes = single_arrow_size,
+                            "DLQ write failed for oversized batch - DATA LOSS"
+                        );
+                    }
                     crate::r#do::storage::delete_batch_groups(state, &[first_group])?;
                     continue; // Try next batch in loop
                 }
@@ -178,7 +181,14 @@ pub async fn flush(
                 let first_group = batch_groups.into_iter().next().unwrap();
                 let first_blob = blobs.into_iter().next().unwrap();
                 let dlq_path = crate::r#do::dlq::build_dlq_path(&signal_type_str, &service_name);
-                let _ = crate::r#do::dlq::write_dlq_batch(&dlq_path, &[first_blob]).await;
+                if let Err(e) = crate::r#do::dlq::write_dlq_batch(&dlq_path, &[first_blob]).await {
+                    tracing::error!(
+                        error = %e,
+                        dlq_path = %dlq_path,
+                        bytes = total_bytes,
+                        "DLQ write failed for oversized batch - DATA LOSS"
+                    );
+                }
                 crate::r#do::storage::delete_batch_groups(state, &[first_group])?;
                 continue; // Try next batch in loop
             }
@@ -214,7 +224,6 @@ pub async fn flush(
             env,
             &record_batches,
             &signal_key,
-            &namespace,
             event_timestamp_micros,
             ctx,
             &group_ids,
@@ -225,10 +234,6 @@ pub async fn flush(
         match write_result {
             Ok(path) => {
                 tracing::debug!(path = %path, rows = total_rows, "Wrote Parquet file");
-
-                // Forward receipt if catalog mode is Iceberg
-                forward_receipt_if_needed(state, env, config, &path, &signal_key, total_rows)
-                    .await?;
 
                 // Delete successfully flushed batch groups
                 crate::r#do::storage::delete_batch_groups(state, &batch_groups)?;
@@ -248,8 +253,12 @@ pub async fn flush(
     }
 
     // Clear state after all batches successfully flushed
-    let _ = crate::r#do::storage::clear_first_event_timestamp(state);
-    let _ = crate::r#do::storage::clear_pending_receipt(state);
+    if let Err(e) = crate::r#do::storage::clear_first_event_timestamp(state) {
+        tracing::warn!(
+            error = %e,
+            "Failed to clear first_event_timestamp - may affect future partition timestamps"
+        );
+    }
 
     Ok(())
 }
@@ -293,7 +302,6 @@ fn validate_and_deserialize(blobs: &[Bytes]) -> Result<Vec<arrow::record_batch::
     skip(state, record_batches, ctx, group_ids, write_retry_count),
     fields(
         signal_key = %signal_key,
-        namespace,
         rows = record_batches.iter().map(|b| b.num_rows()).sum::<usize>(),
         error = tracing::field::Empty,
     )
@@ -303,23 +311,17 @@ async fn write_with_retries(
     env: &Env,
     record_batches: &[arrow::record_batch::RecordBatch],
     signal_key: &SignalKey,
-    namespace: &str,
     event_timestamp_micros: i64,
     ctx: PendingBufferContext,
     group_ids: &[String],
     write_retry_count: &RefCell<u32>,
 ) -> Result<String> {
-    tracing::Span::current().record("namespace", namespace);
     let req = WriteMultiBatchRequest {
-        catalog: None,
-        namespace,
         batches: record_batches,
         signal_type: signal_key.signal_type(),
         metric_type: signal_key.metric_type().map(|mt| mt.as_str()),
         service_name: &ctx.service_name,
         timestamp_micros: event_timestamp_micros,
-        snapshot_timestamp_ms: Some(Date::now().as_millis() as i64),
-        retry_policy: otlp2parquet_writer::RetryPolicy::default(),
     };
 
     match write_multi_batch(req).await {
@@ -428,11 +430,22 @@ async fn handle_dlq_fallback(
                 rows: 0,
             })
             .collect();
-        let _ = crate::r#do::storage::delete_batch_groups(state, &groups_to_delete);
+        if let Err(e) = crate::r#do::storage::delete_batch_groups(state, &groups_to_delete) {
+            tracing::warn!(
+                error = %e,
+                groups = group_ids.len(),
+                "Failed to delete batch groups after DLQ move - may cause duplicates"
+            );
+        }
     }
 
     *write_retry_count.borrow_mut() = 0;
-    let _ = crate::r#do::storage::clear_first_event_timestamp(state);
+    if let Err(e) = crate::r#do::storage::clear_first_event_timestamp(state) {
+        tracing::warn!(
+            error = %e,
+            "Failed to clear first_event_timestamp after DLQ fallback"
+        );
+    }
 
     Err(worker::Error::RustError(format!(
         "Write failed after {} retries, {}: {}",
@@ -446,43 +459,6 @@ async fn handle_dlq_fallback(
     )))
 }
 
-/// Forward receipt to main worker if catalog mode is Iceberg.
-async fn forward_receipt_if_needed(
-    state: &State,
-    env: &Env,
-    config: &RuntimeConfig,
-    path: &str,
-    signal_key: &SignalKey,
-    total_rows: usize,
-) -> Result<()> {
-    tracing::debug!(catalog_mode = ?config.catalog_mode, "Checking catalog mode for receipt");
-    if config.catalog_mode != CatalogMode::Iceberg {
-        tracing::debug!("Skipping receipt (catalog_mode != Iceberg)");
-        return Ok(());
-    }
-
-    let table_name = signal_key.table_name();
-    let receipt = crate::r#do::types::PendingReceipt {
-        path,
-        table: &table_name,
-        rows: total_rows,
-        timestamp_ms: Date::now().as_millis() as i64,
-    };
-
-    tracing::debug!(path = %path, table = %table_name, "Sending receipt to Worker");
-    if let Err(e) = crate::r#do::receipts::send_receipt_to_worker(env, &receipt).await {
-        tracing::error!(error = %e, path = %path, "Receipt forwarding failed");
-        crate::r#do::receipts::store_pending_receipt(state, path, table_name, total_rows)?;
-        let _ = crate::r#do::storage::clear_first_event_timestamp(state);
-        return Err(worker::Error::RustError(format!(
-            "Receipt forwarding failed: {} (path={})",
-            e, path
-        )));
-    }
-    tracing::debug!("Receipt sent successfully");
-    Ok(())
-}
-
 /// Emit usage metrics to Analytics Engine (fire-and-forget).
 pub fn emit_usage_metrics(env: &Env, signal_key: &SignalKey, bytes: usize, rows: usize) {
     if let Ok(metrics) = env.analytics_engine("METRICS") {
@@ -490,12 +466,15 @@ pub fn emit_usage_metrics(env: &Env, signal_key: &SignalKey, bytes: usize, rows:
 
         let signal_label = signal_key.analytics_label();
 
-        let _ = AnalyticsEngineDataPointBuilder::new()
+        if let Err(e) = AnalyticsEngineDataPointBuilder::new()
             .indexes([signal_label])
             .add_blob(signal_label)
             .add_double(bytes as f64)
             .add_double(rows as f64)
             .add_double(1.0)
-            .write_to(&metrics);
+            .write_to(&metrics)
+        {
+            tracing::debug!(error = %e, "Failed to emit usage metrics");
+        }
     }
 }

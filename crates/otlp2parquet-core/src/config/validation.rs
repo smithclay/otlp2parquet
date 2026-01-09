@@ -229,6 +229,7 @@ mod tests {
                 bucket: "test-bucket".to_string(),
                 region: "us-east-1".to_string(),
                 endpoint: None,
+                prefix: None,
             }),
             r2: None,
         };
@@ -243,6 +244,7 @@ mod tests {
                 bucket: String::new(),
                 region: "us-east-1".to_string(),
                 endpoint: None,
+                prefix: None,
             }),
             r2: None,
         };

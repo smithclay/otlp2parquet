@@ -1,8 +1,8 @@
 //! Cloudflare Workers deployment config generator
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::Args;
-use dialoguer::{Confirm, Input, Select};
+use dialoguer::{Confirm, Input};
 use std::fs;
 use std::path::Path;
 
@@ -23,10 +23,6 @@ pub struct CloudflareArgs {
     /// Cloudflare Account ID
     #[arg(long)]
     pub account_id: Option<String>,
-
-    /// Catalog mode: "iceberg" or "none"
-    #[arg(long)]
-    pub catalog: Option<String>,
 
     /// Enable HTTP Basic Authentication
     #[arg(long)]
@@ -91,34 +87,6 @@ pub fn run(args: CloudflareArgs) -> Result<()> {
             .interact_text()?,
     };
 
-    let catalog_mode = match args.catalog {
-        Some(cat) => {
-            if cat != "iceberg" && cat != "none" {
-                bail!(
-                    "Invalid catalog mode '{}'. Must be 'iceberg' or 'none'.",
-                    cat
-                );
-            }
-            cat
-        }
-        None => {
-            let options = &[
-                "No  - Plain Parquet files (simpler)",
-                "Yes - R2 Data Catalog (queryable tables)",
-            ];
-            let selection = Select::new()
-                .with_prompt("Enable Iceberg catalog?")
-                .items(options)
-                .default(0)
-                .interact()?;
-            if selection == 0 {
-                "none".to_string()
-            } else {
-                "iceberg".to_string()
-            }
-        }
-    };
-
     let enable_basic_auth = match args.basic_auth {
         Some(enabled) => enabled,
         None => Confirm::new()
@@ -161,12 +129,10 @@ pub fn run(args: CloudflareArgs) -> Result<()> {
     }
 
     // Render template
-    let use_iceberg = catalog_mode == "iceberg";
     let content = TEMPLATE
         .replace("{{WORKER_NAME}}", &worker_name)
         .replace("{{BUCKET_NAME}}", &bucket_name)
         .replace("{{ACCOUNT_ID}}", &account_id)
-        .replace("{{CATALOG_MODE}}", &catalog_mode)
         .replace("{{VERSION}}", &version)
         .replace(
             "{{BASIC_AUTH_ENABLED}}",
@@ -177,10 +143,7 @@ pub fn run(args: CloudflareArgs) -> Result<()> {
             if enable_batching { "true" } else { "false" },
         )
         .replace("{{BATCH_MAX_ROWS}}", "10000")
-        .replace("{{BATCH_MAX_AGE_SECS}}", "60")
-        // For Iceberg mode, add placeholder for KV namespace ID
-        // Users will replace this after creating the namespace
-        .replace("{{KV_NAMESPACE_ID}}", "REPLACE_WITH_KV_NAMESPACE_ID");
+        .replace("{{BATCH_MAX_AGE_SECS}}", "60");
 
     // Process conditional blocks
     let content = process_conditional_blocks(
@@ -189,7 +152,6 @@ pub fn run(args: CloudflareArgs) -> Result<()> {
             ("BUILD_FROM_RELEASE", true),  // CLI uses release builds
             ("BUILD_FROM_SOURCE", false),  // Not building from source
             ("INLINE_CREDENTIALS", false), // CLI uses wrangler secrets
-            ("ICEBERG", use_iceberg),
             ("BASICAUTH", enable_basic_auth),
             ("LOGGING", enable_logging),
             ("BATCHING", enable_batching),
@@ -205,44 +167,18 @@ pub fn run(args: CloudflareArgs) -> Result<()> {
     println!("Next steps:");
     println!("  1. Create R2 bucket (if needed):");
     println!("     wrangler r2 bucket create {}", bucket_name);
-    if use_iceberg {
-        println!();
-        println!("     IMPORTANT: Enable R2 Data Catalog on the bucket:");
-        println!(
-            "     - Go to Cloudflare Dashboard > R2 > {} > Settings",
-            bucket_name
-        );
-        println!("     - Enable 'Data Catalog' under 'Iceberg catalog'");
-        println!("     - This is required for Iceberg table registration to work");
-    }
     println!();
     println!("  2. Set secrets (R2 S3-Compatible API credentials):");
     println!("     wrangler secret put AWS_ACCESS_KEY_ID");
     println!("     wrangler secret put AWS_SECRET_ACCESS_KEY");
     println!();
     println!("     Get credentials: https://developers.cloudflare.com/r2/api/tokens/#get-s3-api-credentials-from-an-api-token");
-    if use_iceberg {
-        println!("     wrangler secret put CLOUDFLARE_API_TOKEN");
-    }
     if enable_basic_auth {
         println!("     These will set username/password to POST data to your worker");
         println!("     wrangler secret put OTLP2PARQUET_BASIC_AUTH_USERNAME");
         println!("     wrangler secret put OTLP2PARQUET_BASIC_AUTH_PASSWORD");
     }
-    if use_iceberg {
-        println!("  3. Create KV namespace for pending files:");
-        println!("     wrangler kv namespace create PENDING_FILES");
-        println!("     Then update wrangler.toml with the namespace ID");
-        println!();
-        println!("  4. Enable snapshot expiration (reduces catalog metadata bloat):");
-        println!(
-            "     npx wrangler r2 bucket catalog snapshot-expiration enable {} \\",
-            bucket_name
-        );
-        println!("       --token <CLOUDFLARE_API_TOKEN> --older-than-days 1 --retain-last 1");
-        println!();
-    }
-    println!("  {}. Deploy:", if use_iceberg { "5" } else { "3" });
+    println!("  3. Deploy:");
     println!("     wrangler deploy");
     println!();
 

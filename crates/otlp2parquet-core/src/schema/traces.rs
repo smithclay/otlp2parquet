@@ -5,7 +5,7 @@ use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 
 use crate::otlp::field_names::arrow as field;
 
-/// Helper to create a Field with PARQUET:field_id metadata for Iceberg compatibility
+/// Helper to create a Field with PARQUET:field_id metadata for tooling compatibility
 fn field_with_id(name: &str, data_type: DataType, nullable: bool, id: i32) -> Field {
     let metadata = HashMap::from([("PARQUET:field_id".to_string(), id.to_string())]);
     Field::new(name, data_type, nullable).with_metadata(metadata)
@@ -13,10 +13,7 @@ fn field_with_id(name: &str, data_type: DataType, nullable: bool, id: i32) -> Fi
 
 /// Helper to create a List element Field with PARQUET:field_id metadata
 ///
-/// Iceberg requires field IDs on all nested fields, including List elements.
-/// Without this metadata, DuckDB fails when reading Iceberg tables with:
-/// "GetValueInternal on a value that is NULL" because the manifest references
-/// field IDs that don't exist in the Parquet file metadata.
+/// Field IDs are attached to all nested fields for broad tooling compatibility.
 fn list_element_field(data_type: DataType, nullable: bool, element_id: i32) -> Field {
     let metadata = HashMap::from([("PARQUET:field_id".to_string(), element_id.to_string())]);
     Field::new("item", data_type, nullable).with_metadata(metadata)
@@ -34,8 +31,7 @@ pub fn otel_traces_schema_arc() -> Arc<Schema> {
 }
 
 fn build_schema() -> Schema {
-    // S3 Tables doesn't support complex types (Map, Struct) - use JSON-encoded strings instead
-    // Iceberg v1/v2 only supports microsecond precision timestamps
+    // Use JSON-encoded strings for complex types and microsecond timestamps for broad engine support
     let timestamp_us = DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into()));
     let string_type = DataType::Utf8;
 

@@ -2,7 +2,7 @@
 
 use bytes::Bytes;
 use indexmap::IndexSet;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 /// 1024 recent batch keys for idempotency deduplication.
 pub const MAX_RECENT_BATCH_KEYS: usize = 1024;
@@ -46,14 +46,6 @@ impl Default for RecentBatches {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct PendingReceiptOwned {
-    pub path: String,
-    pub table: String,
-    pub rows: usize,
-    pub timestamp_ms: i64,
-}
-
 /// Response from DO back to Worker.
 #[derive(Serialize)]
 pub struct IngestResponse {
@@ -62,22 +54,12 @@ pub struct IngestResponse {
     pub buffered_bytes: i64,
 }
 
-/// Pending receipt delivered back to the main Worker for KV tracking.
-#[derive(Serialize)]
-pub struct PendingReceipt<'a> {
-    pub path: &'a str,
-    pub table: &'a str,
-    pub rows: usize,
-    pub timestamp_ms: i64,
-}
-
 /// Persistent DO state stored in SQLite (survives hibernation).
 #[derive(Default)]
 pub struct DoState {
     pub signal_type: Option<String>,
     pub service_name: Option<String>,
     pub first_event_timestamp: Option<i64>,
-    pub pending_receipt: Option<String>,
 }
 
 /// A group of chunks that together form one Arrow IPC batch.

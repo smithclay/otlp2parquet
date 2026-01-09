@@ -1,6 +1,6 @@
 //! Storage operator initialization and management
 //!
-//! Provides a global operator for direct Parquet writes when catalog is not used.
+//! Provides a global operator for direct Parquet writes.
 
 use once_cell::sync::OnceCell;
 use otlp2parquet_core::config::{RuntimeConfig, StorageBackend};
@@ -10,8 +10,8 @@ static STORAGE_PREFIX: OnceCell<Option<String>> = OnceCell::new();
 
 /// Initialize storage operator from RuntimeConfig
 ///
-/// This creates an OpenDAL operator that can be used for direct Parquet writes
-/// when catalog is not configured. The operator is stored globally and reused.
+/// This creates an OpenDAL operator that can be used for direct Parquet writes.
+/// The operator is stored globally and reused.
 pub fn initialize_storage(config: &RuntimeConfig) -> crate::Result<()> {
     if OPERATOR.get().is_some() {
         return Ok(()); // Already initialized
@@ -46,6 +46,9 @@ pub fn initialize_storage(config: &RuntimeConfig) -> crate::Result<()> {
             let s3 = config.storage.s3.as_ref().ok_or_else(|| {
                 crate::WriterError::write_failure("s3 config required for S3 backend".to_string())
             })?;
+
+            // Store the prefix for path generation
+            let _ = STORAGE_PREFIX.set(s3.prefix.clone());
 
             let mut s3_builder = opendal::services::S3::default()
                 .bucket(&s3.bucket)
@@ -125,7 +128,7 @@ pub(crate) fn get_storage_prefix() -> Option<&'static str> {
         .map(|s| s.as_str())
 }
 
-/// Clone the global storage operator for external users (e.g., catalog registration).
+/// Clone the global storage operator for external users.
 pub fn get_operator_clone() -> Option<opendal::Operator> {
     OPERATOR.get().cloned()
 }

@@ -4,7 +4,7 @@
 //! surviving Cloudflare's 10-second hibernation window.
 
 use crate::r#do::config::MAX_CHUNK_BYTES;
-use crate::r#do::types::{BatchGroup, DoState, PendingReceiptOwned};
+use crate::r#do::types::{BatchGroup, DoState};
 use bytes::Bytes;
 use serde::Deserialize;
 use worker::{Result, SqlStorageValue, State};
@@ -22,11 +22,13 @@ pub fn init_schema(state: &State) -> Result<()> {
         .exec("SELECT chunk_group_id FROM batches LIMIT 1", None)
         .is_ok();
     if !has_new_schema {
-        let _ = sql.exec("DROP TABLE IF EXISTS batches", None);
+        if let Err(e) = sql.exec("DROP TABLE IF EXISTS batches", None) {
+            tracing::warn!(error = %e, "Failed to drop old batches table during migration");
+        }
     }
 
     // Create batches table with chunking support
-    let _ = sql.exec(
+    sql.exec(
         "CREATE TABLE IF NOT EXISTS batches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             chunk_group_id TEXT NOT NULL,
@@ -36,26 +38,29 @@ pub fn init_schema(state: &State) -> Result<()> {
             rows INTEGER NOT NULL
         )",
         None,
-    );
+    )
+    .map_err(|e| worker::Error::RustError(format!("Failed to create batches table: {}", e)))?;
 
     // Index for efficient chunk group queries (reassembly and FIFO ordering)
-    let _ = sql.exec(
+    sql.exec(
         "CREATE INDEX IF NOT EXISTS idx_batches_chunk_group ON batches(chunk_group_id)",
         None,
-    );
+    )
+    .map_err(|e| worker::Error::RustError(format!("Failed to create batches index: {}", e)))?;
 
-    let _ = sql.exec(
+    sql.exec(
         "CREATE TABLE IF NOT EXISTS state (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             signal_type TEXT,
             service_name TEXT,
-            first_event_timestamp INTEGER,
-            pending_receipt TEXT
+            first_event_timestamp INTEGER
         )",
         None,
-    );
+    )
+    .map_err(|e| worker::Error::RustError(format!("Failed to create state table: {}", e)))?;
 
-    let _ = sql.exec("INSERT OR IGNORE INTO state (id) VALUES (1)", None);
+    sql.exec("INSERT OR IGNORE INTO state (id) VALUES (1)", None)
+        .map_err(|e| worker::Error::RustError(format!("Failed to initialize state row: {}", e)))?;
 
     Ok(())
 }
@@ -226,7 +231,7 @@ pub fn delete_batch_groups(state: &State, groups: &[BatchGroup]) -> Result<()> {
 pub fn get_do_state(state: &State) -> Result<DoState> {
     let sql = state.storage().sql();
     let cursor = sql.exec(
-        "SELECT signal_type, service_name, first_event_timestamp, pending_receipt FROM state WHERE id = 1",
+        "SELECT signal_type, service_name, first_event_timestamp FROM state WHERE id = 1",
         None,
     )?;
     #[derive(Deserialize, Default)]
@@ -234,14 +239,15 @@ pub fn get_do_state(state: &State) -> Result<DoState> {
         signal_type: Option<String>,
         service_name: Option<String>,
         first_event_timestamp: Option<i64>,
-        pending_receipt: Option<String>,
     }
-    let row: StateRow = cursor.one().unwrap_or_default();
+    let row: StateRow = cursor.one().unwrap_or_else(|e| {
+        tracing::debug!(error = %e, "No DO state found, using defaults");
+        StateRow::default()
+    });
     Ok(DoState {
         signal_type: row.signal_type,
         service_name: row.service_name,
         first_event_timestamp: row.first_event_timestamp,
-        pending_receipt: row.pending_receipt,
     })
 }
 
@@ -280,37 +286,4 @@ pub fn clear_first_event_timestamp(state: &State) -> Result<()> {
         None,
     )?;
     Ok(())
-}
-
-/// Set pending receipt (JSON serialized).
-pub fn set_pending_receipt(state: &State, receipt: &PendingReceiptOwned) -> Result<()> {
-    let json = serde_json::to_string(receipt)
-        .map_err(|e| worker::Error::RustError(format!("Failed to serialize receipt: {}", e)))?;
-    let sql = state.storage().sql();
-    sql.exec(
-        "UPDATE state SET pending_receipt = ? WHERE id = 1",
-        Some(vec![SqlStorageValue::String(json)]),
-    )?;
-    Ok(())
-}
-
-/// Clear pending receipt after successful forwarding.
-pub fn clear_pending_receipt(state: &State) -> Result<()> {
-    let sql = state.storage().sql();
-    sql.exec("UPDATE state SET pending_receipt = NULL WHERE id = 1", None)?;
-    Ok(())
-}
-
-/// Get and clear pending receipt (for retry).
-pub fn take_pending_receipt(state: &State) -> Result<Option<PendingReceiptOwned>> {
-    let state_data = get_do_state(state)?;
-    if let Some(json) = state_data.pending_receipt {
-        let receipt: PendingReceiptOwned = serde_json::from_str(&json).map_err(|e| {
-            worker::Error::RustError(format!("Failed to deserialize receipt: {}", e))
-        })?;
-        clear_pending_receipt(state)?;
-        Ok(Some(receipt))
-    } else {
-        Ok(None)
-    }
 }

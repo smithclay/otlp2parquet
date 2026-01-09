@@ -9,7 +9,6 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::time::Duration;
 
 mod env_overrides;
@@ -32,9 +31,6 @@ pub struct RuntimeConfig {
 
     pub storage: StorageConfig,
 
-    #[serde(default)]
-    pub catalog_mode: CatalogMode,
-
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server: Option<ServerConfig>,
 
@@ -43,9 +39,6 @@ pub struct RuntimeConfig {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cloudflare: Option<CloudflareConfig>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub iceberg: Option<IcebergConfig>,
 }
 
 /// Batch configuration
@@ -128,39 +121,6 @@ impl std::fmt::Display for StorageBackend {
     }
 }
 
-/// Catalog mode for Iceberg integration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-#[derive(Default)]
-pub enum CatalogMode {
-    /// Use Iceberg catalog (R2 Data Catalog, S3 Tables, Nessie, etc.)
-    #[default]
-    Iceberg,
-    /// Write plain Parquet files without catalog integration
-    None,
-}
-
-impl std::fmt::Display for CatalogMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CatalogMode::Iceberg => write!(f, "iceberg"),
-            CatalogMode::None => write!(f, "none"),
-        }
-    }
-}
-
-impl std::str::FromStr for CatalogMode {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self> {
-        match s.to_lowercase().as_str() {
-            "iceberg" => Ok(CatalogMode::Iceberg),
-            "none" => Ok(CatalogMode::None),
-            _ => anyhow::bail!("Unsupported catalog mode: {}. Supported: iceberg, none", s),
-        }
-    }
-}
-
 fn default_parquet_row_group_size() -> usize {
     32 * 1024
 }
@@ -197,6 +157,9 @@ pub struct S3Config {
     pub region: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub endpoint: Option<String>,
+    /// Optional path prefix for all stored files (e.g., "smoke-abc123/")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -238,10 +201,7 @@ pub enum LogFormat {
 
 /// Lambda-specific configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct LambdaConfig {
-    #[serde(default)]
-    pub integrated_iceberg: bool,
-}
+pub struct LambdaConfig {}
 
 /// Cloudflare Workers-specific configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -249,198 +209,7 @@ pub struct CloudflareConfig {
     // Future cloudflare-specific config can go here
 }
 
-/// Apache Iceberg configuration (Lambda and Server only)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IcebergConfig {
-    /// REST catalog endpoint URI
-    pub rest_uri: String,
-
-    /// Warehouse location (optional, depends on catalog)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub warehouse: Option<String>,
-
-    /// Namespace for tables (dot-separated, e.g., "otel.production")
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub namespace: Option<String>,
-
-    /// Catalog name (defaults to "rest")
-    #[serde(default = "default_iceberg_catalog_name")]
-    pub catalog_name: String,
-
-    /// Staging prefix for data files
-    #[serde(default = "default_iceberg_staging_prefix")]
-    pub staging_prefix: String,
-
-    /// Target file size in bytes
-    #[serde(default = "default_iceberg_target_file_size")]
-    pub target_file_size_bytes: u64,
-
-    /// Iceberg format version
-    #[serde(default = "default_iceberg_format_version")]
-    pub format_version: i32,
-
-    /// Custom table names per signal type
-    #[serde(default)]
-    pub tables: IcebergTableNames,
-
-    /// Optional fully-qualified data location (e.g., s3://bucket/path)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub data_location: Option<String>,
-
-    /// AWS S3 Tables bucket ARN (for Lambda with S3 Tables)
-    /// Format: arn:aws:s3tables:region:account:bucket/bucket-name
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bucket_arn: Option<String>,
-}
-
-impl Default for IcebergConfig {
-    fn default() -> Self {
-        Self {
-            rest_uri: String::new(),
-            warehouse: None,
-            namespace: None,
-            catalog_name: default_iceberg_catalog_name(),
-            staging_prefix: default_iceberg_staging_prefix(),
-            target_file_size_bytes: default_iceberg_target_file_size(),
-            format_version: default_iceberg_format_version(),
-            tables: IcebergTableNames::default(),
-            data_location: None,
-            bucket_arn: None,
-        }
-    }
-}
-
-/// Iceberg table names configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IcebergTableNames {
-    #[serde(default = "default_table_logs")]
-    pub logs: String,
-
-    #[serde(default = "default_table_traces")]
-    pub traces: String,
-
-    #[serde(default = "default_table_metrics_gauge")]
-    pub metrics_gauge: String,
-
-    #[serde(default = "default_table_metrics_sum")]
-    pub metrics_sum: String,
-
-    #[serde(default = "default_table_metrics_histogram")]
-    pub metrics_histogram: String,
-
-    #[serde(default = "default_table_metrics_exponential_histogram")]
-    pub metrics_exponential_histogram: String,
-
-    #[serde(default = "default_table_metrics_summary")]
-    pub metrics_summary: String,
-}
-
-impl Default for IcebergTableNames {
-    fn default() -> Self {
-        Self {
-            logs: default_table_logs(),
-            traces: default_table_traces(),
-            metrics_gauge: default_table_metrics_gauge(),
-            metrics_sum: default_table_metrics_sum(),
-            metrics_histogram: default_table_metrics_histogram(),
-            metrics_exponential_histogram: default_table_metrics_exponential_histogram(),
-            metrics_summary: default_table_metrics_summary(),
-        }
-    }
-}
-
-fn default_iceberg_catalog_name() -> String {
-    "rest".to_string()
-}
-
-fn default_iceberg_staging_prefix() -> String {
-    "data/incoming".to_string()
-}
-
-fn default_iceberg_target_file_size() -> u64 {
-    512 * 1024 * 1024 // 512 MB
-}
-
-fn default_iceberg_format_version() -> i32 {
-    2
-}
-
-fn default_table_logs() -> String {
-    "otel_logs".to_string()
-}
-
-fn default_table_traces() -> String {
-    "otel_traces".to_string()
-}
-
-fn default_table_metrics_gauge() -> String {
-    "otel_metrics_gauge".to_string()
-}
-
-fn default_table_metrics_sum() -> String {
-    "otel_metrics_sum".to_string()
-}
-
-fn default_table_metrics_histogram() -> String {
-    "otel_metrics_histogram".to_string()
-}
-
-fn default_table_metrics_exponential_histogram() -> String {
-    "otel_metrics_exponential_histogram".to_string()
-}
-
-fn default_table_metrics_summary() -> String {
-    "otel_metrics_summary".to_string()
-}
-
-impl IcebergConfig {
-    /// Convert to the HashMap format expected by otlp2parquet-writer crate
-    pub fn to_tables_map(&self) -> HashMap<String, String> {
-        let mut map = HashMap::new();
-        map.insert("logs".to_string(), self.tables.logs.clone());
-        map.insert("traces".to_string(), self.tables.traces.clone());
-        map.insert(
-            "metrics:gauge".to_string(),
-            self.tables.metrics_gauge.clone(),
-        );
-        map.insert("metrics:sum".to_string(), self.tables.metrics_sum.clone());
-        map.insert(
-            "metrics:histogram".to_string(),
-            self.tables.metrics_histogram.clone(),
-        );
-        map.insert(
-            "metrics:exponential_histogram".to_string(),
-            self.tables.metrics_exponential_histogram.clone(),
-        );
-        map.insert(
-            "metrics:summary".to_string(),
-            self.tables.metrics_summary.clone(),
-        );
-        map
-    }
-
-    /// Parse namespace string into `Vec<String>`
-    pub fn namespace_vec(&self) -> Vec<String> {
-        self.namespace
-            .as_ref()
-            .map(|ns| {
-                ns.split('.')
-                    .filter(|s| !s.trim().is_empty())
-                    .map(|s| s.trim().to_string())
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-}
-
 impl RuntimeConfig {
-    /// Namespace used for catalog operations (defaults to "otlp")
-    pub fn catalog_namespace(&self) -> String {
-        self.iceberg
-            .as_ref()
-            .and_then(|c| c.namespace.clone())
-            .unwrap_or_else(|| "otlp".to_string())
-    }
     /// Load configuration from all sources with priority
     #[cfg(not(target_arch = "wasm32"))]
     pub fn load() -> Result<Self> {
@@ -484,7 +253,6 @@ impl RuntimeConfig {
         self.batch = other.batch;
         self.request = other.request;
         self.storage = other.storage;
-        self.catalog_mode = other.catalog_mode;
 
         if other.server.is_some() {
             self.server = other.server;
@@ -494,9 +262,6 @@ impl RuntimeConfig {
         }
         if other.cloudflare.is_some() {
             self.cloudflare = other.cloudflare;
-        }
-        if other.iceberg.is_some() {
-            self.iceberg = other.iceberg;
         }
     }
 
@@ -565,6 +330,7 @@ fn platform_defaults(platform: Platform) -> RuntimeConfig {
                 bucket: "otlp-logs".to_string(),
                 region: "us-east-1".to_string(),
                 endpoint: None,
+                prefix: None,
             }),
             r2: None,
         },
@@ -595,7 +361,6 @@ fn platform_defaults(platform: Platform) -> RuntimeConfig {
             max_payload_bytes: defaults.max_payload_bytes,
         },
         storage,
-        catalog_mode: CatalogMode::default(),
         server: if platform == Platform::Server {
             Some(ServerConfig::default())
         } else {
@@ -611,7 +376,6 @@ fn platform_defaults(platform: Platform) -> RuntimeConfig {
         } else {
             None
         },
-        iceberg: None,
     }
 }
 

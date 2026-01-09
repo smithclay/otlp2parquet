@@ -1,8 +1,8 @@
 //! AWS CloudFormation deployment config generator
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::Args;
-use dialoguer::{Confirm, Input, Select};
+use dialoguer::{Confirm, Input};
 use std::fs;
 use std::path::Path;
 
@@ -23,10 +23,6 @@ pub struct AwsArgs {
     /// S3 bucket name for data storage
     #[arg(long)]
     pub bucket: Option<String>,
-
-    /// Catalog mode: "iceberg" or "none"
-    #[arg(long)]
-    pub catalog: Option<String>,
 
     /// CloudWatch log retention in days
     #[arg(long, default_value = "7")]
@@ -69,31 +65,6 @@ pub fn run(args: AwsArgs) -> Result<()> {
         }
     };
 
-    let catalog_mode = match args.catalog {
-        Some(cat) => {
-            if cat != "iceberg" && cat != "none" {
-                bail!(
-                    "Invalid catalog mode '{}'. Must be 'iceberg' or 'none'.",
-                    cat
-                );
-            }
-            cat
-        }
-        None => {
-            let options = &["No  - Plain Parquet to S3", "Yes - S3 Tables (Iceberg)"];
-            let selection = Select::new()
-                .with_prompt("Enable Iceberg catalog?")
-                .items(options)
-                .default(0)
-                .interact()?;
-            if selection == 0 {
-                "none".to_string()
-            } else {
-                "iceberg".to_string()
-            }
-        }
-    };
-
     let retention = args.retention;
 
     // Check if file exists
@@ -113,7 +84,6 @@ pub fn run(args: AwsArgs) -> Result<()> {
     let content = TEMPLATE
         .replace("{{STACK_NAME}}", &stack_name)
         .replace("{{BUCKET_NAME}}", &bucket_name)
-        .replace("{{CATALOG_MODE}}", &catalog_mode)
         .replace("{{LOG_RETENTION}}", &retention.to_string())
         .replace("{{LAMBDA_VERSION}}", &version);
 

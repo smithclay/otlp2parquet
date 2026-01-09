@@ -4,13 +4,6 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: otlp2parquet - OTLP to Parquet on AWS Lambda
 
 Parameters:
-  CatalogMode:
-    Type: String
-    Default: "{{CATALOG_MODE}}"
-    AllowedValues:
-      - iceberg
-      - none
-
   BucketName:
     Type: String
     Default: "{{BUCKET_NAME}}"
@@ -27,11 +20,6 @@ Parameters:
       - AWS_IAM
       - NONE
     Description: Function URL authentication type (AWS_IAM for production, NONE for testing)
-
-  IcebergNamespace:
-    Type: String
-    Default: otlp
-    Description: Iceberg namespace for tables
 
   LambdaVersion:
     Type: String
@@ -57,8 +45,6 @@ Parameters:
     Description: S3 key for Lambda ZIP (only used when LambdaSource is 's3')
 
 Conditions:
-  UseIcebergCatalog: !Equals [!Ref CatalogMode, iceberg]
-  UsePlainParquet: !Equals [!Ref CatalogMode, none]
   UseGitHubSource: !Equals [!Ref LambdaSource, github]
   UseS3Source: !Equals [!Ref LambdaSource, s3]
 
@@ -226,11 +212,8 @@ Resources:
       Environment:
         Variables:
           RUST_LOG: info
-          OTLP2PARQUET_CATALOG_MODE: !Ref CatalogMode
-          OTLP2PARQUET_S3_BUCKET: !If [UsePlainParquet, !Ref DataBucket, !Ref AWS::NoValue]
-          OTLP2PARQUET_S3_REGION: !If [UsePlainParquet, !Ref AWS::Region, !Ref AWS::NoValue]
-          OTLP2PARQUET_ICEBERG_BUCKET_ARN: !If [UseIcebergCatalog, !GetAtt S3TablesBucket.TableBucketARN, !Ref AWS::NoValue]
-          OTLP2PARQUET_ICEBERG_NAMESPACE: !Ref IcebergNamespace
+          OTLP2PARQUET_S3_BUCKET: !Ref DataBucket
+          OTLP2PARQUET_S3_REGION: !Ref AWS::Region
       Role: !GetAtt LambdaExecutionRole.Arn
 
   LambdaExecutionRole:
@@ -246,51 +229,19 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - !If
-          - UsePlainParquet
-          - PolicyName: S3Access
-            PolicyDocument:
-              Version: '2012-10-17'
-              Statement:
-                - Effect: Allow
-                  Action:
-                    - s3:PutObject
-                    - s3:GetObject
-                    - s3:DeleteObject
-                    - s3:ListBucket
-                  Resource:
-                    - !Sub 'arn:aws:s3:::${DataBucket}'
-                    - !Sub 'arn:aws:s3:::${DataBucket}/*'
-          - !Ref AWS::NoValue
-        - !If
-          - UseIcebergCatalog
-          - PolicyName: S3TablesAccess
-            PolicyDocument:
-              Version: '2012-10-17'
-              Statement:
-                - Effect: Allow
-                  Action:
-                    - s3tables:GetTable
-                    - s3tables:GetTableMetadataLocation
-                    - s3tables:CreateTable
-                    - s3tables:UpdateTableMetadataLocation
-                    - s3tables:GetNamespace
-                    - s3tables:CreateNamespace
-                    - s3tables:PutTableData
-                    - s3tables:GetTableData
-                  Resource:
-                    - !Sub
-                      - '${BucketArn}/*'
-                      - BucketArn: !GetAtt S3TablesBucket.TableBucketARN
-                    - !GetAtt S3TablesBucket.TableBucketARN
-                - Effect: Allow
-                  Action:
-                    - s3:PutObject
-                    - s3:GetObject
-                    - s3:DeleteObject
-                    - s3:ListBucket
-                  Resource: '*'
-          - !Ref AWS::NoValue
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::${DataBucket}'
+                  - !Sub 'arn:aws:s3:::${DataBucket}/*'
 
   FunctionUrl:
     Type: AWS::Lambda::Url
@@ -325,7 +276,6 @@ Resources:
 
   DataBucket:
     Type: AWS::S3::Bucket
-    Condition: UsePlainParquet
     Properties:
       BucketName: !Ref BucketName
       PublicAccessBlockConfiguration:
@@ -333,12 +283,6 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
-
-  S3TablesBucket:
-    Type: AWS::S3Tables::TableBucket
-    Condition: UseIcebergCatalog
-    Properties:
-      TableBucketName: !Ref BucketName
 
 Outputs:
   FunctionUrl:
@@ -355,24 +299,8 @@ Outputs:
 
   DataLocation:
     Description: Data storage location
-    Value: !If
-      - UsePlainParquet
-      - !Sub 's3://${DataBucket}'
-      - !GetAtt S3TablesBucket.TableBucketARN
+    Value: !Sub 's3://${DataBucket}'
 
-  # Outputs for plain Parquet mode
   DataBucketName:
-    Condition: UsePlainParquet
     Description: S3 bucket name for plain Parquet files
     Value: !Ref DataBucket
-
-  # Outputs for Iceberg mode
-  S3TablesBucketArn:
-    Condition: UseIcebergCatalog
-    Description: S3 Tables bucket ARN
-    Value: !GetAtt S3TablesBucket.TableBucketARN
-
-  S3TablesBucketName:
-    Condition: UseIcebergCatalog
-    Description: S3 Tables bucket name
-    Value: !Ref S3TablesBucket

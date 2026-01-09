@@ -28,7 +28,6 @@ The wizard prompts for:
 - **Worker name** (default: auto-generated like `swift-beacon-4821`)
 - **R2 bucket name**
 - **Cloudflare Account ID**
-- **Catalog mode** - Plain Parquet or Iceberg (R2 Data Catalog)
 
 Then follow the output:
 
@@ -44,27 +43,6 @@ wrangler secret put AWS_SECRET_ACCESS_KEY
 wrangler deploy
 ```
 
-If using Iceberg catalog:
-```bash
-# Create KV namespace for pending file tracking
-wrangler kv:namespace create PENDING_FILES
-# Update wrangler.toml with the namespace ID
-
-# Enable snapshot expiration to reduce metadata bloat (recommended)
-npx wrangler r2 bucket catalog snapshot-expiration enable my-bucket \
-  --token <CLOUDFLARE_API_TOKEN> \
-  --older-than-days 1 \
-  --retain-last 1
-```
-
-??? note "Snapshot expiration"
-    R2 Data Catalog creates snapshots for every table commit. Over time, this can cause metadata bloat.
-    Enable snapshot expiration to automatically clean up old snapshots.
-
-    The `--token` must be a Cloudflare API token with **R2 Storage** and **R2 Data Catalog** read/write permissions.
-    The API also supports hourly values (e.g., `--older-than-days` can be replaced with direct API calls using `"1h"`).
-    See [Cloudflare docs](https://developers.cloudflare.com/r2/data-catalog/manage-catalogs/#enable-snapshot-expiration) for details.
-
 ### Send test data
 
 ```bash
@@ -79,7 +57,6 @@ curl -X POST https://your-worker.workers.dev/v1/logs \
       --worker-name my-worker \
       --bucket my-logs \
       --account-id abc123def456... \
-      --catalog none \
       --force
     ```
 
@@ -107,8 +84,6 @@ flowchart TB
         H[HTTP Handler]
         R{Batching<br/>enabled?}
         DW[Direct Write]
-        RC[Receipt Handler]
-        CS[Catalog Sync]
     end
 
     subgraph DO["Durable Object (per signal+service)"]
@@ -121,8 +96,6 @@ flowchart TB
 
     subgraph Storage
         R2[(R2 Bucket)]
-        KV[(KV Namespace)]
-        IC[Iceberg Catalog]
     end
 
     OC -->|OTLP/HTTP| H
@@ -136,15 +109,7 @@ flowchart TB
     AL -->|Trigger| FL
 
     FL -->|Write Parquet| R2
-    FL -->|"SELF binding"| RC
-    RC -->|Store receipt| KV
-
     DW -->|Write Parquet| R2
-    DW -.->|If catalog enabled| KV
-
-    CS -->|"Cron (5 min)"| KV
-    KV -->|Pending files| CS
-    CS -->|Register tables| IC
 
     style DO fill:#f9f,stroke:#333
     style SQL fill:#ffd,stroke:#333
@@ -156,21 +121,12 @@ flowchart TB
 
     - Worker receives OTLP request
     - Immediately converts to Parquet and writes to R2
-    - If catalog enabled, stores receipt in KV for later sync
 
     **With batching enabled:**
 
     - Worker routes request to Durable Object (DO) based on signal type + service name
     - DO buffers Arrow IPC batches in SQLite (survives hibernation)
     - Flushes to R2 when row count or age threshold is exceeded
-    - After R2 write, DO calls back to Worker via `SELF` binding to store KV receipt
-    - Cron trigger runs every 5 minutes to sync pending files to Iceberg catalog
-
-    **Why DOs can't write KV directly:**
-
-    Cloudflare Durable Objects cannot access KV bindings (platform limitation).
-    The `SELF` service binding allows the DO to call back to the main Worker,
-    which has KV access.
 
 ??? note "Batching configuration"
     Enable batching with environment variables:
@@ -193,7 +149,7 @@ flowchart TB
 
 ## AWS Lambda
 
-Deploy to AWS Lambda with S3 or S3 Tables (Iceberg) storage.
+Deploy to AWS Lambda with S3 storage.
 
 ### Quick Start
 
@@ -208,7 +164,6 @@ aws cloudformation deploy --template-file template.yaml --stack-name otlp2parque
 The wizard prompts for:
 - **Stack name** (default: auto-generated like `swift-beacon-4821`)
 - **Data bucket name** - where Parquet files are written
-- **Catalog mode** - Plain Parquet (S3) or Iceberg (S3 Tables)
 
 ### Send test data
 
@@ -237,7 +192,6 @@ aws cloudformation describe-stacks \
     otlp2parquet deploy aws \
       --stack-name my-stack \
       --bucket my-data \
-      --catalog none \
       --force
 
     aws cloudformation deploy --template-file template.yaml --stack-name my-stack --capabilities CAPABILITY_IAM

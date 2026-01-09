@@ -1,13 +1,12 @@
 //! Cloudflare Workers runtime adapter for otlp2parquet.
 //!
-//! Uses icepick with OpenDAL S3 for R2 storage and handles incoming requests via Worker fetch events.
+//! Uses OpenDAL S3 for R2 storage and handles incoming requests via Worker fetch events.
 //!
 //! Philosophy: Use otlp2parquet-writer for unified write path.
-//! Worker crate provides the runtime, icepick provides storage abstraction.
+//! Worker crate provides the runtime.
 //! Entry point is #[event(fetch)] macro, not main().
 
 mod auth;
-mod catalog_worker;
 #[allow(clippy::module_inception)]
 mod r#do;
 mod do_config;
@@ -83,15 +82,4 @@ pub async fn main(req: Request, env: Env, ctx: Context) -> Result<Response> {
     let result = request::handle(req, env, ctx).await;
     tracing::debug!("request::handle returned");
     result
-}
-
-/// Cron-triggered catalog sync handler.
-/// Runs every 5 minutes to commit pending Parquet files to Iceberg.
-#[event(scheduled)]
-pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
-    tracing::debug!("Scheduled event triggered");
-
-    if let Err(e) = catalog_worker::sync_catalog(&env).await {
-        tracing::error!(error = ?e, "Catalog sync failed");
-    }
 }

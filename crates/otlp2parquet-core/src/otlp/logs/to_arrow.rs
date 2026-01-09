@@ -30,7 +30,7 @@ use crate::schema::{otel_logs_schema_arc, EXTRACTED_RESOURCE_ATTRS};
 #[derive(Debug, Clone)]
 pub struct LogMetadata {
     pub service_name: Arc<str>,
-    // Stored in microseconds to align with Parquet/Iceberg expectations.
+    // Stored in microseconds to align with Parquet expectations.
     pub first_timestamp_micros: i64,
     pub record_count: usize,
 }
@@ -130,7 +130,7 @@ impl ArrowConverter {
         self.add_from_request_with_flush(request, usize::MAX, &mut |_, _| Ok(()))
     }
 
-    /// Convert OTLP nanosecond timestamps to microseconds for Iceberg compatibility
+    /// Convert OTLP nanosecond timestamps to microseconds for Parquet compatibility
     #[inline]
     fn nanos_to_micros(ns: u64) -> i64 {
         ((ns / 1_000).min(i64::MAX as u64)) as i64

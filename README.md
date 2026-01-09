@@ -6,7 +6,7 @@
 
 > What if your observability data was just a bunch of Parquet files?
 
-Receive OpenTelemetry logs, metrics, and traces and write them as Parquet files to local disk, cloud storage or [Apache Iceberg](https://iceberg.apache.org/). Query with DuckDB, Spark, or anything that reads Parquet.
+Receive OpenTelemetry logs, metrics, and traces and write them as Parquet files to local disk or cloud storage. Query with DuckDB, Spark, or anything that reads Parquet.
 
 ![otlp2parquet architecture](docs/otlp2parquet-arch-dec2025.png)
 
@@ -40,14 +40,13 @@ duckdb -c "SELECT * FROM './data/logs/**/*.parquet'"
 
 - **Keep monitoring data around a long time** Parquet on S3 can be 90% cheaper than large monitoring vendors for long-term analytics.
 - **Query with good tools** — duckDB, Spark, Athena, Trino, Pandas
-- **Easy Iceberg** — Optional catalog support, including [S3 Tables](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-tables.html) and [R2 Data Catalog](https://developers.cloudflare.com/r2/data-catalog/)
 - **Deploy anywhere** — Local binary, Cloudflare Workers (WASM), AWS Lambda. In basic testing, converting to Parquet with a Lambda or Worker costs around $0.01 to $0.02 per uncompressed GB of log data in compute.
 
 ## Deploy to the Cloud
 
 Once you've kicked the tires locally, deploy to serverless:
 
-**Cloudflare Workers + R2 or R2 Data Catalog with [wrangler](https://developers.cloudflare.com/workers/wrangler/install-and-update/) CLI:**
+**Cloudflare Workers + R2 with [wrangler](https://developers.cloudflare.com/workers/wrangler/install-and-update/) CLI:**
 ```bash
 # Generates config for workers
 otlp2parquet deploy cloudflare
@@ -56,7 +55,7 @@ otlp2parquet deploy cloudflare
 wrangler deploy
 ```
 
-**AWS Lambda + S3 or S3 Tables with [AWS CLI](https://aws.amazon.com/cli/):**
+**AWS Lambda + S3 with [AWS CLI](https://aws.amazon.com/cli/):**
 ```bash
 # Generates a Cloudformation template for Lambda + S3
 otlp2parquet deploy aws
@@ -83,18 +82,13 @@ Logs, Metrics, Traces via OTLP/HTTP (protobuf or JSON, gzip compression supporte
 ## APIs, schemas, and partition layout
 - OTLP/HTTP endpoints: `/v1/logs`, `/v1/metrics`, `/v1/traces` (protobuf or JSON; gzip supported)
 - Partition layout: `logs/{service}/year=.../hour=.../{ts}-{uuid}.parquet`, `metrics/{type}/{service}/...`, `traces/{service}/...`
-- Storage: filesystem, S3, or R2 with optional Iceberg catalog
+- Storage: filesystem, S3, or R2
 - Schemas: ClickHouse-compatible, PascalCase columns; five metric schemas (Gauge, Sum, Histogram, ExponentialHistogram, Summary)
 - Error model: HTTP 400 on invalid input/too large; 5xx on conversion/storage
-
-**Best-effort catalog commits**: Parquet files are always written to storage first. If you enable an Iceberg catalog (S3 Tables, R2 Data Catalog), catalog registration happens after the write.
-
-If catalog registration fails (network error, conflict), the data is still safely stored and a warning is logged—your data is never lost due to catalog issues. **This is not a production-ready solution for catalog commits**. PRs welcome.
 
 ## Future work (contributions welcome)
 - OpenTelemetry Arrow alignment
 - Additional platforms: Azure Functions; Kubernetes manifests
-- Iceberg ergonomics: queued commits (SQS/Queues), richer partition configs
 
 
 ## Learn More
@@ -109,7 +103,7 @@ If catalog registration fails (network error, conflict), the data is still safel
 <details>
 <summary>Caveats</summary>
 
-- **Batching**: Use an OTel Collector upstream to batch, or enable S3 Tables / R2 Data Catalog for automatic compaction or snapshot pruning. There is experimental batching support available in the Cloudflare Worker implementation.
+- **Batching**: Use an OTel Collector upstream to batch. There is experimental batching support available in the Cloudflare Worker implementation.
 - **Schema**: Uses ClickHouse-compatible column names. Will converge with OTel Arrow (OTAP) when it stabilizes.
 - **Status**: Functional but evolving. API may change.
 

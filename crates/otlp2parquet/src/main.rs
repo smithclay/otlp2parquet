@@ -122,7 +122,7 @@ fn apply_cli_overrides(config: &mut RuntimeConfig, cli: &Cli) -> Result<()> {
 }
 
 fn apply_desktop_defaults(config: &mut RuntimeConfig) {
-    use otlp2parquet_core::config::{CatalogMode, LogFormat, ServerConfig, StorageBackend};
+    use otlp2parquet_core::config::{LogFormat, ServerConfig, StorageBackend};
 
     // Ensure server config exists with defaults
     let server = config.server.get_or_insert_with(ServerConfig::default);
@@ -133,11 +133,6 @@ fn apply_desktop_defaults(config: &mut RuntimeConfig) {
     // Default to filesystem backend for desktop
     if config.storage.backend == StorageBackend::Fs {
         config.storage.fs.get_or_insert_with(Default::default);
-    }
-
-    // Default to no Iceberg catalog (simpler for local dev)
-    if config.catalog_mode == CatalogMode::Iceberg && config.iceberg.is_none() {
-        config.catalog_mode = CatalogMode::None;
     }
 }
 
@@ -170,7 +165,6 @@ fn display_startup_info(config: &RuntimeConfig) {
     }
 
     info!("│ Log level: {}", server.log_level);
-    info!("│ Catalog mode: {}", config.catalog_mode);
     info!(
         "│ Batching: {}",
         if config.batch.enabled {

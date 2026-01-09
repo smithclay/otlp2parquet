@@ -6,25 +6,13 @@ pub struct ProcessingResult {
     pub batches_flushed: usize,
 }
 
-/// Configuration for signal processing
-pub struct ProcessorConfig<'a> {
-    pub catalog: Option<&'a dyn otlp2parquet_writer::icepick::catalog::Catalog>,
-    pub namespace: &'a str,
-    pub snapshot_timestamp_ms: Option<i64>,
-    pub retry_policy: RetryPolicy,
-}
-
 use crate::error::OtlpError;
 use otlp2parquet_core::batch::LogSignalProcessor;
 use otlp2parquet_core::{otlp, InputFormat, SignalType};
-use otlp2parquet_writer::{RetryPolicy, WriteBatchRequest};
+use otlp2parquet_writer::WriteBatchRequest;
 
 /// Process OTLP logs request
-pub async fn process_logs(
-    body: &[u8],
-    format: InputFormat,
-    config: ProcessorConfig<'_>,
-) -> Result<ProcessingResult, OtlpError> {
+pub async fn process_logs(body: &[u8], format: InputFormat) -> Result<ProcessingResult, OtlpError> {
     // Parse OTLP request
     let request =
         otlp::parse_otlp_request(body, format).map_err(|e| OtlpError::InvalidRequest {
@@ -60,15 +48,11 @@ pub async fn process_logs(
     for batch in batches {
         for record_batch in &batch.batches {
             let path = otlp2parquet_writer::write_batch(WriteBatchRequest {
-                catalog: config.catalog,
-                namespace: config.namespace,
                 batch: record_batch,
                 signal_type: SignalType::Logs,
                 metric_type: None,
                 service_name: &batch.metadata.service_name,
                 timestamp_micros: batch.metadata.first_timestamp_micros,
-                snapshot_timestamp_ms: config.snapshot_timestamp_ms,
-                retry_policy: config.retry_policy,
             })
             .await
             .map_err(|e| OtlpError::StorageFailed {
@@ -90,7 +74,6 @@ pub async fn process_logs(
 pub async fn process_traces(
     body: &[u8],
     format: InputFormat,
-    config: ProcessorConfig<'_>,
 ) -> Result<ProcessingResult, OtlpError> {
     // Parse OTLP traces request
     let request = otlp::traces::parse_otlp_trace_request(body, format).map_err(|e| {
@@ -127,15 +110,11 @@ pub async fn process_traces(
         // Write traces
         for batch in &batches {
             let path = otlp2parquet_writer::write_batch(WriteBatchRequest {
-                catalog: config.catalog,
-                namespace: config.namespace,
                 batch,
                 signal_type: SignalType::Traces,
                 metric_type: None,
                 service_name: metadata.service_name.as_ref(),
                 timestamp_micros: metadata.first_timestamp_micros,
-                snapshot_timestamp_ms: config.snapshot_timestamp_ms,
-                retry_policy: config.retry_policy,
             })
             .await
             .map_err(|e| OtlpError::StorageFailed {
@@ -158,7 +137,6 @@ pub async fn process_traces(
 pub async fn process_metrics(
     body: &[u8],
     format: InputFormat,
-    config: ProcessorConfig<'_>,
 ) -> Result<ProcessingResult, OtlpError> {
     // Parse OTLP metrics request
     let request =
@@ -207,15 +185,11 @@ pub async fn process_metrics(
                 .unwrap_or_default();
 
             let path = otlp2parquet_writer::write_batch(WriteBatchRequest {
-                catalog: config.catalog,
-                namespace: config.namespace,
                 batch: &batch,
                 signal_type: SignalType::Metrics,
                 metric_type: Some(&metric_type),
                 service_name: &service_name,
                 timestamp_micros,
-                snapshot_timestamp_ms: config.snapshot_timestamp_ms,
-                retry_policy: config.retry_policy,
             })
             .await
             .map_err(|e| OtlpError::StorageFailed {
@@ -256,14 +230,8 @@ mod tests {
         use otlp2parquet_core::InputFormat;
 
         let invalid_data = b"not valid otlp data";
-        let config = ProcessorConfig {
-            catalog: None,
-            namespace: "test",
-            snapshot_timestamp_ms: None,
-            retry_policy: RetryPolicy::default(),
-        };
 
-        let result = process_logs(invalid_data, InputFormat::Protobuf, config).await;
+        let result = process_logs(invalid_data, InputFormat::Protobuf).await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -295,24 +263,15 @@ mod tests {
                 s3: None,
                 r2: None,
             },
-            catalog_mode: Default::default(),
             server: None,
             lambda: None,
             cloudflare: None,
-            iceberg: None,
         };
 
         otlp2parquet_writer::initialize_storage(&runtime_config)
             .expect("Failed to initialize storage");
 
-        let config = ProcessorConfig {
-            catalog: None,
-            namespace: "test",
-            snapshot_timestamp_ms: None,
-            retry_policy: RetryPolicy::default(),
-        };
-
-        let result = process_logs(&test_data, InputFormat::Protobuf, config)
+        let result = process_logs(&test_data, InputFormat::Protobuf)
             .await
             .expect("Failed to process logs");
 
@@ -329,14 +288,8 @@ mod tests {
         use otlp2parquet_core::InputFormat;
 
         let invalid_data = b"not valid otlp data";
-        let config = ProcessorConfig {
-            catalog: None,
-            namespace: "test",
-            snapshot_timestamp_ms: None,
-            retry_policy: RetryPolicy::default(),
-        };
 
-        let result = process_traces(invalid_data, InputFormat::Protobuf, config).await;
+        let result = process_traces(invalid_data, InputFormat::Protobuf).await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -370,24 +323,15 @@ mod tests {
                 s3: None,
                 r2: None,
             },
-            catalog_mode: Default::default(),
             server: None,
             lambda: None,
             cloudflare: None,
-            iceberg: None,
         };
 
         otlp2parquet_writer::initialize_storage(&runtime_config)
             .expect("Failed to initialize storage");
 
-        let config = ProcessorConfig {
-            catalog: None,
-            namespace: "test",
-            snapshot_timestamp_ms: None,
-            retry_policy: RetryPolicy::default(),
-        };
-
-        let result = process_traces(&test_data, InputFormat::Protobuf, config)
+        let result = process_traces(&test_data, InputFormat::Protobuf)
             .await
             .expect("Failed to process traces");
 
@@ -403,14 +347,8 @@ mod tests {
         use otlp2parquet_core::InputFormat;
 
         let invalid_data = b"not valid otlp data";
-        let config = ProcessorConfig {
-            catalog: None,
-            namespace: "test",
-            snapshot_timestamp_ms: None,
-            retry_policy: RetryPolicy::default(),
-        };
 
-        let result = process_metrics(invalid_data, InputFormat::Protobuf, config).await;
+        let result = process_metrics(invalid_data, InputFormat::Protobuf).await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -445,24 +383,15 @@ mod tests {
                 s3: None,
                 r2: None,
             },
-            catalog_mode: Default::default(),
             server: None,
             lambda: None,
             cloudflare: None,
-            iceberg: None,
         };
 
         otlp2parquet_writer::initialize_storage(&runtime_config)
             .expect("Failed to initialize storage");
 
-        let config = ProcessorConfig {
-            catalog: None,
-            namespace: "test",
-            snapshot_timestamp_ms: None,
-            retry_policy: RetryPolicy::default(),
-        };
-
-        let result = process_metrics(&test_data, InputFormat::Protobuf, config)
+        let result = process_metrics(&test_data, InputFormat::Protobuf)
             .await
             .expect("Failed to process metrics");
 
