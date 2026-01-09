@@ -16,8 +16,8 @@ flowchart LR
         Logs
     end
 
-    subgraph OTLP2PARQUET
-        Decode["OTLP Decode"] --> Arrow["Arrow Mapping"] --> Write["Parquet Write"]
+    subgraph otlp2parquet
+        Decode["OTLP Decode"] --> Arrow["Arrow Mapping"] --> Write["Parquet"]
     end
 
     subgraph Storage["Storage"]
@@ -60,6 +60,14 @@ Query it:
 ```bash
 # see https://duckdb.org/install
 duckdb -c "SELECT * FROM './data/logs/**/*.parquet'"
+```
+
+Print configuration to receive OTLP from a collector, Claude Code, or Codex:
+
+```bash
+otlp2parquet connect otel-collector
+otlp2parquet connect claude-Code
+otlp2parquet connect codex
 ```
 
 ## Why?
