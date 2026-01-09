@@ -1,0 +1,2 @@
+window.ALL_CRATES = ["bootstrap","otlp2parquet","otlp2parquet_cloudflare","otlp2parquet_core","otlp2parquet_handlers","otlp2parquet_lambda","otlp2parquet_proto","otlp2parquet_writer"];
+//{"start":21,"fragment_lengths":[11,15,26,20,24,22,21,22]}

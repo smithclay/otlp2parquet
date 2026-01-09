@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["ipc"],"struct":["BatchConfig","BatchManager","CompletedBatch","LogSignalProcessor","PassthroughBatcher","TraceSignalProcessor"],"trait":["BatchMetadata","SignalProcessor"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["MetricType","SignalKey"],"fn":["main_fetch_glue"],"struct":["OtlpBatcherLegacy","OtlpBatcherV2","TraceContext"]};

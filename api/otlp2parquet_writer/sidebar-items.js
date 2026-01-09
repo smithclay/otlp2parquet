@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ErrorCode","WriterError"],"fn":["get_operator_clone","initialize_storage","redact_secret","write_batch","write_multi_batch"],"struct":["WriteBatchRequest","WriteMultiBatchRequest"],"type":["Result"]};

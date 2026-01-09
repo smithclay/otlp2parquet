@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["deserialize_and_concat","deserialize_batch","deserialize_batches","serialize_batch","validate_ipc_header"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["EXTRACTED_RESOURCE_ATTRS"],"fn":["otel_logs_schema","otel_logs_schema_arc"]};
