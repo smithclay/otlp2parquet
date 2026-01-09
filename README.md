@@ -6,34 +6,30 @@
 
 > What if your observability data was just a bunch of Parquet files?
 
-Receive OpenTelemetry logs, metrics, and traces and write them as Parquet files to local disk or cloud storage. Query with DuckDB, Spark, or anything that reads Parquet.
+Receive OpenTelemetry logs, metrics, and traces and write them as Parquet files to local disk or S3-compatible storage. Query with duckdb, Spark, pandas, or anything that reads Parquet.
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph Sources["OpenTelemetry Sources"]
         Traces
         Metrics
         Logs
     end
 
-    subgraph otlp2parquet
-        Decode["OTLP Decode"] --> Arrow["Arrow Mapping"] --> Write["Parquet"]
+    subgraph otlp2parquet["otlp2parquet"]
+        Decode["Decode"] --> Arrow["Arrow"] --> Write["Parquet"]
     end
 
     subgraph Storage["Storage"]
         Local["Local File"]
-        S3["S3-Compatible"]
+        S3["S3/R2"]
     end
 
-    subgraph Query["Query Engines"]
-        DuckDB
-        Trino
-        Other["Other Consumers"]
-    end
+    Query["Query Engines"]
 
-    Sources --> OTLP2PARQUET
-    OTLP2PARQUET --> Storage
-    Storage --> Query
+    Sources --> otlp2parquet
+    otlp2parquet --> Storage
+    Query --> Storage
 ```
 
 ## Quick Start
