@@ -201,7 +201,7 @@ async fn process_logs(
 }
 
 async fn process_traces(
-    state: &AppState,
+    _state: &AppState,
     format: InputFormat,
     body: axum::body::Bytes,
 ) -> Result<Response, AppError> {
@@ -259,15 +259,11 @@ async fn process_traces(
         let mut partition_paths = Vec::new();
         for batch in &batches {
             let path = otlp2parquet_writer::write_batch(otlp2parquet_writer::WriteBatchRequest {
-                catalog: state.catalog.as_ref().map(|c| c.as_ref()),
-                namespace: &state.namespace,
                 batch,
                 signal_type: otlp2parquet_core::SignalType::Traces,
                 metric_type: None,
                 service_name,
                 timestamp_micros: metadata.first_timestamp_micros,
-                snapshot_timestamp_ms: None,
-                retry_policy: otlp2parquet_writer::RetryPolicy::default(),
             })
             .await
             .map_err(|e| {
@@ -322,7 +318,7 @@ async fn process_traces(
 }
 
 async fn process_metrics(
-    state: &AppState,
+    _state: &AppState,
     format: InputFormat,
     body: axum::body::Bytes,
 ) -> Result<Response, AppError> {
@@ -381,15 +377,11 @@ async fn process_metrics(
 
             let partition_path =
                 otlp2parquet_writer::write_batch(otlp2parquet_writer::WriteBatchRequest {
-                    catalog: state.catalog.as_ref().map(|c| c.as_ref()),
-                    namespace: &state.namespace,
                     batch: &batch,
                     signal_type: otlp2parquet_core::SignalType::Metrics,
                     metric_type: Some(&metric_type),
                     service_name: &service_name,
                     timestamp_micros: timestamp_nanos,
-                    snapshot_timestamp_ms: None,
-                    retry_policy: otlp2parquet_writer::RetryPolicy::default(),
                 })
                 .await
                 .map_err(|e| {
@@ -458,22 +450,18 @@ async fn process_metrics(
 }
 
 pub(crate) async fn persist_log_batch(
-    state: &AppState,
+    _state: &AppState,
     completed: &CompletedBatch<otlp::LogMetadata>,
 ) -> anyhow::Result<Vec<String>> {
     let mut uploaded_paths = Vec::new();
 
     for batch in &completed.batches {
         let path = otlp2parquet_writer::write_batch(otlp2parquet_writer::WriteBatchRequest {
-            catalog: state.catalog.as_ref().map(|c| c.as_ref()),
-            namespace: &state.namespace,
             batch,
             signal_type: otlp2parquet_core::SignalType::Logs,
             metric_type: None,
             service_name: &completed.metadata.service_name,
             timestamp_micros: completed.metadata.first_timestamp_micros,
-            snapshot_timestamp_ms: None,
-            retry_policy: otlp2parquet_writer::RetryPolicy::default(),
         })
         .await
         .context("Failed to write logs to storage")?;

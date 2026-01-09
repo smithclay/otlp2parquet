@@ -77,13 +77,6 @@ pub enum ConfigValidationError {
         missing_vars: Vec<&'static str>,
         hint: String,
     },
-    /// Catalog configuration is partially present
-    PartialCatalogConfig {
-        catalog_type: &'static str,
-        present: Vec<&'static str>,
-        missing: Vec<&'static str>,
-        hint: String,
-    },
     /// Environment variable has invalid value
     InvalidValue {
         var_name: &'static str,
@@ -97,9 +90,6 @@ impl ConfigValidationError {
         match self {
             Self::MissingRequired { component, .. } => {
                 format!("{} configuration incomplete", component)
-            }
-            Self::PartialCatalogConfig { catalog_type, .. } => {
-                format!("{} is partially configured", catalog_type)
             }
             Self::InvalidValue { var_name, .. } => {
                 format!("Invalid configuration value for {}", var_name)
@@ -115,19 +105,6 @@ impl ConfigValidationError {
                 format!(
                     "Required environment variables not set: {}. {}",
                     missing_vars.join(", "),
-                    hint
-                )
-            }
-            Self::PartialCatalogConfig {
-                present,
-                missing,
-                hint,
-                ..
-            } => {
-                format!(
-                    "Found {} but missing {}. {}",
-                    present.join(", "),
-                    missing.join(", "),
                     hint
                 )
             }
@@ -215,19 +192,6 @@ mod tests {
         };
         assert_eq!(err.message(), "R2 Storage configuration incomplete");
         assert!(err.details().contains("VAR1, VAR2"));
-    }
-
-    #[test]
-    fn test_partial_catalog_config_message() {
-        let err = ConfigValidationError::PartialCatalogConfig {
-            catalog_type: "R2 Data Catalog",
-            present: vec!["CLOUDFLARE_ACCOUNT_ID"],
-            missing: vec!["CLOUDFLARE_BUCKET_NAME", "CLOUDFLARE_API_TOKEN"],
-            hint: "Provide all three variables".into(),
-        };
-        assert_eq!(err.message(), "R2 Data Catalog is partially configured");
-        assert!(err.details().contains("CLOUDFLARE_ACCOUNT_ID"));
-        assert!(err.details().contains("CLOUDFLARE_BUCKET_NAME"));
     }
 
     #[test]

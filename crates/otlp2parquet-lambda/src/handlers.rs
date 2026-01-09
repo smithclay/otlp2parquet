@@ -7,7 +7,7 @@ use base64::Engine;
 use flate2::read::GzDecoder;
 use otlp2parquet_handlers::{
     process_logs as process_logs_handler, process_metrics as process_metrics_handler,
-    process_traces as process_traces_handler, OtlpError, ProcessorConfig,
+    process_traces as process_traces_handler, OtlpError,
 };
 use serde_json::json;
 use std::borrow::Cow;
@@ -106,9 +106,9 @@ async fn handle_post(
     let format = otlp2parquet_core::InputFormat::from_content_type(content_type);
 
     match signal {
-        SignalKind::Logs => process_logs(body.as_ref(), format, content_type, state).await,
-        SignalKind::Metrics => process_metrics(body.as_ref(), format, content_type, state).await,
-        SignalKind::Traces => process_traces(body.as_ref(), format, content_type, state).await,
+        SignalKind::Logs => process_logs(body.as_ref(), format, content_type).await,
+        SignalKind::Metrics => process_metrics(body.as_ref(), format, content_type).await,
+        SignalKind::Traces => process_traces(body.as_ref(), format, content_type).await,
     }
 }
 
@@ -116,20 +116,8 @@ async fn process_logs(
     body: &[u8],
     format: otlp2parquet_core::InputFormat,
     content_type: Option<&str>,
-    state: &LambdaState,
 ) -> HttpResponseData {
-    let result = process_logs_handler(
-        body,
-        format,
-        ProcessorConfig {
-            catalog: state.catalog.as_deref(),
-            namespace: &state.namespace,
-            snapshot_timestamp_ms: None,
-            retry_policy: otlp2parquet_writer::RetryPolicy::default(),
-        },
-    )
-    .await
-    .map_err(|e| {
+    let result = process_logs_handler(body, format).await.map_err(|e| {
         tracing::error!(
             "Failed to process logs (format: {:?}, content-type: {:?}): {:?}",
             format,
@@ -158,20 +146,8 @@ async fn process_metrics(
     body: &[u8],
     format: otlp2parquet_core::InputFormat,
     content_type: Option<&str>,
-    state: &LambdaState,
 ) -> HttpResponseData {
-    let result = process_metrics_handler(
-        body,
-        format,
-        ProcessorConfig {
-            catalog: state.catalog.as_deref(),
-            namespace: &state.namespace,
-            snapshot_timestamp_ms: None,
-            retry_policy: otlp2parquet_writer::RetryPolicy::default(),
-        },
-    )
-    .await
-    .map_err(|e| {
+    let result = process_metrics_handler(body, format).await.map_err(|e| {
         tracing::error!(
             "Failed to process metrics (format: {:?}, content-type: {:?}): {:?}",
             format,
@@ -199,20 +175,8 @@ async fn process_traces(
     body: &[u8],
     format: otlp2parquet_core::InputFormat,
     content_type: Option<&str>,
-    state: &LambdaState,
 ) -> HttpResponseData {
-    let result = process_traces_handler(
-        body,
-        format,
-        ProcessorConfig {
-            catalog: state.catalog.as_deref(),
-            namespace: &state.namespace,
-            snapshot_timestamp_ms: None,
-            retry_policy: otlp2parquet_writer::RetryPolicy::default(),
-        },
-    )
-    .await
-    .map_err(|e| {
+    let result = process_traces_handler(body, format).await.map_err(|e| {
         tracing::error!(
             "Failed to process traces (format: {:?}, content-type: {:?}): {:?}",
             format,

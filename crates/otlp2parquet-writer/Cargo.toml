@@ -1,6 +1,6 @@
 [package]
 name = "otlp2parquet-writer"
-description = "Parquet and Iceberg writer for otlp2parquet"
+description = "Parquet writer for otlp2parquet"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -8,7 +8,6 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-icepick = { version = "0.3", default-features = false }
 otlp2parquet-core = { workspace = true }
 arrow = { workspace = true }
 anyhow = "1"

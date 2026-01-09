@@ -9,7 +9,6 @@
 - **Cheap storage** - Write to S3, R2, or local filesystem. No vendor lock-in.
 - **Serverless** - Deploy to Cloudflare Workers (<3MB WASM) or AWS Lambda.
 - **Query anywhere** - DuckDB, Athena, Spark - any Parquet reader works.
-- **Optional Iceberg** - Add ACID transactions with S3 Tables or R2 Data Catalog.
 
 ## Get Started
 

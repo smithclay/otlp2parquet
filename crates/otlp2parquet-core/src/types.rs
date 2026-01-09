@@ -1,4 +1,4 @@
-//! Shared types used across storage and iceberg crates
+//! Shared types used across storage and ingestion crates
 //!
 //! These types are defined here to avoid circular dependencies
 
@@ -107,7 +107,7 @@ impl SignalKey {
         }
     }
 
-    /// Returns the Iceberg table name for this signal
+    /// Returns the default table-style name for this signal
     pub fn table_name(&self) -> String {
         match self {
             SignalKey::Logs => "otel_logs".to_string(),
@@ -260,7 +260,7 @@ mod tests {
 
 /// Result of writing a Parquet file
 ///
-/// Contains metadata needed for both storage tracking and Iceberg catalog commits
+/// Contains metadata needed for storage tracking and downstream metadata consumers
 #[derive(Clone)]
 pub struct ParquetWriteResult {
     /// Path where the file was written
@@ -273,7 +273,7 @@ pub struct ParquetWriteResult {
     pub row_count: i64,
     /// Arrow schema used
     pub arrow_schema: Arc<arrow::datatypes::Schema>,
-    /// Parquet metadata (for Iceberg DataFile construction)
+    /// Parquet metadata for downstream consumers
     pub parquet_metadata: Arc<parquet::file::metadata::ParquetMetaData>,
     /// Timestamp when write completed
     pub completed_at: chrono::DateTime<chrono::Utc>,

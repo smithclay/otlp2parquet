@@ -27,24 +27,11 @@ cpu_ms = 2000
 binding = "LOGS_BUCKET"
 bucket_name = "{{BUCKET_NAME}}"
 
-{{#ICEBERG}}
-# KV namespace for tracking pending Parquet files (Iceberg mode only)
-[[kv_namespaces]]
-binding = "PENDING_FILES"
-id = "{{KV_NAMESPACE_ID}}"
-preview_id = "{{KV_NAMESPACE_ID}}"
-{{/ICEBERG}}
-
 {{#BATCHING}}
 # Durable Objects for batching (SQLite-backed for persistence across hibernation)
 [[durable_objects.bindings]]
 name = "BATCHER"
 class_name = "OtlpBatcherV2"
-
-# Self service binding for DO to call back to Worker (for KV receipt writes)
-[[services]]
-binding = "SELF"
-service = "{{WORKER_NAME}}"
 
 # Migration: SQLite storage for DO (persists across hibernation)
 [[migrations]]
@@ -63,10 +50,6 @@ AWS_ACCESS_KEY_ID = "{{R2_ACCESS_KEY_ID}}"
 AWS_SECRET_ACCESS_KEY = "{{R2_SECRET_ACCESS_KEY}}"
 AWS_ENDPOINT_URL = "https://{{ACCOUNT_ID}}.r2.cloudflarestorage.com"
 {{/INLINE_CREDENTIALS}}
-OTLP2PARQUET_CATALOG_MODE = "{{CATALOG_MODE}}"
-{{#ICEBERG}}
-CLOUDFLARE_BUCKET_NAME = "{{BUCKET_NAME}}"
-{{/ICEBERG}}
 # Basic authentication
 OTLP2PARQUET_BASIC_AUTH_ENABLED = "{{BASIC_AUTH_ENABLED}}"
 {{#BASICAUTH}}
@@ -96,9 +79,3 @@ head_sampling_rate = 0.05
 binding = "METRICS"
 dataset = "otlp2parquet_usage"
 {{/LOGGING}}
-
-{{#ICEBERG}}
-# Cron trigger for catalog sync (every 5 minutes)
-[triggers]
-crons = ["*/5 * * * *"]
-{{/ICEBERG}}

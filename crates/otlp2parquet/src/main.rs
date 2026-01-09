@@ -36,6 +36,11 @@ enum Commands {
         #[command(subcommand)]
         platform: otlp2parquet::deploy::DeployCommand,
     },
+    /// Generate configuration for connecting external services
+    Connect {
+        #[command(subcommand)]
+        service: otlp2parquet::connect::ConnectCommand,
+    },
     /// Start the HTTP server (default if no subcommand given)
     Serve,
 }
@@ -45,8 +50,17 @@ fn main() -> Result<()> {
 
     match cli.command {
         Some(Commands::Deploy { platform }) => platform.run(),
+        Some(Commands::Connect { service }) => run_connect(service),
         Some(Commands::Serve) | None => run_server(cli),
     }
+}
+
+fn run_connect(service: otlp2parquet::connect::ConnectCommand) -> Result<()> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("Failed to build tokio runtime")?
+        .block_on(service.run())
 }
 
 fn run_server(cli: Cli) -> Result<()> {
@@ -122,7 +136,7 @@ fn apply_cli_overrides(config: &mut RuntimeConfig, cli: &Cli) -> Result<()> {
 }
 
 fn apply_desktop_defaults(config: &mut RuntimeConfig) {
-    use otlp2parquet_core::config::{CatalogMode, LogFormat, ServerConfig, StorageBackend};
+    use otlp2parquet_core::config::{LogFormat, ServerConfig, StorageBackend};
 
     // Ensure server config exists with defaults
     let server = config.server.get_or_insert_with(ServerConfig::default);
@@ -133,11 +147,6 @@ fn apply_desktop_defaults(config: &mut RuntimeConfig) {
     // Default to filesystem backend for desktop
     if config.storage.backend == StorageBackend::Fs {
         config.storage.fs.get_or_insert_with(Default::default);
-    }
-
-    // Default to no Iceberg catalog (simpler for local dev)
-    if config.catalog_mode == CatalogMode::Iceberg && config.iceberg.is_none() {
-        config.catalog_mode = CatalogMode::None;
     }
 }
 
@@ -170,7 +179,6 @@ fn display_startup_info(config: &RuntimeConfig) {
     }
 
     info!("│ Log level: {}", server.log_level);
-    info!("│ Catalog mode: {}", config.catalog_mode);
     info!(
         "│ Batching: {}",
         if config.batch.enabled {

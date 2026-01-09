@@ -36,15 +36,6 @@ WHERE Timestamp > current_timestamp - interval '1 hour'
 LIMIT 100;
 ```
 
-### Iceberg tables (S3 Tables)
-
-```sql
-INSTALL iceberg; LOAD iceberg;
-CREATE SECRET (TYPE S3, REGION 'us-west-2');
-
-SELECT * FROM iceberg_scan('s3://my-bucket/logs');
-```
-
 ## Example Queries
 
 ### Logs by service
@@ -221,24 +212,6 @@ LIMIT 100;
     error_traces = error_logs.join(traces, "TraceId")
     error_traces.select("Timestamp", "ServiceName", "Body", "SpanName", "Duration").show()
     ```
-
-## Iceberg vs Plain Parquet
-
-| Feature | Plain Parquet | Iceberg |
-|---------|---------------|---------|
-| Query syntax | `read_parquet('s3://...')` | `iceberg_scan('s3://...')` |
-| ACID transactions | No | Yes |
-| Schema evolution | No | Yes |
-| Time travel | No | Yes |
-| Setup complexity | Lower | Higher |
-| Cost | Lower (storage only) | Higher (catalog + storage) |
-
-Plain Parquet works for most use cases. Use Iceberg when you need:
-
-- Concurrent writes from multiple sources
-- Schema changes without downtime
-- Point-in-time queries
-- ACID guarantees for analytics
 
 ## Tips
 

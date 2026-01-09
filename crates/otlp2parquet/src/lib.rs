@@ -34,6 +34,7 @@ use tracing::{debug, error, info, warn};
 mod handlers;
 mod init;
 
+pub mod connect;
 pub mod deploy;
 
 use handlers::{handle_logs, handle_metrics, handle_traces, health_check, ready_check};
@@ -43,8 +44,6 @@ use init::init_writer;
 /// Application state shared across all requests
 #[derive(Clone)]
 pub(crate) struct AppState {
-    pub catalog: Option<Arc<dyn otlp2parquet_writer::icepick::catalog::Catalog>>,
-    pub namespace: String,
     pub batcher: Option<Arc<BatchManager>>,
     pub passthrough: PassthroughBatcher,
     pub max_payload_bytes: usize,
@@ -152,8 +151,8 @@ pub async fn run_with_config(config: RuntimeConfig) -> Result<()> {
         .listen_addr
         .clone();
 
-    // Initialize catalog and namespace
-    let (catalog, namespace) = init_writer(&config).await?;
+    // Initialize storage
+    init_writer(&config)?;
 
     // Configure batching
     let batch_config = BatchConfig {
@@ -180,8 +179,6 @@ pub async fn run_with_config(config: RuntimeConfig) -> Result<()> {
 
     // Create app state
     let state = AppState {
-        catalog,
-        namespace,
         batcher,
         passthrough: PassthroughBatcher::default(),
         max_payload_bytes,

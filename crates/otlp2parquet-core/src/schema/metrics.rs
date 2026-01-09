@@ -13,7 +13,7 @@ use std::sync::{Arc, OnceLock};
 
 use crate::otlp::field_names::arrow as field;
 
-/// Helper to create a Field with PARQUET:field_id metadata for Iceberg compatibility
+/// Helper to create a Field with PARQUET:field_id metadata for tooling compatibility
 fn field_with_id(name: &str, data_type: DataType, nullable: bool, id: i32) -> Field {
     let metadata = HashMap::from([("PARQUET:field_id".to_string(), id.to_string())]);
     Field::new(name, data_type, nullable).with_metadata(metadata)
@@ -21,7 +21,7 @@ fn field_with_id(name: &str, data_type: DataType, nullable: bool, id: i32) -> Fi
 
 /// Helper to create a List element Field with PARQUET:field_id metadata
 ///
-/// Iceberg requires field IDs on all nested fields, including List elements.
+/// Field IDs are attached to all nested fields for broad tooling compatibility.
 fn list_element_field(data_type: DataType, nullable: bool, element_id: i32) -> Field {
     let metadata = HashMap::from([("PARQUET:field_id".to_string(), element_id.to_string())]);
     Field::new("item", data_type, nullable).with_metadata(metadata)
@@ -29,14 +29,13 @@ fn list_element_field(data_type: DataType, nullable: bool, element_id: i32) -> F
 
 /// Returns the base fields shared by all metric types
 fn base_fields() -> Vec<Field> {
-    // S3 Tables doesn't support complex types (Map, Struct) - use JSON-encoded strings instead
-    // This matches the Iceberg schema definition in iceberg_schemas
+    // Use JSON-encoded strings for complex types (Map, Struct) for broad query-engine support
     let string_type = DataType::Utf8;
 
     vec![
         // ============ Common Fields (IDs 1-5) ============
         // Shared across all signal types for cross-signal queries and schema evolution
-        // Iceberg v1/v2 only supports microsecond precision timestamps
+        // Use microsecond precision timestamps for broad engine compatibility
         field_with_id(
             field::TIMESTAMP,
             DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),

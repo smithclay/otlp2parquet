@@ -1,14 +1,13 @@
 //! Cloudflare Workers + R2 smoke test harness
 //!
-//! Tests otlp2parquet Cloudflare Workers with both R2 plain Parquet and R2 Data Catalog (Iceberg).
+//! Tests otlp2parquet Cloudflare Workers with R2 plain Parquet storage.
 //!
 //! ## Architecture
 //! - Setup: Create unique R2 bucket per test (e.g., "smoke-workers-{uuid}")
-//! - Optional: Enable R2 Data Catalog for Iceberg tests
 //! - Deploy: Wrangler deploy WASM Workers script using generated config
 //! - Send signals: POST to Workers URL with OTLP payloads
 //! - Verify execution: Query Workers logs via Cloudflare API
-//! - Verify data: DuckDB queries R2 Parquet files (with or without catalog)
+//! - Verify data: DuckDB queries R2 Parquet files directly
 //! - Cleanup: Delete Workers script, all R2 objects, and R2 bucket
 //!
 //! ## Prerequisites
@@ -24,9 +23,8 @@
 //! - `SMOKE_TEST_WORKER_PREFIX`: Worker name prefix (default: "smoke-workers")
 //! - `SMOKE_TEST_LIVE_TAIL`: Set to "1" or "true" to enable live tail log capture
 
-pub use super::CatalogMode;
 use super::{
-    CatalogType, DeploymentInfo, DuckDBVerifier, ExecutionStatus, R2Credentials, SmokeTestHarness,
+    DeploymentInfo, DuckDBVerifier, ExecutionStatus, R2Credentials, SmokeTestHarness,
     StorageBackend, StorageConfig, TestDataSet,
 };
 use anyhow::{Context, Result};
@@ -34,7 +32,6 @@ use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{config::Builder as S3ConfigBuilder, Client as S3Client};
 use otlp2parquet::deploy::cloudflare::process_conditional_blocks;
-use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -187,8 +184,6 @@ pub struct WorkersHarness {
     worker_name: String,
     /// R2 bucket name (pre-created, shared across tests)
     bucket_name: String,
-    /// Iceberg namespace unique to this test
-    namespace: String,
     /// Unique test prefix within bucket (e.g., "smoke-abc123/")
     test_prefix: String,
     /// Cloudflare account ID
@@ -198,19 +193,11 @@ pub struct WorkersHarness {
     /// R2 S3 API credentials (from .env)
     r2_access_key_id: String,
     r2_secret_access_key: String,
-    /// Catalog mode
-    catalog_mode: CatalogMode,
     /// Batch mode
     batch_mode: BatchMode,
-    /// KV namespace ID (for catalog mode)
-    kv_namespace_id: std::sync::RwLock<Option<String>>,
-    /// KV namespace title (unique per test for isolation)
-    kv_namespace_title: String,
     /// Live tail session (enabled via SMOKE_TEST_LIVE_TAIL=1)
     live_tail: std::sync::RwLock<Option<LiveTail>>,
 }
-
-const KV_NAMESPACE_BINDING: &str = "PENDING_FILES";
 
 impl WorkersHarness {
     /// Create S3 client configured for R2's S3-compatible API
@@ -242,25 +229,16 @@ impl WorkersHarness {
         cmd.arg("-c")
             .env("CLOUDFLARE_API_TOKEN", &self.api_token)
             .env("CLOUDFLARE_ACCOUNT_ID", &self.account_id);
-
-        // Add catalog env vars if enabled
-        if self.catalog_mode == CatalogMode::Enabled {
-            cmd.env("CLOUDFLARE_BUCKET_NAME", &self.bucket_name);
-        }
-
         cmd
     }
 
     /// Create harness from environment variables
-    pub fn from_env(catalog_mode: CatalogMode) -> Result<Self> {
-        Self::from_env_with_batching(catalog_mode, BatchMode::Disabled)
+    pub fn from_env() -> Result<Self> {
+        Self::from_env_with_batching(BatchMode::Disabled)
     }
 
     /// Create harness from environment variables with batching mode
-    pub fn from_env_with_batching(
-        catalog_mode: CatalogMode,
-        batch_mode: BatchMode,
-    ) -> Result<Self> {
+    pub fn from_env_with_batching(batch_mode: BatchMode) -> Result<Self> {
         let worker_prefix = std::env::var("SMOKE_TEST_WORKER_PREFIX")
             .unwrap_or_else(|_| "smoke-workers".to_string());
         let account_id =
@@ -288,30 +266,18 @@ impl WorkersHarness {
 
         let worker_name = format!("{}-{}", worker_prefix, test_id);
         let test_prefix = format!("smoke-{}/", test_id); // Unique prefix within shared bucket
-        let namespace = format!("otlp_smoke_{}", test_id);
-        // Unique KV namespace title per test to prevent cross-contamination in parallel runs
-        let kv_namespace_title = format!("{}_{}", KV_NAMESPACE_BINDING, test_id);
 
         Ok(Self {
             worker_name,
             bucket_name,
-            namespace,
             test_prefix,
             account_id,
             api_token,
             r2_access_key_id,
             r2_secret_access_key,
-            catalog_mode,
             batch_mode,
-            kv_namespace_id: std::sync::RwLock::new(None),
-            kv_namespace_title,
             live_tail: std::sync::RwLock::new(None),
         })
-    }
-
-    /// Check if this harness has KV tracking enabled
-    pub fn has_kv_tracking(&self) -> bool {
-        self.catalog_mode == CatalogMode::Enabled
     }
 
     /// Check if live tail is enabled via SMOKE_TEST_LIVE_TAIL=1 env var
@@ -354,58 +320,6 @@ impl WorkersHarness {
         Ok(())
     }
 
-    /// Count KV receipts for pending files
-    ///
-    /// Uses the Cloudflare API directly instead of `wrangler kv key list` because
-    /// wrangler CLI has caching/consistency issues that can return empty results
-    /// even when keys exist.
-    pub async fn count_kv_receipts(&self) -> Result<usize> {
-        let kv_id = self
-            .kv_namespace_id
-            .read()
-            .unwrap()
-            .as_ref()
-            .context("KV namespace ID not set")?
-            .clone();
-
-        tracing::info!("Counting KV receipts in namespace: {} via API", kv_id);
-
-        // Use Cloudflare API directly for reliable key listing
-        let client = reqwest::Client::new();
-        let url = format!(
-            "https://api.cloudflare.com/client/v4/accounts/{}/storage/kv/namespaces/{}/keys?prefix=pending:",
-            self.account_id, kv_id
-        );
-
-        let response = client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", self.api_token))
-            .send()
-            .await
-            .context("Failed to call Cloudflare KV API")?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("KV API returned {}: {}", status, body);
-        }
-
-        let body: Value = response
-            .json()
-            .await
-            .context("Failed to parse KV API response")?;
-
-        // API response format: { "success": true, "result": [{ "name": "..." }, ...] }
-        let count = body
-            .get("result")
-            .and_then(|r| r.as_array())
-            .map(|arr| arr.len())
-            .unwrap_or(0);
-
-        tracing::info!("Found {} KV receipts via API", count);
-        Ok(count)
-    }
-
     /// Generate wrangler config from shared template
     fn generate_config(&self) -> Result<PathBuf> {
         let wrangler_dir =
@@ -414,23 +328,18 @@ impl WorkersHarness {
         // Use the shared template from otlp2parquet crate
         let template = include_str!("../../templates/wrangler.toml");
 
-        let use_iceberg = self.catalog_mode == CatalogMode::Enabled;
-        let catalog_mode = if use_iceberg { "iceberg" } else { "none" };
         let use_batching = self.batch_mode == BatchMode::Enabled;
 
         // Replace placeholders
-        let kv_id = self.kv_namespace_id.read().unwrap();
-        let kv_namespace_id = kv_id.as_deref().unwrap_or("REPLACE_WITH_KV_NAMESPACE_ID");
-
         let mut config_content = template
             .replace("{{WORKER_NAME}}", &self.worker_name)
             .replace("{{BUCKET_NAME}}", &self.bucket_name)
             .replace("{{ACCOUNT_ID}}", &self.account_id)
             .replace("{{R2_ACCESS_KEY_ID}}", &self.r2_access_key_id)
             .replace("{{R2_SECRET_ACCESS_KEY}}", &self.r2_secret_access_key)
-            .replace("{{CATALOG_MODE}}", catalog_mode)
+            .replace("{{CATALOG_MODE}}", "none")
             .replace("{{BASIC_AUTH_ENABLED}}", "false")
-            .replace("{{KV_NAMESPACE_ID}}", kv_namespace_id);
+            .replace("{{KV_NAMESPACE_ID}}", "unused");
 
         // Add batching environment variables if enabled
         if use_batching {
@@ -456,31 +365,21 @@ impl WorkersHarness {
                 ("BUILD_FROM_SOURCE", true),   // Smoke tests build from source
                 ("BUILD_FROM_RELEASE", false), // Not using release builds
                 ("INLINE_CREDENTIALS", true),  // Smoke tests use inline credentials
-                ("ICEBERG", use_iceberg),
-                ("BASICAUTH", false),       // No basic auth for smoke tests
-                ("LOGGING", true),          // Enable Workers observability logging
-                ("BATCHING", use_batching), // Enable Durable Objects for batching
+                ("ICEBERG", false),            // No Iceberg catalog
+                ("BASICAUTH", false),          // No basic auth for smoke tests
+                ("LOGGING", true),             // Enable Workers observability logging
+                ("BATCHING", use_batching),    // Enable Durable Objects for batching
             ],
         );
 
         // Build test-only variables string
-        let mut test_vars = format!(
+        let test_vars = format!(
             "# Test-only variables (injected by smoke test harness)\n\
              OTLP2PARQUET_R2_PREFIX = \"{}\"\n",
             self.test_prefix
         );
-        if use_iceberg {
-            test_vars.push_str(&format!("CLOUDFLARE_API_TOKEN = \"{}\"\n", self.api_token));
-            // RuntimeConfig reads env vars with OTLP2PARQUET_ prefix via WorkerEnvSource::get()
-            test_vars.push_str(&format!(
-                "OTLP2PARQUET_ICEBERG_NAMESPACE = \"{}\"\n",
-                self.namespace
-            ));
-        }
 
         // Insert test vars BEFORE [observability] section (to keep them in [vars])
-        // The [vars] section ends when a new section header appears
-        // Look for section headers at start of line (after newline)
         let insert_markers = [
             "[observability]",
             "[[analytics_engine_datasets]]",
@@ -491,10 +390,8 @@ impl WorkersHarness {
             .filter_map(|marker| config_content.find(marker))
             .min()
         {
-            // Insert test vars BEFORE the section header (keeping blank line if present)
             config_content.insert_str(insert_pos, &format!("{}\n", test_vars));
         } else {
-            // Fallback: append at end (shouldn't happen with LOGGING=true)
             config_content.push_str(&format!("\n{}", test_vars));
         }
 
@@ -583,121 +480,14 @@ impl WorkersHarness {
     }
 }
 
-fn parse_kv_id(text: &str) -> Option<String> {
-    // Try to find embedded JSON block in output (wrangler outputs JSON in human-readable text)
-    // Look for { ... } containing "id" field
-    if let Some(start) = text.find('{') {
-        // Find the matching closing brace by counting braces
-        let mut depth = 0;
-        let mut end = start;
-        for (i, c) in text[start..].char_indices() {
-            match c {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end = start + i + 1;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        if let Ok(json) = serde_json::from_str::<Value>(&text[start..end]) {
-            // Handle wrangler kv namespace create output format:
-            // { "kv_namespaces": [{ "binding": "...", "id": "..." }] }
-            if let Some(namespaces) = json.get("kv_namespaces").and_then(|v| v.as_array()) {
-                if let Some(first) = namespaces.first() {
-                    if let Some(id) = first.get("id").and_then(|v| v.as_str()) {
-                        return Some(id.to_string());
-                    }
-                }
-            }
-            // Direct { "id": "..." } format
-            if let Some(id) = json.get("id").and_then(|v| v.as_str()) {
-                return Some(id.to_string());
-            }
-        }
-    }
-
-    // Try JSON object per line
-    for line in text.lines() {
-        if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(line) {
-            if let Some(id) = map.get("id").and_then(|v| v.as_str()) {
-                return Some(id.to_string());
-            }
-        }
-    }
-
-    // Try TOML-style 'id = "..."' format (wrangler outputs this)
-    for line in text.lines() {
-        let line = line.trim();
-        if line.starts_with("id = \"") && line.ends_with('"') {
-            let id = &line[6..line.len() - 1]; // Strip 'id = "' prefix and '"' suffix
-            if id.len() == 32 && id.chars().all(|c| c.is_ascii_hexdigit()) {
-                return Some(id.to_string());
-            }
-        }
-    }
-
-    // Try plain hex token fallback (32 char hex string)
-    text.split_whitespace()
-        .find(|token| token.len() == 32 && token.chars().all(|c| c.is_ascii_hexdigit()))
-        .map(|s| s.to_string())
-}
-
-fn parse_kv_namespace_list(text: &str) -> Option<String> {
-    if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(text) {
-        for item in items {
-            if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
-                let title_matches = item
-                    .get("title")
-                    .and_then(|v| v.as_str())
-                    .map(|t| t.contains(KV_NAMESPACE_BINDING))
-                    .unwrap_or(false);
-                let binding_matches = item
-                    .get("binding")
-                    .and_then(|v| v.as_str())
-                    .map(|b| b == KV_NAMESPACE_BINDING)
-                    .unwrap_or(false);
-
-                if title_matches || binding_matches {
-                    return Some(id.to_string());
-                }
-            }
-        }
-    }
-
-    // Try to find a line with the binding name and extract a hex token
-    for line in text.lines() {
-        if line.contains(KV_NAMESPACE_BINDING) {
-            if let Some(id) = line
-                .split_whitespace()
-                .find(|token| token.len() == 32 && token.chars().all(|c| c.is_ascii_hexdigit()))
-            {
-                return Some(id.to_string());
-            }
-        }
-    }
-
-    // Fallback to generic parsing
-    parse_kv_id(text)
-}
-
 #[async_trait::async_trait]
 impl SmokeTestHarness for WorkersHarness {
     async fn deploy(&self) -> Result<DeploymentInfo> {
         tracing::info!(
-            "Deploying Workers smoke test: {} (bucket: {}, prefix: {}, catalog: {}, batching: {})",
+            "Deploying Workers smoke test: {} (bucket: {}, prefix: {}, batching: {})",
             self.worker_name,
             self.bucket_name,
             self.test_prefix,
-            if self.catalog_mode == CatalogMode::Enabled {
-                "enabled"
-            } else {
-                "disabled"
-            },
             if self.batch_mode == BatchMode::Enabled {
                 "enabled"
             } else {
@@ -725,63 +515,7 @@ impl SmokeTestHarness for WorkersHarness {
             }
         }
 
-        // Enable R2 Data Catalog if requested
-        if self.catalog_mode == CatalogMode::Enabled {
-            tracing::info!("Enabling R2 Data Catalog for bucket: {}", self.bucket_name);
-            let enable_catalog_cmd =
-                format!("npx wrangler r2 bucket catalog enable {}", self.bucket_name);
-            let output = self
-                .wrangler_command()
-                .arg(&enable_catalog_cmd)
-                .output()
-                .context("Failed to enable R2 catalog")?;
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                tracing::warn!("Failed to enable R2 catalog: {}", stderr);
-                // Continue anyway - catalog might already be enabled
-            }
-
-            // Create KV namespace for pending files (unique per test for isolation)
-            tracing::info!("Creating KV namespace: {}", self.kv_namespace_title);
-            let create_kv_cmd = format!(
-                "npx wrangler kv namespace create {} --binding {}",
-                self.kv_namespace_title, KV_NAMESPACE_BINDING
-            );
-            let output = self
-                .wrangler_command()
-                .arg(create_kv_cmd)
-                .output()
-                .context("Failed to create KV namespace")?;
-
-            if output.status.success() {
-                // Parse KV namespace ID from output
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let combined = format!("{}\n{}", stdout, stderr);
-                if let Some(id) = parse_kv_id(&combined) {
-                    tracing::info!("Created KV namespace with ID: {}", id);
-                    *self.kv_namespace_id.write().unwrap() = Some(id);
-                } else {
-                    anyhow::bail!(
-                        "KV namespace '{}' created but could not parse ID from output:\nSTDOUT: {}\nSTDERR: {}",
-                        self.kv_namespace_title,
-                        stdout,
-                        stderr
-                    );
-                }
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                // Each test should have its own unique namespace - fail if creation fails
-                anyhow::bail!(
-                    "Failed to create unique KV namespace '{}': {}",
-                    self.kv_namespace_title,
-                    stderr
-                );
-            }
-        }
-
-        // Generate wrangler config from template (after KV namespace creation)
+        // Generate wrangler config from template
         let config_path = self.generate_config()?;
 
         // Deploy using wrangler CLI with generated config
@@ -822,18 +556,9 @@ impl SmokeTestHarness for WorkersHarness {
         tokio::time::sleep(Duration::from_secs(5)).await;
 
         Ok(DeploymentInfo {
-            endpoint: endpoint.clone(),
-            catalog_endpoint: if self.catalog_mode == CatalogMode::Enabled {
-                // R2 Data Catalog REST endpoint format
-                format!(
-                    "https://catalog.cloudflarestorage.com/{}/{}",
-                    self.account_id, self.bucket_name
-                )
-            } else {
-                "r2-plain-parquet".to_string()
-            },
+            endpoint,
             bucket: self.bucket_name.clone(),
-            namespace: self.namespace.clone(),
+            prefix: self.test_prefix.clone(),
             resource_ids: HashMap::from([
                 ("worker_name".to_string(), self.worker_name.clone()),
                 ("bucket_name".to_string(), self.bucket_name.clone()),
@@ -936,29 +661,6 @@ impl SmokeTestHarness for WorkersHarness {
             tracing::info!("Sent traces (protobuf)");
         }
 
-        // Trigger catalog sync immediately in catalog mode to avoid waiting for cron
-        if self.catalog_mode == CatalogMode::Enabled {
-            tracing::info!("Triggering catalog sync via internal endpoint");
-            let resp = client
-                .post(format!("{}/__internal/sync_catalog", endpoint))
-                .send()
-                .await
-                .context("Failed to call /__internal/sync_catalog")?;
-
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-
-            if !status.is_success() {
-                anyhow::bail!("Catalog sync endpoint failed (status {}): {}", status, body);
-            }
-
-            tracing::info!(
-                "Catalog sync endpoint completed successfully (status {}): {}",
-                status,
-                body
-            );
-        }
-
         Ok(())
     }
 
@@ -1019,20 +721,6 @@ impl SmokeTestHarness for WorkersHarness {
 
     fn duckdb_verifier(&self, _info: &DeploymentInfo) -> DuckDBVerifier {
         DuckDBVerifier {
-            catalog_type: if self.catalog_mode == CatalogMode::Enabled {
-                CatalogType::R2Catalog
-            } else {
-                CatalogType::PlainParquet
-            },
-            catalog_endpoint: if self.catalog_mode == CatalogMode::Enabled {
-                // R2 Data Catalog REST endpoint format
-                format!(
-                    "https://catalog.cloudflarestorage.com/{}/{}",
-                    self.account_id, self.bucket_name
-                )
-            } else {
-                "r2-plain-parquet".to_string()
-            },
             storage_config: StorageConfig {
                 backend: StorageBackend::R2 {
                     account_id: self.account_id.clone(),
@@ -1043,11 +731,6 @@ impl SmokeTestHarness for WorkersHarness {
                     },
                 },
                 prefix: Some(self.test_prefix.clone()),
-            },
-            catalog_token: if self.catalog_mode == CatalogMode::Enabled {
-                Some(self.api_token.clone())
-            } else {
-                None
             },
         }
     }
@@ -1085,25 +768,7 @@ impl SmokeTestHarness for WorkersHarness {
         let config_path = wrangler_dir.join(format!("wrangler-{}.toml", self.worker_name));
         let _ = fs::remove_file(config_path);
 
-        // 2. Delete KV namespace if we created one
-        if let Some(kv_id) = self.kv_namespace_id.read().unwrap().as_ref() {
-            tracing::info!("Deleting KV namespace: {}", kv_id);
-            let delete_kv_cmd =
-                format!("npx wrangler kv namespace delete --namespace-id {}", kv_id);
-            match self.wrangler_command().arg(&delete_kv_cmd).output() {
-                Ok(output) if output.status.success() => {
-                    tracing::info!("KV namespace deleted successfully");
-                }
-                Ok(_) => {
-                    tracing::warn!("Failed to delete KV namespace (may not exist)");
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to delete KV namespace: {}", e);
-                }
-            }
-        }
-
-        // 3. Delete all R2 objects with test prefix using S3 API
+        // 2. Delete all R2 objects with test prefix using S3 API
         tracing::info!(
             "Deleting test objects from bucket {} with prefix {}",
             self.bucket_name,

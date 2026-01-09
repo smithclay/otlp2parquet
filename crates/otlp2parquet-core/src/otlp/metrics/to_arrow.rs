@@ -32,7 +32,7 @@ use crate::schema::metrics::*;
 /// Helper to convert a ListArray from a ListBuilder to use a specific field
 ///
 /// ListBuilder creates lists with default fields, but our schema requires
-/// fields with specific metadata (field_id for Iceberg). This function
+/// fields with specific metadata (field_id) for tooling compatibility. This function
 /// reconstructs the array with the correct field definition from the schema.
 fn list_array_with_field<OffsetSize: OffsetSizeTrait>(
     list_array: GenericListArray<OffsetSize>,
@@ -1210,7 +1210,7 @@ impl SummaryBuilder {
 
 // Helper functions
 
-/// Convert OTLP nanosecond timestamps to microseconds for Iceberg compatibility
+/// Convert OTLP nanosecond timestamps to microseconds for Parquet compatibility
 #[inline]
 fn nanos_to_micros(ns: u64) -> i64 {
     ((ns / 1_000).min(i64::MAX as u64)) as i64

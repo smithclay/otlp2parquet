@@ -1,16 +1,12 @@
 //! Unified smoke tests for all platforms
 //!
 //! This module provides a unified test framework that runs the same test logic
-//! across all platforms (Server, Lambda, Workers) with both catalog modes
-//! (Iceberg catalog and plain Parquet).
+//! across all platforms (Server, Lambda, Workers) writing Parquet files.
 //!
 //! ## Test Matrix
-//! - Server + Iceberg (Nessie REST catalog)
-//! - Server + Plain Parquet
-//! - Lambda + S3 Tables
-//! - Lambda + Plain Parquet
-//! - Workers + R2 Data Catalog
-//! - Workers + Plain Parquet
+//! - Server + MinIO S3
+//! - Lambda + AWS S3
+//! - Workers + Cloudflare R2
 //!
 //! ## Running Tests
 //! ```bash
@@ -60,12 +56,9 @@ fn init_tracing() {
 /// ```
 ///
 /// This generates:
-/// - server::test_name_with_catalog
-/// - server::test_name_without_catalog
-/// - lambda::test_name_with_catalog
-/// - lambda::test_name_without_catalog (TODO)
-/// - workers::test_name_with_catalog
-/// - workers::test_name_without_catalog
+/// - server::test_name
+/// - lambda::test_name
+/// - workers::test_name
 macro_rules! smoke_test {
     ($test_name:ident, $test_fn:expr) => {
         paste::paste! {
@@ -74,16 +67,9 @@ macro_rules! smoke_test {
                 use super::*;
 
                 #[tokio::test]
-                async fn with_catalog() -> Result<()> {
+                async fn test() -> Result<()> {
                     init_tracing();
-                    let harness = harness::server::ServerHarness::new(harness::CatalogMode::Enabled).await?;
-                    $test_fn(&harness).await
-                }
-
-                #[tokio::test]
-                async fn without_catalog() -> Result<()> {
-                    init_tracing();
-                    let harness = harness::server::ServerHarness::new(harness::CatalogMode::None).await?;
+                    let harness = harness::server::ServerHarness::new().await?;
                     $test_fn(&harness).await
                 }
             }
@@ -93,16 +79,9 @@ macro_rules! smoke_test {
                 use super::*;
 
                 #[tokio::test]
-                async fn with_catalog() -> Result<()> {
+                async fn test() -> Result<()> {
                     init_tracing();
-                    let harness = harness::lambda::LambdaHarness::with_catalog_mode(harness::CatalogMode::Enabled).await?;
-                    $test_fn(&harness).await
-                }
-
-                #[tokio::test]
-                async fn without_catalog() -> Result<()> {
-                    init_tracing();
-                    let harness = harness::lambda::LambdaHarness::with_catalog_mode(harness::CatalogMode::None).await?;
+                    let harness = harness::lambda::LambdaHarness::new().await?;
                     $test_fn(&harness).await
                 }
             }
@@ -112,21 +91,9 @@ macro_rules! smoke_test {
                 use super::*;
 
                 #[tokio::test]
-                async fn with_catalog() -> Result<()> {
+                async fn test() -> Result<()> {
                     init_tracing();
-                    // Note: Workers has its own CatalogMode enum, need to use it
-                    let harness = harness::workers::WorkersHarness::from_env(
-                        harness::workers::CatalogMode::Enabled
-                    )?;
-                    $test_fn(&harness).await
-                }
-
-                #[tokio::test]
-                async fn without_catalog() -> Result<()> {
-                    init_tracing();
-                    let harness = harness::workers::WorkersHarness::from_env(
-                        harness::workers::CatalogMode::None
-                    )?;
+                    let harness = harness::workers::WorkersHarness::from_env()?;
                     $test_fn(&harness).await
                 }
             }
@@ -162,7 +129,7 @@ async fn test_logs_pipeline_impl(harness: &dyn SmokeTestHarness) -> Result<()> {
 
     // Verify data with DuckDB
     let verifier = harness.duckdb_verifier(&info);
-    let report = verifier.verify(&info.namespace).await?;
+    let report = verifier.verify(&info.prefix).await?;
 
     tracing::info!("DuckDB verification report: {:?}", report);
 
@@ -198,7 +165,7 @@ async fn test_metrics_pipeline_impl(harness: &dyn SmokeTestHarness) -> Result<()
     );
 
     let verifier = harness.duckdb_verifier(&info);
-    let report = verifier.verify(&info.namespace).await?;
+    let report = verifier.verify(&info.prefix).await?;
 
     // Assert we got metrics data (gauge only from test signals)
     let metrics_count = report.row_counts.get("otel_metrics_gauge").unwrap_or(&0);
@@ -229,7 +196,7 @@ async fn test_traces_pipeline_impl(harness: &dyn SmokeTestHarness) -> Result<()>
     );
 
     let verifier = harness.duckdb_verifier(&info);
-    let report = verifier.verify(&info.namespace).await?;
+    let report = verifier.verify(&info.prefix).await?;
 
     // Assert we got traces data
     let traces_count = report.row_counts.get("otel_traces").unwrap_or(&0);
@@ -241,86 +208,6 @@ async fn test_traces_pipeline_impl(harness: &dyn SmokeTestHarness) -> Result<()>
     tracing::info!("Found {} trace rows", traces_count);
 
     harness.cleanup().await?;
-    Ok(())
-}
-
-/// Test logs pipeline with KV receipt verification (Workers-specific)
-#[cfg(feature = "smoke-workers")]
-async fn test_logs_pipeline_with_kv_verification(
-    harness: &harness::workers::WorkersHarness,
-) -> Result<()> {
-    tracing::info!("Starting logs pipeline test with KV verification");
-
-    // Deploy infrastructure
-    let info = harness.deploy().await?;
-    tracing::info!("Deployed to endpoint: {}", info.endpoint);
-
-    // Start live tail if enabled (SMOKE_TEST_LIVE_TAIL=1)
-    harness.start_live_tail().await?;
-
-    // Run the actual test logic, capturing the result so we can always stop live tail
-    let test_result: Result<()> = async {
-        // Send OTLP signals
-        harness.send_signals(&info.endpoint).await?;
-        tracing::info!("Signals sent successfully");
-
-        if harness.has_kv_tracking() {
-            // Note: In catalog mode, send_signals() triggers catalog sync which deletes
-            // KV receipts on success. So KV count may be 0 if sync already processed them.
-            let kv_count = harness.count_kv_receipts().await?;
-            tracing::info!(
-                "Found {} KV receipts (0 expected if catalog sync succeeded)",
-                kv_count
-            );
-        }
-
-        // Ensure we actually wrote Parquet files for this run (isolated by prefix)
-        let object_count = harness.count_r2_objects().await?;
-        assert!(
-            object_count > 0,
-            "Expected at least one Parquet object for this test run"
-        );
-        tracing::info!("Found {} Parquet objects under test prefix", object_count);
-
-        // Verify execution (no errors in logs)
-        let status = harness.verify_execution().await?;
-        assert!(
-            status.is_healthy(),
-            "Found {} errors in execution logs: {:?}",
-            status.error_count,
-            status.sample_errors
-        );
-        tracing::info!("Execution healthy (no errors)");
-
-        // Verify data with DuckDB
-        let verifier = harness.duckdb_verifier(&info);
-        let report = verifier.verify(&info.namespace).await?;
-
-        tracing::info!("DuckDB verification report: {:?}", report);
-
-        // Assert we got logs data
-        let logs_count = report.row_counts.get("otel_logs").unwrap_or(&0);
-        assert!(
-            logs_count > &0,
-            "Expected logs data, got {} rows",
-            logs_count
-        );
-        tracing::info!("Found {} log rows", logs_count);
-
-        Ok(())
-    }
-    .await;
-
-    // Always stop live tail and print captured logs, even on test failure
-    harness.stop_live_tail().await?;
-
-    // Propagate any test failure after live tail is stopped
-    test_result?;
-
-    // Cleanup
-    harness.cleanup().await?;
-    tracing::info!("Cleanup complete");
-
     Ok(())
 }
 
@@ -342,20 +229,9 @@ mod workers_logs_batching_pipeline {
     use super::*;
 
     #[tokio::test]
-    async fn with_catalog() -> Result<()> {
+    async fn test() -> Result<()> {
         init_tracing();
         let harness = harness::workers::WorkersHarness::from_env_with_batching(
-            harness::workers::CatalogMode::Enabled,
-            harness::workers::BatchMode::Enabled,
-        )?;
-        test_logs_pipeline_with_kv_verification(&harness).await
-    }
-
-    #[tokio::test]
-    async fn without_catalog() -> Result<()> {
-        init_tracing();
-        let harness = harness::workers::WorkersHarness::from_env_with_batching(
-            harness::workers::CatalogMode::None,
             harness::workers::BatchMode::Enabled,
         )?;
         test_logs_pipeline_impl(&harness).await

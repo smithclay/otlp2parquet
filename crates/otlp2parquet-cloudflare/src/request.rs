@@ -2,28 +2,15 @@
 //!
 //! Contains the main OTLP request handler and supporting functions.
 
-use crate::do_config::apply_namespace_fallback;
 use crate::do_config::WorkerEnvSource;
-use crate::{auth, catalog_worker, errors, handlers, ingest, TraceContext};
+use crate::{auth, errors, handlers, ingest, TraceContext};
 use flate2::read::GzDecoder;
 use once_cell::sync::OnceCell;
-use otlp2parquet_core::config::{CatalogMode, Platform, RuntimeConfig};
-use otlp2parquet_writer::set_table_name_overrides;
-use serde::Deserialize;
+use otlp2parquet_core::config::{Platform, RuntimeConfig};
 use std::io::Read;
-use uuid::Uuid;
 use worker::*;
 
 static CONFIG: OnceCell<RuntimeConfig> = OnceCell::new();
-
-/// Payload for Durable Object receipt callbacks.
-#[derive(Debug, Deserialize, serde::Serialize)]
-struct ReceiptPayload {
-    path: String,
-    table: String,
-    rows: usize,
-    timestamp_ms: i64,
-}
 
 /// Decompress gzip-encoded request body if Content-Encoding header indicates gzip.
 fn maybe_decompress(
@@ -48,71 +35,6 @@ fn maybe_decompress(
             Ok(decompressed)
         }
         _ => Ok(data.to_vec()),
-    }
-}
-
-/// Internal endpoint for Durable Objects to submit KV receipts.
-/// This is only callable via the SELF service binding (internal to the Worker).
-#[tracing::instrument(
-    name = "otlp.receipt",
-    skip(req, env),
-    fields(
-        path = tracing::field::Empty,
-        table = tracing::field::Empty,
-    )
-)]
-async fn handle_receipt(mut req: Request, env: &Env) -> Result<Response> {
-    tracing::debug!("handle_receipt called");
-
-    let kv = env.kv("PENDING_FILES").map_err(|e| {
-        tracing::error!(error = %e, "PENDING_FILES KV binding failed");
-        worker::Error::RustError("PENDING_FILES KV not bound".to_string())
-    })?;
-    tracing::debug!("Got KV binding");
-
-    let payload: ReceiptPayload = req.json().await.map_err(|e| {
-        tracing::error!(error = %e, "Receipt JSON parse failed");
-        worker::Error::RustError(format!("Invalid receipt payload: {}", e))
-    })?;
-    tracing::debug!(path = %payload.path, table = %payload.table, "Parsed receipt payload");
-
-    // Record fields in the span
-    tracing::Span::current().record("path", payload.path.as_str());
-    tracing::Span::current().record("table", payload.table.as_str());
-
-    let key = format!("pending:{}:{}", payload.timestamp_ms, Uuid::new_v4());
-    let value = serde_json::to_string(&payload)
-        .map_err(|e| worker::Error::RustError(format!("Serialize receipt failed: {}", e)))?;
-
-    tracing::debug!(key = %key, "Writing receipt to KV");
-    kv.put(&key, value)
-        .map_err(|e| {
-            tracing::error!(error = %e, "KV put init failed");
-            worker::Error::RustError(format!("KV put init failed: {}", e))
-        })?
-        .execute()
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "KV execute failed");
-            worker::Error::RustError(format!("KV receipt write failed: {}", e))
-        })?;
-
-    tracing::debug!("Successfully stored receipt in KV");
-    Response::ok("ok")
-}
-
-/// Internal endpoint for smoke tests to trigger catalog sync immediately.
-async fn handle_sync_catalog(env: &Env) -> Result<Response> {
-    tracing::info!("handle_sync_catalog called (test hook)");
-    match catalog_worker::sync_catalog_with_report(env).await {
-        Ok(report) => {
-            let body = serde_json::to_string(&report).unwrap_or_else(|_| "ok".to_string());
-            Response::ok(body)
-        }
-        Err(e) => {
-            tracing::error!(error = ?e, "Catalog sync failed via test hook");
-            Response::error(format!("sync_catalog failed: {}", e), 500)
-        }
     }
 }
 
@@ -157,12 +79,6 @@ pub(crate) async fn handle(mut req: Request, env: Env, _ctx: Context) -> Result<
 
     let path = req.path();
     tracing::debug!(path = %path, "Request path");
-    if path == "/__internal/receipt" {
-        return handle_receipt(req, &env).await;
-    } else if path == "/__internal/sync_catalog" {
-        return handle_sync_catalog(&env).await;
-    }
-
     // Validate signal path
     let signal = match path.as_str() {
         "/v1/logs" => "logs",
@@ -196,8 +112,6 @@ pub(crate) async fn handle(mut req: Request, env: Env, _ctx: Context) -> Result<
     tracing::debug!("Config loaded successfully");
 
     // Initialize storage operator in writer crate if not already done
-    // Catalog is handled by Cron Worker, not hot path
-    // Just ensure storage is initialized for plain Parquet writes
     otlp2parquet_writer::initialize_storage(config).map_err(|e| {
         tracing::Span::current().record("error", "storage_init_failed");
         tracing::error!(request_id = %trace_ctx.request_id, error = ?e, "Failed to initialize storage");
@@ -283,47 +197,17 @@ pub(crate) async fn handle(mut req: Request, env: Env, _ctx: Context) -> Result<
         };
     }
 
-    // Direct handler mode (no batching)
-    // Initialize catalog for direct registration when catalog mode is Iceberg
-    let namespace = catalog_worker::resolve_namespace(config, &env);
-    let catalog = if config.catalog_mode == CatalogMode::Iceberg {
-        tracing::debug!("Initializing catalog for direct registration (non-batching mode)");
-        match catalog_worker::init_catalog_from_env(&env, config, &namespace).await {
-            Ok(cat) => Some(cat),
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "Failed to initialize catalog, proceeding without catalog registration"
-                );
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    let catalog_ref = catalog.as_deref();
-
     match signal {
         "logs" => {
-            handlers::handle_logs_request(
-                &body_bytes,
-                format,
-                content_type,
-                &namespace,
-                &trace_ctx.request_id,
-                catalog_ref,
-            )
-            .await
+            handlers::handle_logs_request(&body_bytes, format, content_type, &trace_ctx.request_id)
+                .await
         }
         "traces" => {
             handlers::handle_traces_request(
                 &body_bytes,
                 format,
                 content_type,
-                &namespace,
                 &trace_ctx.request_id,
-                catalog_ref,
             )
             .await
         }
@@ -332,9 +216,7 @@ pub(crate) async fn handle(mut req: Request, env: Env, _ctx: Context) -> Result<
                 &body_bytes,
                 format,
                 content_type,
-                &namespace,
                 &trace_ctx.request_id,
-                catalog_ref,
             )
             .await
         }
@@ -350,7 +232,7 @@ fn load_worker_config(env: &Env) -> Result<RuntimeConfig> {
     let inline = provider.get("CONFIG_CONTENT");
 
     tracing::debug!("Loading config for Platform::CloudflareWorkers");
-    let mut config = RuntimeConfig::load_for_platform_with_env(
+    let config = RuntimeConfig::load_for_platform_with_env(
         Platform::CloudflareWorkers,
         inline.as_deref(),
         &provider,
@@ -360,18 +242,10 @@ fn load_worker_config(env: &Env) -> Result<RuntimeConfig> {
         worker::Error::RustError(format!("Config error: {}", e))
     })?;
 
-    // Ensure namespace is picked up even if other Iceberg envs were missing
-    apply_namespace_fallback(env, &mut config);
-
     tracing::debug!(
-        catalog_mode = ?config.catalog_mode,
         storage_backend = ?config.storage.backend,
         "Config loaded successfully"
     );
-
-    if let Some(iceberg) = config.iceberg.as_ref() {
-        set_table_name_overrides(iceberg.to_tables_map());
-    }
 
     if let Some(ref r2) = config.storage.r2 {
         tracing::debug!(

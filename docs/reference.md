@@ -22,33 +22,6 @@ All variables use the `OTLP2PARQUET_` prefix and override config file values.
 | `OTLP2PARQUET_STORAGE_PATH` | `./data` | Filesystem storage path |
 | `OTLP2PARQUET_PARQUET_ROW_GROUP_SIZE` | `32768` | Parquet row group size |
 
-### Catalog
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OTLP2PARQUET_CATALOG_MODE` | `iceberg` | Catalog mode: `iceberg` or `none` |
-| `OTLP2PARQUET_ICEBERG_BUCKET_ARN` | - | S3 Tables bucket ARN (Lambda) |
-| `OTLP2PARQUET_ICEBERG_REST_URI` | - | REST catalog endpoint (Server) |
-| `OTLP2PARQUET_ICEBERG_WAREHOUSE` | - | Warehouse ID (Server) |
-| `OTLP2PARQUET_ICEBERG_NAMESPACE` | - | Catalog namespace |
-| `OTLP2PARQUET_ICEBERG_DATA_LOCATION` | - | S3 data location (Server) |
-| `OTLP2PARQUET_ICEBERG_CATALOG_NAME` | `rest` | Catalog name |
-| `OTLP2PARQUET_ICEBERG_STAGING_PREFIX` | `data/incoming` | Staging file prefix |
-| `OTLP2PARQUET_ICEBERG_TARGET_FILE_SIZE_BYTES` | `536870912` | Target file size (512MB) |
-| `OTLP2PARQUET_ICEBERG_FORMAT_VERSION` | `2` | Iceberg format version |
-
-### Catalog Table Names
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OTLP2PARQUET_ICEBERG_TABLE_LOGS` | `otel_logs` | Logs table name |
-| `OTLP2PARQUET_ICEBERG_TABLE_TRACES` | `otel_traces` | Traces table name |
-| `OTLP2PARQUET_ICEBERG_TABLE_METRICS_GAUGE` | `otel_metrics_gauge` | Gauge table name |
-| `OTLP2PARQUET_ICEBERG_TABLE_METRICS_SUM` | `otel_metrics_sum` | Sum table name |
-| `OTLP2PARQUET_ICEBERG_TABLE_METRICS_HISTOGRAM` | `otel_metrics_histogram` | Histogram table name |
-| `OTLP2PARQUET_ICEBERG_TABLE_METRICS_EXPONENTIAL_HISTOGRAM` | `otel_metrics_exponential_histogram` | Exponential histogram table name |
-| `OTLP2PARQUET_ICEBERG_TABLE_METRICS_SUMMARY` | `otel_metrics_summary` | Summary table name |
-
 ### Server
 
 | Variable | Default | Description |
@@ -71,9 +44,7 @@ Server only. Lambda and Cloudflare process requests individually.
 
 ### Lambda
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OTLP2PARQUET_LAMBDA_INTEGRATED_ICEBERG` | `true` | Enable S3 Tables support |
+No Lambda-specific environment variables.
 
 ---
 
@@ -200,33 +171,6 @@ Metrics are stored in separate tables by type: `gauge`, `sum`, `histogram`, `exp
 | `Sum` | `Float64` | Sum of values |
 | `QuantileValues` | `List<Float64>` | Values at quantiles |
 | `QuantileQuantiles` | `List<Float64>` | Quantile points |
-
----
-
-## Catalog Modes
-
-### Plain Parquet
-
-Writes Parquet files directly to object storage. No catalog integration.
-
-**Platforms:** All
-**Configuration:** Set `OTLP2PARQUET_CATALOG_MODE=none`
-
-### Iceberg
-
-Uses Apache Iceberg for ACID transactions, schema evolution, and time travel.
-
-**Platforms:** All
-**Configuration:** Set `OTLP2PARQUET_CATALOG_MODE=iceberg`
-
-**Iceberg catalog backends:**
-
-| Backend | Platform | Configuration |
-|---------|----------|---------------|
-| S3 Tables | Lambda | `OTLP2PARQUET_ICEBERG_BUCKET_ARN` |
-| R2 Data Catalog | Cloudflare | Automatic with R2 Data Catalog enabled |
-| Nessie | Server | `OTLP2PARQUET_ICEBERG_REST_URI` |
-| AWS Glue | Server | `OTLP2PARQUET_ICEBERG_REST_URI` (Glue endpoint) |
 
 ---
 

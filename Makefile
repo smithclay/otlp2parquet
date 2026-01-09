@@ -426,7 +426,7 @@ smoke-server: ## Run server smoke tests only (requires Docker + DuckDB)
 		echo "  Linux: wget https://github.com/duckdb/duckdb/releases/latest/download/duckdb_cli-linux-amd64.zip && unzip duckdb_cli-linux-amd64.zip && sudo mv duckdb /usr/local/bin/"; \
 		exit 1; \
 	fi
-	@echo "==> Running server smoke tests (both catalog modes)..."
+	@echo "==> Running server smoke tests (plain Parquet)..."
 	@cargo test --test smoke --features smoke-server -- --test-threads=1
 
 .PHONY: smoke-server-verbose
@@ -448,7 +448,7 @@ smoke-lambda: build-lambda ## Run Lambda + S3 Tables smoke tests (requires AWS c
 	@cargo test --test smoke --features smoke-lambda -- --test-threads=1
 
 .PHONY: smoke-workers
-smoke-workers: wasm-compress ## Run Workers + R2 Catalog smoke tests (requires Cloudflare credentials)
+smoke-workers: wasm-compress ## Run Workers + R2 smoke tests (requires Cloudflare credentials)
 	@echo "==> Running Workers smoke tests..."
 	@echo "Prerequisites: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID env vars"
 	@if [ -f crates/otlp2parquet-cloudflare/.env ]; then \

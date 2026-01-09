@@ -19,9 +19,6 @@ pub enum OtlpError {
     StorageFailed {
         message: String,
     },
-    CatalogFailed {
-        message: String,
-    },
     InternalError {
         message: String,
     },
@@ -35,7 +32,6 @@ impl OtlpError {
             Self::PayloadTooLarge { .. } => 413,
             Self::ConversionFailed { .. } => 500,
             Self::StorageFailed { .. } => 502,
-            Self::CatalogFailed { .. } => 502,
             Self::InternalError { .. } => 500,
         }
     }
@@ -47,7 +43,6 @@ impl OtlpError {
             Self::PayloadTooLarge { .. } => "PayloadTooLarge",
             Self::ConversionFailed { .. } => "ConversionFailed",
             Self::StorageFailed { .. } => "StorageFailed",
-            Self::CatalogFailed { .. } => "CatalogFailed",
             Self::InternalError { .. } => "InternalError",
         }
     }
@@ -64,7 +59,6 @@ impl OtlpError {
                 format!("Failed to convert {} to Arrow: {}", signal, message)
             }
             Self::StorageFailed { message } => format!("Storage operation failed: {}", message),
-            Self::CatalogFailed { message } => format!("Catalog operation failed: {}", message),
             Self::InternalError { message } => message.clone(),
         }
     }
@@ -106,11 +100,6 @@ mod tests {
         assert_eq!(err.status_code(), 500);
 
         let err = OtlpError::StorageFailed {
-            message: "failed".into(),
-        };
-        assert_eq!(err.status_code(), 502);
-
-        let err = OtlpError::CatalogFailed {
             message: "failed".into(),
         };
         assert_eq!(err.status_code(), 502);

@@ -6,7 +6,6 @@
 pub mod config;
 pub mod dlq;
 pub mod flush;
-pub mod receipts;
 pub mod storage;
 pub mod types;
 
@@ -32,7 +31,7 @@ use worker::{durable_object, DurableObject, Env, Request, Response, Result, Stat
 ///
 /// ## Tables
 /// - `batches`: Stores pending Arrow IPC blobs with byte/row counts
-/// - `state`: Stores signal_type, service_name, first_event_timestamp, pending_receipt
+/// - `state`: Stores signal_type, service_name, first_event_timestamp
 ///
 /// # Thread Safety
 ///
@@ -218,10 +217,9 @@ impl OtlpBatcherV2 {
                 crate::r#do::flush::flush(&self.state, &self.env, &config, &self.write_retry_count)
                     .await
             {
-                // Ensure a retry alarm if data or receipts are pending so we don't stall.
+                // Ensure a retry alarm if data is pending so we don't stall.
                 let batch_count = crate::r#do::storage::get_batch_count(&self.state)?;
-                let do_state = crate::r#do::storage::get_do_state(&self.state)?;
-                if batch_count > 0 || do_state.pending_receipt.is_some() {
+                if batch_count > 0 {
                     if let Err(alarm_err) = ensure_alarm(&self.state, max_age_secs).await {
                         tracing::warn!(
                             error = ?alarm_err,
@@ -343,10 +341,9 @@ impl DurableObject for OtlpBatcherV2 {
                 tracing::error!(error = ?e, "Alarm flush failed");
                 // Data is preserved in SQLite for next alarm/request retry
 
-                // Re-schedule alarm for retry only if data or receipts are still pending
+                // Re-schedule alarm for retry only if data is still pending
                 let batch_count = crate::r#do::storage::get_batch_count(&self.state)?;
-                let do_state = crate::r#do::storage::get_do_state(&self.state)?;
-                if batch_count > 0 || do_state.pending_receipt.is_some() {
+                if batch_count > 0 {
                     let (_, _, max_age_secs) = get_batch_config(&self.env);
                     if let Err(alarm_err) = ensure_alarm(&self.state, max_age_secs).await {
                         tracing::warn!(

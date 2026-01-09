@@ -69,7 +69,7 @@ fn keyvalue_ref_to_json(attributes: &[&KeyValue]) -> Cow<'static, str> {
 #[derive(Debug, Clone)]
 pub struct TraceMetadata {
     pub service_name: Arc<str>,
-    // Stored in microseconds to align with Parquet/Iceberg expectations.
+    // Stored in microseconds to align with Parquet expectations.
     pub first_timestamp_micros: i64,
     pub span_count: usize,
 }
@@ -618,7 +618,7 @@ impl TraceArrowBuilder {
         }
     }
 
-    /// Convert OTLP nanosecond timestamps to microseconds for Iceberg compatibility
+    /// Convert OTLP nanosecond timestamps to microseconds for Parquet compatibility
     fn nanos_to_micros(ns: u64) -> i64 {
         ((ns / 1_000).min(i64::MAX as u64)) as i64
     }

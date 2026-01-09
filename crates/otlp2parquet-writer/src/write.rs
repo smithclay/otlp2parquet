@@ -1,23 +1,13 @@
-//! Core write operations using icepick
+//! Core write operations for Parquet output
 //!
-//! Uses icepick's AppendOnlyTableWriter for high-level catalog integration.
-//! Arrow schemas with field_id metadata are passed to icepick, which:
-//! - Derives Iceberg schemas automatically
-//! - Creates tables if they don't exist
-//! - Writes Parquet files with statistics
-//! - Commits to catalog atomically
+//! Writes OTLP Arrow RecordBatch data to partitioned Parquet files using OpenDAL.
 
 use crate::error::{Result, WriterError};
-use crate::table_mapping::table_name_for_signal;
 use arrow::array::RecordBatch;
 #[cfg(not(target_family = "wasm"))]
 use bytes::Bytes;
 #[cfg(not(target_family = "wasm"))]
 use futures::future::BoxFuture;
-use icepick::catalog::Catalog;
-use icepick::error::Error as CatalogError;
-use icepick::spec::{NamespaceIdent, TableIdent};
-use icepick::{AppendOnlyTableWriter, AppendResult, TableWriterOptions};
 use otlp2parquet_core::SignalType;
 #[cfg(target_family = "wasm")]
 use parquet::arrow::ArrowWriter;
@@ -64,10 +54,6 @@ impl AsyncFileWriter for OpendalAsyncWriter {
 
 /// Request parameters for writing a batch to storage
 pub struct WriteBatchRequest<'a> {
-    /// Optional catalog instance for Iceberg table operations
-    pub catalog: Option<&'a dyn Catalog>,
-    /// Namespace for tables (e.g., "otlp")
-    pub namespace: &'a str,
     /// Arrow RecordBatch to write
     pub batch: &'a RecordBatch,
     /// Type of OTLP signal (logs, traces, metrics)
@@ -78,15 +64,6 @@ pub struct WriteBatchRequest<'a> {
     pub service_name: &'a str,
     /// Timestamp in microseconds (from OTLP-to-Arrow nanos_to_micros conversion)
     pub timestamp_micros: i64,
-    /// Optional Iceberg snapshot timestamp in milliseconds
-    ///
-    /// If provided, used for catalog commit timestamp. Should represent when the write
-    /// occurs (current time), not when the data was generated. Use this on WASM platforms
-    /// (Cloudflare Workers) where system time is unavailable.
-    pub snapshot_timestamp_ms: Option<i64>,
-    /// Retry policy for optimistic Iceberg commits. Use [`RetryPolicy::disabled()`]
-    /// to turn retries off entirely.
-    pub retry_policy: RetryPolicy,
 }
 
 /// Request parameters for writing multiple batches as separate row groups (zero-copy on WASM)
@@ -94,10 +71,6 @@ pub struct WriteBatchRequest<'a> {
 /// Note: This struct is available on all platforms for compilation, but the actual
 /// `write_multi_batch` function only works on WASM targets.
 pub struct WriteMultiBatchRequest<'a> {
-    /// Optional catalog instance for Iceberg table operations
-    pub catalog: Option<&'a dyn Catalog>,
-    /// Namespace for tables (e.g., "otlp")
-    pub namespace: &'a str,
     /// Arrow RecordBatches to write as separate row groups
     pub batches: &'a [RecordBatch],
     /// Type of OTLP signal (logs, traces, metrics)
@@ -108,388 +81,9 @@ pub struct WriteMultiBatchRequest<'a> {
     pub service_name: &'a str,
     /// Timestamp in microseconds (from OTLP-to-Arrow nanos_to_micros conversion)
     pub timestamp_micros: i64,
-    /// Optional Iceberg snapshot timestamp in milliseconds
-    ///
-    /// If provided, used for catalog commit timestamp. Should represent when the write
-    /// occurs (current time), not when the data was generated. Use this on WASM platforms
-    /// (Cloudflare Workers) where system time is unavailable.
-    pub snapshot_timestamp_ms: Option<i64>,
-    /// Retry policy for optimistic Iceberg commits. Use [`RetryPolicy::disabled()`]
-    /// to turn retries off entirely.
-    pub retry_policy: RetryPolicy,
 }
 
-/// Controls optimistic retry behavior when committing to Iceberg catalogs.
-#[derive(Debug, Clone, Copy)]
-pub struct RetryPolicy {
-    /// Whether retries are enabled.
-    pub enabled: bool,
-    /// Maximum number of attempts (including the initial write).
-    pub max_attempts: u32,
-    /// Initial delay in milliseconds before retrying (applies to the first retry).
-    pub initial_delay_ms: u32,
-    /// Maximum backoff delay in milliseconds.
-    pub max_delay_ms: u32,
-    /// Whether to attempt self-healing when NotFound errors occur.
-    ///
-    /// When enabled, if the catalog returns NotFound during a write, the system will
-    /// attempt to drop the table (to clear stale metadata) and retry. This can help
-    /// recover from metadata corruption but could also delete a valid table if the
-    /// error was transient.
-    ///
-    /// Defaults to `true` for backwards compatibility.
-    pub self_heal_on_not_found: bool,
-}
-
-impl RetryPolicy {
-    /// Disable optimistic retries entirely.
-    pub const fn disabled() -> Self {
-        Self {
-            enabled: false,
-            max_attempts: 1,
-            initial_delay_ms: 0,
-            max_delay_ms: 0,
-            self_heal_on_not_found: false,
-        }
-    }
-
-    /// Create an enabled retry policy with the provided parameters.
-    pub const fn enabled(max_attempts: u32, initial_delay_ms: u32, max_delay_ms: u32) -> Self {
-        Self {
-            enabled: true,
-            max_attempts,
-            initial_delay_ms,
-            max_delay_ms,
-            self_heal_on_not_found: true, // Default to self-healing enabled
-        }
-    }
-
-    /// Set whether to attempt self-healing on NotFound errors.
-    pub const fn with_self_heal(mut self, enabled: bool) -> Self {
-        self.self_heal_on_not_found = enabled;
-        self
-    }
-
-    /// Number of attempts the writer will make (always >= 1).
-    pub fn effective_max_attempts(&self) -> u32 {
-        self.max_attempts.max(1)
-    }
-
-    /// Determine whether the failure should be retried.
-    pub fn should_retry(&self, attempt: u32, err: &CatalogError) -> bool {
-        self.enabled && attempt < self.effective_max_attempts() && is_retryable_error(err)
-    }
-
-    /// Compute the delay applied before the next retry (in milliseconds).
-    ///
-    /// Applies ±20% jitter to prevent thundering herd when multiple
-    /// writers retry simultaneously after conflicts.
-    pub fn delay_for_attempt(&self, attempt: u32) -> u32 {
-        if !self.enabled || self.initial_delay_ms == 0 {
-            return 0;
-        }
-
-        let exp = attempt.saturating_sub(1).min(10); // prevent overflow
-        let mut delay = (self.initial_delay_ms as u64) << exp;
-        let max_allowed = self.max_delay_ms.max(self.initial_delay_ms) as u64;
-        if delay > max_allowed {
-            delay = max_allowed;
-        }
-
-        // Add ±20% jitter to prevent thundering herd
-        let jitter_factor = Self::jitter_factor();
-        ((delay as f64) * jitter_factor) as u32
-    }
-
-    #[cfg(target_family = "wasm")]
-    fn jitter_factor() -> f64 {
-        // 0.8 to 1.2 range (±20% jitter)
-        0.8 + (js_sys::Math::random() * 0.4)
-    }
-
-    #[cfg(not(target_family = "wasm"))]
-    fn jitter_factor() -> f64 {
-        // Use getrandom for non-WASM platforms (already a dependency)
-        let mut buf = [0u8; 4];
-        if getrandom::getrandom(&mut buf).is_ok() {
-            let random = u32::from_le_bytes(buf) as f64 / u32::MAX as f64;
-            0.8 + (random * 0.4) // 0.8 to 1.2 range
-        } else {
-            1.0 // No jitter if RNG fails
-        }
-    }
-}
-
-impl Default for RetryPolicy {
-    fn default() -> Self {
-        #[cfg(target_family = "wasm")]
-        {
-            Self {
-                enabled: true,
-                max_attempts: 3,
-                initial_delay_ms: 25,
-                max_delay_ms: 250,
-                self_heal_on_not_found: true,
-            }
-        }
-
-        #[cfg(not(target_family = "wasm"))]
-        {
-            Self {
-                enabled: true,
-                max_attempts: 4,
-                initial_delay_ms: 25,
-                max_delay_ms: 250,
-                self_heal_on_not_found: true,
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct SnapshotClock {
-    base_ms: Option<i64>,
-}
-
-impl SnapshotClock {
-    fn new(snapshot_timestamp_ms: Option<i64>) -> Self {
-        #[cfg(target_family = "wasm")]
-        {
-            let base = snapshot_timestamp_ms.or_else(|| Some(js_sys::Date::now() as i64));
-            Self { base_ms: base }
-        }
-
-        #[cfg(not(target_family = "wasm"))]
-        {
-            Self {
-                base_ms: snapshot_timestamp_ms,
-            }
-        }
-    }
-
-    /// Get snapshot timestamp for this write operation.
-    ///
-    /// Returns the same timestamp for all retry attempts. The snapshot
-    /// timestamp represents when the data was prepared for commit, not
-    /// when it was successfully committed after retries.
-    fn timestamp(&self) -> Option<i64> {
-        self.base_ms
-    }
-}
-
-/// Write a RecordBatch to an Iceberg table via catalog
-///
-/// This function delegates all Parquet writing, schema management, and catalog operations
-/// to icepick's `AppendOnlyTableWriter`. It focuses on table name resolution and error
-/// translation.
-///
-/// # Behavior
-///
-/// 1. **Table creation**: If the table doesn't exist, icepick creates it automatically by
-///    deriving the Iceberg schema from Arrow field_id metadata in the RecordBatch
-/// 2. **Schema evolution**: Not currently supported - schema changes will fail the write
-/// 3. **Atomicity**: Write and catalog commit are atomic via icepick
-/// 4. **Optimistic retries**: Controlled via `RetryPolicy`. Enabled by default to smooth out
-///    thundering herd commits and can be disabled with `RetryPolicy::disabled()`
-///
-/// # Resilience
-///
-/// Write operations include a lightweight optimistic retry loop that only retries retryable
-/// catalog failures (concurrent modifications, transient 5xxs). When disabled, failures propagate
-/// immediately as `WriterError::WriteFailure`. Typical failure modes:
-/// - Network errors (catalog unreachable)
-/// - Schema mismatches (field type changes)
-/// - Storage errors (quota exceeded, permissions)
-/// - Catalog errors (transaction conflicts)
-///
-/// Application-level retry logic should handle transient failures based on error type.
-///
-/// # Returns
-/// Table path in format "{namespace}/{table_name}" for logging purposes only
-///
-/// # Errors
-/// Returns `WriterError::InvalidTableName` if signal/metric type combination is invalid
-/// Returns `WriterError::WriteFailure` if icepick append operation fails or direct write fails
-/// Returns `WriterError::WriteFailure` if catalog is None and storage operator is not initialized
-/// Write a batch to Iceberg catalog with optimistic retries.
-async fn write_with_catalog(
-    catalog: &dyn Catalog,
-    namespace: &str,
-    table_name: &str,
-    batch: &RecordBatch,
-    snapshot_timestamp_ms: Option<i64>,
-    retry_policy: RetryPolicy,
-) -> Result<()> {
-    let namespace_ident = NamespaceIdent::new(vec![namespace.to_string()]);
-    let table_name_owned = table_name.to_string();
-    let mut attempt: u32 = 1;
-    let max_attempts = retry_policy.effective_max_attempts();
-    let snapshot_clock = SnapshotClock::new(snapshot_timestamp_ms);
-    let mut dropped_on_not_found = false;
-
-    loop {
-        let mut writer =
-            AppendOnlyTableWriter::new(catalog, namespace_ident.clone(), table_name_owned.clone());
-
-        if let Some(timestamp_ms) = snapshot_clock.timestamp() {
-            let options = TableWriterOptions::new().with_timestamp_ms(timestamp_ms);
-            writer = writer.with_options(options);
-        }
-
-        match writer.append_batch(batch.clone()).await {
-            Ok(result) => {
-                log_append_result(table_name, &result);
-                return Ok(());
-            }
-            Err(err) => {
-                // Handle NotFound specially - try to heal by dropping stale metadata
-                // (only if self-healing is enabled in the retry policy)
-                if matches!(err, CatalogError::NotFound { .. }) {
-                    if retry_policy.self_heal_on_not_found && !dropped_on_not_found {
-                        let ident =
-                            TableIdent::new(namespace_ident.clone(), table_name_owned.clone());
-                        match catalog.drop_table(&ident).await {
-                            Ok(_) => {
-                                tracing::warn!(
-                                    table = %table_name,
-                                    "catalog reported NotFound; dropped table to force recreation"
-                                );
-                                dropped_on_not_found = true;
-                                continue; // Retry after successful drop
-                            }
-                            Err(drop_err) => {
-                                // drop_table failed - this is NOT retryable.
-                                // Could be permissions, network, or the table truly doesn't exist.
-                                return Err(WriterError::write_failure(format!(
-                                    "table '{}': NotFound and drop_table failed: {} (original: {})",
-                                    table_name, drop_err, err
-                                )));
-                            }
-                        }
-                    } else if dropped_on_not_found {
-                        // Already tried dropping once, still getting NotFound - give up
-                        return Err(WriterError::write_failure(format!(
-                            "table '{}': NotFound persists after drop_table (attempt {}/{})",
-                            table_name, attempt, max_attempts
-                        )));
-                    } else {
-                        // Self-healing disabled - fail immediately on NotFound
-                        return Err(WriterError::write_failure(format!(
-                            "table '{}': NotFound (self-heal disabled, attempt {}/{})",
-                            table_name, attempt, max_attempts
-                        )));
-                    }
-                }
-
-                if !retry_policy.should_retry(attempt, &err) {
-                    return Err(WriterError::write_failure(format!(
-                        "table '{}': {} (attempt {}/{})",
-                        table_name, err, attempt, max_attempts
-                    )));
-                }
-
-                let delay_ms = retry_policy.delay_for_attempt(attempt);
-                tracing::warn!(
-                    table = %table_name,
-                    attempt,
-                    max_attempts,
-                    delay_ms,
-                    error = %err,
-                    "Iceberg append conflict detected; retrying"
-                );
-                wait_for_retry(delay_ms).await;
-                attempt += 1;
-            }
-        }
-    }
-}
-
-fn log_append_result(table_name: &str, result: &AppendResult) {
-    match result {
-        AppendResult::TableCreated {
-            ref data_file,
-            ref schema,
-        } => {
-            tracing::info!(
-                "✓ Created table '{}' with {} fields and wrote {} rows",
-                table_name,
-                schema.fields().len(),
-                data_file.record_count()
-            );
-        }
-        AppendResult::SchemaEvolved {
-            ref data_file,
-            ref old_schema,
-            ref new_schema,
-        } => {
-            tracing::warn!(
-                "✓ Schema evolved for '{}' from {} to {} fields, wrote {} rows",
-                table_name,
-                old_schema.fields().len(),
-                new_schema.fields().len(),
-                data_file.record_count()
-            );
-        }
-        AppendResult::Appended { ref data_file } => {
-            tracing::info!(
-                "✓ Wrote {} rows to '{}' via AppendOnlyTableWriter",
-                data_file.record_count(),
-                table_name
-            );
-        }
-    }
-}
-
-#[cfg(not(target_family = "wasm"))]
-async fn wait_for_retry(delay_ms: u32) {
-    if delay_ms == 0 {
-        return;
-    }
-    tokio::time::sleep(std::time::Duration::from_millis(delay_ms as u64)).await;
-}
-
-#[cfg(target_family = "wasm")]
-async fn wait_for_retry(delay_ms: u32) {
-    if delay_ms == 0 {
-        return;
-    }
-    gloo_timers::future::TimeoutFuture::new(delay_ms).await;
-}
-
-/// Concatenate multiple batches into a single batch for catalog commit.
-///
-/// This is necessary because icepick's `append_batches` does N separate commits for N batches,
-/// which causes issues with R2 Data Catalog where rapid commits can leave stale snapshot references.
-/// By concatenating first, we ensure a single atomic commit.
-#[cfg(target_family = "wasm")]
-fn concat_batches_for_catalog(batches: &[RecordBatch]) -> Result<RecordBatch> {
-    if batches.is_empty() {
-        return Err(WriterError::write_failure(
-            "No batches to concatenate".to_string(),
-        ));
-    }
-
-    if batches.len() == 1 {
-        return Ok(batches[0].clone());
-    }
-
-    let schema = batches[0].schema();
-    arrow::compute::concat_batches(&schema, batches).map_err(|e| {
-        WriterError::write_failure(format!("Failed to concatenate batches for catalog: {}", e))
-    })
-}
-
-fn is_retryable_error(err: &CatalogError) -> bool {
-    matches!(
-        err,
-        CatalogError::ConcurrentModification { .. }
-            | CatalogError::Conflict { .. }
-            | CatalogError::ServerError { .. }
-            | CatalogError::NetworkError { .. }
-    )
-}
-
-/// Write a batch as plain Parquet file (no catalog)
+/// Write a batch as a Parquet file
 #[cfg(not(target_family = "wasm"))]
 async fn write_plain_parquet(
     signal_type: SignalType,
@@ -501,8 +95,8 @@ async fn write_plain_parquet(
     // Get global storage operator
     let op = crate::storage::get_operator().ok_or_else(|| {
         WriterError::write_failure(
-            "Storage operator not initialized. Call initialize_storage() with RuntimeConfig before writing. \
-             For catalog mode, ensure catalog is provided in WriteBatchRequest.".to_string(),
+            "Storage operator not initialized. Call initialize_storage() with RuntimeConfig before writing."
+                .to_string(),
         )
     })?;
 
@@ -539,7 +133,7 @@ async fn write_plain_parquet(
 
     let row_count = batch.num_rows();
     tracing::info!(
-        "✓ Wrote {} rows to '{}' (plain Parquet, no catalog, {} bytes)",
+        "✓ Wrote {} rows to '{}' (plain Parquet, {} bytes)",
         row_count,
         file_path,
         bytes_written
@@ -577,8 +171,8 @@ async fn write_plain_parquet(
 
     let op = crate::storage::get_operator().ok_or_else(|| {
         WriterError::write_failure(
-            "Storage operator not initialized. Call initialize_storage() with RuntimeConfig before writing. \
-             For catalog mode, ensure catalog is provided in WriteBatchRequest.".to_string(),
+            "Storage operator not initialized. Call initialize_storage() with RuntimeConfig before writing."
+                .to_string(),
         )
     })?;
 
@@ -615,7 +209,7 @@ async fn write_plain_parquet(
 
     let row_count = batch.num_rows();
     tracing::info!(
-        "✓ Wrote {} rows to '{}' (plain Parquet, no catalog, {} bytes, wasm buffer)",
+        "✓ Wrote {} rows to '{}' (plain Parquet, {} bytes, wasm buffer)",
         row_count,
         file_path,
         bytes_written
@@ -628,9 +222,6 @@ async fn write_plain_parquet(
 ///
 /// This achieves zero-copy by writing each batch as a separate Parquet row group,
 /// avoiding the full data copy that concat_batches performs.
-///
-/// Note: Only used when catalog is disabled. With catalog enabled,
-/// `write_multi_batch` concatenates batches for atomic commit.
 #[cfg(target_family = "wasm")]
 async fn write_plain_parquet_multi(
     signal_type: SignalType,
@@ -659,8 +250,8 @@ async fn write_plain_parquet_multi(
 
     let op = crate::storage::get_operator().ok_or_else(|| {
         WriterError::write_failure(
-            "Storage operator not initialized. Call initialize_storage() with RuntimeConfig before writing. \
-             For catalog mode, ensure catalog is provided in WriteBatchRequest.".to_string(),
+            "Storage operator not initialized. Call initialize_storage() with RuntimeConfig before writing."
+                .to_string(),
         )
     })?;
 
@@ -722,7 +313,7 @@ async fn write_plain_parquet_multi(
     })?;
 
     tracing::info!(
-        "✓ Wrote {} rows ({} batches, {} row groups) to '{}' (plain Parquet, no catalog, {} bytes, wasm buffer)",
+        "✓ Wrote {} rows ({} batches, {} row groups) to '{}' (plain Parquet, {} bytes, wasm buffer)",
         total_rows,
         batches.len(),
         batches.len(),
@@ -736,44 +327,14 @@ async fn write_plain_parquet_multi(
 pub async fn write_batch(req: WriteBatchRequest<'_>) -> Result<String> {
     let row_count = req.batch.num_rows();
 
-    // Get table name based on signal type
-    // e.g., "otel_logs", "otel_traces", "otel_metrics_gauge"
-    let table_name = table_name_for_signal(req.signal_type, req.metric_type)?;
-
     tracing::debug!(
-        "Writing {} rows to table '{}' (service: {}, signal: {:?}, catalog: {})",
+        "Writing {} rows (service: {}, signal: {:?}, metric: {:?})",
         row_count,
-        table_name,
         req.service_name,
         req.signal_type,
-        if req.catalog.is_some() {
-            "enabled"
-        } else {
-            "disabled"
-        }
+        req.metric_type
     );
 
-    // If catalog is provided, prefer Iceberg; on failure, fall back to plain Parquet.
-    if let Some(cat) = req.catalog {
-        return write_with_catalog(
-            cat,
-            req.namespace,
-            &table_name,
-            req.batch,
-            req.snapshot_timestamp_ms,
-            req.retry_policy,
-        )
-        .await
-        .map(|_| format!("{}/{}", req.namespace, table_name))
-        .map_err(|err| {
-            WriterError::write_failure(format!(
-                "catalog write failed for table '{}': {}",
-                table_name, err
-            ))
-        });
-    }
-
-    // Plain Parquet path (default or catalog fallback)
     write_plain_parquet(
         req.signal_type,
         req.metric_type,
@@ -786,87 +347,10 @@ pub async fn write_batch(req: WriteBatchRequest<'_>) -> Result<String> {
 
 /// Write multiple batches to storage.
 ///
-/// # Write Strategy
-///
-/// - **Without catalog**: Each batch is written as a separate Parquet row group.
-///   This is a zero-copy operation that avoids concatenation overhead.
-///
-/// - **With catalog**: Batches are concatenated into a single RecordBatch before
-///   writing to ensure atomic catalog commit. This requires a full data copy
-///   and uses more memory. For very large batches, consider disabling catalog
-///   mode or reducing batch size.
-///
-/// Note: For catalog mode, we concatenate batches because icepick's `append_batches`
-/// does N separate commits for N batches, which causes issues with R2 Data Catalog
-/// where rapid commits can leave stale snapshot references.
-///
-/// # Memory Usage (WASM)
-///
-/// In WASM environments with catalog enabled, peak memory usage is approximately:
-/// `sum(batch_sizes) * 2` (original batches + concatenated copy)
-///
-/// # Platform Support
-/// - On WASM: Uses optimized multi-row-group writer for plain Parquet (zero-copy)
-/// - On non-WASM: Returns an error (use `write_batch` with concat instead)
+/// - On WASM: Writes each batch as a separate Parquet row group (zero-copy).
+/// - On non-WASM: Returns an error (use `write_batch` with concatenated batches instead).
 #[cfg(target_family = "wasm")]
 pub async fn write_multi_batch(req: WriteMultiBatchRequest<'_>) -> Result<String> {
-    let table_name = table_name_for_signal(req.signal_type, req.metric_type)?;
-
-    // Guard against OOM before concatenation when catalog is enabled.
-    let total_size: usize = req.batches.iter().map(|b| b.get_array_memory_size()).sum();
-    if total_size > WASM_MAX_BUFFER_BYTES {
-        return Err(WriterError::write_failure(format!(
-            "Batches too large for catalog write on WASM: {} bytes (limit: {} bytes, {} batches). \
-             Reduce batch size or disable catalog for Workers.",
-            total_size,
-            WASM_MAX_BUFFER_BYTES,
-            req.batches.len()
-        )));
-    }
-
-    // If catalog is provided, perform a single atomic append; fail fast on catalog errors.
-    if let Some(cat) = req.catalog {
-        // Concatenate batches for a single atomic catalog commit
-        // This is necessary because icepick's append_batches does N separate commits
-        let concatenated = match concat_batches_for_catalog(req.batches) {
-            Ok(batch) => batch,
-            Err(e) => {
-                tracing::warn!(
-                    target: "otlp2parquet",
-                    error = %e,
-                    table = %table_name,
-                    "failed to concatenate batches; falling back to plain Parquet"
-                );
-                return write_plain_parquet_multi(
-                    req.signal_type,
-                    req.metric_type,
-                    req.service_name,
-                    req.timestamp_micros,
-                    req.batches,
-                )
-                .await;
-            }
-        };
-
-        return write_with_catalog(
-            cat,
-            req.namespace,
-            &table_name,
-            &concatenated,
-            req.snapshot_timestamp_ms,
-            req.retry_policy,
-        )
-        .await
-        .map(|_| format!("{}/{}", req.namespace, table_name))
-        .map_err(|err| {
-            WriterError::write_failure(format!(
-                "catalog append failed for table '{}': {}",
-                table_name, err
-            ))
-        });
-    }
-
-    // No catalog configured - write plain Parquet with separate row groups
     write_plain_parquet_multi(
         req.signal_type,
         req.metric_type,
@@ -882,7 +366,8 @@ pub async fn write_multi_batch(req: WriteMultiBatchRequest<'_>) -> Result<String
 #[cfg(not(target_family = "wasm"))]
 pub async fn write_multi_batch(_req: WriteMultiBatchRequest<'_>) -> Result<String> {
     Err(WriterError::write_failure(
-        "write_multi_batch is only supported on WASM targets. Use write_batch with concatenated batches instead.".to_string()
+        "write_multi_batch is only supported on WASM targets. Use write_batch with concatenated batches instead."
+            .to_string(),
     ))
 }
 
@@ -987,24 +472,6 @@ fn partition_from_timestamp(timestamp_micros: i64) -> (i32, u8, u8, u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn retry_policy_can_be_disabled() {
-        let policy = RetryPolicy::disabled();
-        assert_eq!(policy.effective_max_attempts(), 1);
-        let err = CatalogError::concurrent_modification("conflict");
-        assert!(!policy.should_retry(1, &err));
-        assert_eq!(policy.delay_for_attempt(1), 0);
-    }
-
-    #[test]
-    fn snapshot_clock_returns_constant_timestamp() {
-        let clock = SnapshotClock::new(Some(1_000));
-        // All calls should return the same timestamp - no incrementing per retry
-        assert_eq!(clock.timestamp(), Some(1_000));
-        assert_eq!(clock.timestamp(), Some(1_000));
-        assert_eq!(clock.timestamp(), Some(1_000));
-    }
 
     #[test]
     fn test_extract_timestamp_from_arrow_batch() {

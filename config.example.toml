@@ -108,45 +108,6 @@ max_payload_bytes = 8_388_608  # 8 MB
 
 
 # ==============================================================================
-# Catalog Mode Configuration (All Platforms)
-# ==============================================================================
-# Determines whether to use Apache Iceberg catalog or write plain Parquet files
-#
-# catalog_mode = "iceberg"  # Use Iceberg catalog (default)
-# catalog_mode = "none"     # Write plain Parquet files
-#
-# 📊 Comparison Table:
-# ┌─────────────────────────┬──────────────────┬─────────────────────┐
-# │ Feature                 │ iceberg          │ none (plain)        │
-# ├─────────────────────────┼──────────────────┼─────────────────────┤
-# │ Setup Complexity        │ Moderate         │ Simple              │
-# │ ACID Transactions       │ ✅ Yes           │ ❌ No               │
-# │ Schema Evolution        │ ✅ Automatic     │ ❌ Manual           │
-# │ Time Travel Queries     │ ✅ Yes           │ ❌ No               │
-# │ Query Performance       │ Excellent        │ Good (with pruning) │
-# │ Cost                    │ Higher           │ Lower               │
-# │ Tool Compatibility      │ Iceberg-aware    │ Universal (Parquet) │
-# │ Production Ready        │ ✅ Yes           │ ✅ Yes              │
-# └─────────────────────────┴──────────────────┴─────────────────────┘
-#
-# When to use "iceberg" mode:
-#   ✓ Production workloads requiring data consistency
-#   ✓ Need schema evolution over time
-#   ✓ Want time travel / point-in-time queries
-#   ✓ Using tools optimized for Iceberg (Snowflake, Databricks, Trino)
-#   ✓ Requires catalog service (Nessie, Glue, S3 Tables, etc.)
-#
-# When to use "none" mode:
-#   ✓ Quick testing or development
-#   ✓ Lower cost requirements (no catalog API calls)
-#   ✓ Query with tools that read Parquet directly (DuckDB, Athena, Spark)
-#   ✓ Simpler deployment (just object storage, no catalog)
-#   ✓ Don't need ACID guarantees
-#
-# Default: "iceberg"
-
-
-# ==============================================================================
 # Storage Configuration
 # ==============================================================================
 # Configures where Parquet files are written
@@ -261,9 +222,7 @@ log_format = "text"
 # Lambda-Specific Configuration (Lambda Platform Only)
 # ==============================================================================
 [lambda]
-# Enable integrated Iceberg writer (S3 Tables / Glue). When false, Lambda writes
-# to S3 and performs optional post-write Iceberg commits.
-integrated_iceberg = false
+# (Currently no lambda-specific config - uses common settings above)
 
 
 # ==============================================================================
@@ -271,113 +230,3 @@ integrated_iceberg = false
 # ==============================================================================
 # [cloudflare]
 # (Currently no cloudflare-specific config - uses common settings above)
-
-
-# ==============================================================================
-# Apache Iceberg Configuration (Optional - Lambda and Server Only)
-# ==============================================================================
-# Apache Iceberg provides ACID transactions, schema evolution, and faster queries
-# for your OTLP data. When enabled, Parquet files are committed to an Iceberg
-# catalog after being written to object storage.
-#
-# Platform Support:
-#   ✅ Server: Full support (Nessie, Glue REST catalogs)
-#   ✅ Lambda: Full support (S3 Tables ARN-based, Glue, Nessie REST catalogs)
-#   ✅ Cloudflare Workers: Full support (R2 Data Catalog)
-#
-# Required: Set catalog_mode = "iceberg" to enable (see Catalog Mode section above)
-#
-# Catalog Options:
-#   1. AWS S3 Tables (Lambda only - simplest)
-#      - Managed catalog service with automatic compaction
-#      - Use bucket_arn instead of rest_uri
-#      - Example: bucket_arn = "arn:aws:s3tables:us-west-2:123456:bucket/my-bucket"
-#
-#   2. AWS Glue (Server, Lambda)
-#      - Managed REST catalog via AWS Glue Data Catalog
-#      - Requires rest_uri, warehouse, namespace, data_location
-#
-#   3. Nessie (Server, Lambda)
-#      - Open-source Git-like catalog with versioning
-#      - Requires rest_uri, warehouse, namespace
-#      - Popular for local development
-#
-# [iceberg]
-# # ┌─────────────────────────────────────────────────────────────────────┐
-# # │ Option 1: AWS S3 Tables (Lambda only - Recommended for AWS)        │
-# # └─────────────────────────────────────────────────────────────────────┘
-# # Required: S3 Tables bucket ARN
-# # Format: arn:aws:s3tables:region:account-id:bucket/bucket-name
-# # Find in: AWS Console → S3 Tables → Your bucket → Properties
-# # bucket_arn = "arn:aws:s3tables:us-west-2:123456789012:bucket/my-otlp-bucket"
-#
-# # ┌─────────────────────────────────────────────────────────────────────┐
-# # │ Option 2: REST Catalog (Nessie, Glue - Server/Lambda)              │
-# # └─────────────────────────────────────────────────────────────────────┘
-# # Required: REST catalog endpoint URI
-# # Examples:
-# #   - Nessie (local): "http://nessie:19120/iceberg"
-# #   - AWS Glue: "https://glue.us-east-1.amazonaws.com/iceberg"
-# #   - Custom: "https://my-catalog.example.com/v1"
-# # rest_uri = "http://nessie:19120/iceberg"
-#
-# # Optional: Warehouse location
-# # Purpose: Base S3 path where table metadata is stored
-# # Format: s3://bucket-name/ or s3://bucket-name/prefix/
-# # Required for: Nessie, optional for Glue
-# # warehouse = "s3://my-iceberg-warehouse/"
-#
-# # Optional: Namespace for tables
-# # Purpose: Logical grouping of tables (like database name)
-# # Format: Single name or dot-separated path (e.g., "otel" or "otel.production")
-# # Default: Tables created in root namespace if not specified
-# # Recommendation: Use "otel" for simplicity
-# # namespace = "otel"
-#
-# # Optional: Explicit data location for table storage
-# # Purpose: Override default table storage location
-# # Required for: AWS Glue
-# # Format: s3://bucket-name/path/
-# # Example: data_location = "s3://my-data-bucket/otlp/"
-#
-# # ┌─────────────────────────────────────────────────────────────────────┐
-# # │ Advanced Options (Usually not needed)                               │
-# # └─────────────────────────────────────────────────────────────────────┘
-#
-# # Catalog name identifier
-# # Default: "rest"
-# # Purpose: Identifies the catalog in multi-catalog setups
-# # catalog_name = "rest"
-#
-# # Staging prefix for temporary data files
-# # Default: "data/incoming"
-# # Purpose: Subdirectory for staging files before commit
-# # staging_prefix = "data/incoming"
-#
-# # Target Parquet file size in bytes
-# # Default: 536,870,912 (512 MB)
-# # Purpose: Iceberg will attempt to create files near this size
-# # Recommendation: 256 MB - 1 GB depending on query patterns
-# # Larger files = fewer files, better compression, slower random access
-# # target_file_size_bytes = 536_870_912  # 512 MB
-#
-# # Iceberg table format version
-# # Options: 1 | 2
-# # Default: 2 (recommended)
-# # Version 2 features: Row-level deletes, partition evolution, sort order
-# # Version 1: For compatibility with older Iceberg clients
-# # format_version = 2
-#
-# # ┌─────────────────────────────────────────────────────────────────────┐
-# # │ Custom Table Names (Optional)                                       │
-# # └─────────────────────────────────────────────────────────────────────┘
-# # Override default table names for Iceberg tables
-# # Default naming shown below - uncomment to customize
-# # [iceberg.tables]
-# # logs = "otel_logs"
-# # traces = "otel_traces"
-# # metrics_gauge = "otel_metrics_gauge"
-# # metrics_sum = "otel_metrics_sum"
-# # metrics_histogram = "otel_metrics_histogram"
-# # metrics_exponential_histogram = "otel_metrics_exponential_histogram"
-# # metrics_summary = "otel_metrics_summary"

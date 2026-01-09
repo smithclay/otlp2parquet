@@ -1,24 +1,23 @@
 //! Smoke test harness for platform-specific integration tests
 //!
 //! Provides a unified interface for testing otlp2parquet across different platforms:
-//! - Lambda + S3 Tables Catalog
-//! - Cloudflare Workers + R2 Data Catalog
+//! - Lambda + S3
+//! - Cloudflare Workers + R2
+//! - Local Server + MinIO
 //!
 //! Each platform implements the `SmokeTestHarness` trait, providing:
 //! 1. deploy() - Deploy infrastructure (Lambda function, Workers script)
 //! 2. send_signals() - Send OTLP test data (logs, metrics, traces)
 //! 3. verify_execution() - Check for errors in platform logs
-//! 4. duckdb_verifier() - Get configured DuckDB verifier for catalog validation
+//! 4. duckdb_verifier() - Get configured DuckDB verifier for Parquet validation
 //! 5. cleanup() - Remove all deployed resources
 //!
-//! ## DuckDB Universal Verification
+//! ## DuckDB Verification
 //!
-//! DuckDB connects to Iceberg catalogs across all platforms:
-//! - Docker/Server: Nessie REST catalog + MinIO S3
-//! - Lambda: S3 Tables catalog + AWS S3
-//! - Workers: R2 Data Catalog + Cloudflare R2
-//!
-//! Same verification logic (table counts, schema, samples) regardless of platform.
+//! DuckDB queries Parquet files directly from storage:
+//! - Docker/Server: MinIO S3
+//! - Lambda: AWS S3
+//! - Workers: Cloudflare R2
 
 #![cfg_attr(
     not(any(
@@ -65,23 +64,12 @@ pub trait SmokeTestHarness {
 pub struct DeploymentInfo {
     /// OTLP endpoint URL (HTTP)
     pub endpoint: String,
-    /// Catalog endpoint or identifier (ARN for S3 Tables, URL for REST)
-    pub catalog_endpoint: String,
     /// Storage bucket name
     pub bucket: String,
-    /// Iceberg namespace for tables
-    pub namespace: String,
+    /// Storage prefix for test isolation
+    pub prefix: String,
     /// Deployed resource identifiers for cleanup
     pub resource_ids: HashMap<String, String>,
-}
-
-/// Catalog mode for platform tests
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum CatalogMode {
-    /// Enable Iceberg catalog
-    Enabled,
-    /// Disable catalog (plain Parquet)
-    None,
 }
 
 /// Execution status from platform logs
@@ -102,27 +90,9 @@ impl ExecutionStatus {
     }
 }
 
-/// DuckDB verifier for Iceberg catalog validation
+/// DuckDB verifier for Parquet file validation
 pub struct DuckDBVerifier {
-    pub catalog_type: CatalogType,
-    pub catalog_endpoint: String,
     pub storage_config: StorageConfig,
-    /// Optional catalog token (e.g., R2 API token for R2 Data Catalog)
-    pub catalog_token: Option<String>,
-}
-
-/// Iceberg catalog types
-#[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
-pub enum CatalogType {
-    /// Nessie REST catalog (Docker/Server tests)
-    NessieREST,
-    /// AWS S3 Tables catalog (Lambda tests)
-    S3Tables,
-    /// Cloudflare R2 Data Catalog (Workers tests)
-    R2Catalog,
-    /// Plain Parquet files without catalog
-    PlainParquet,
 }
 
 /// Storage backend configuration for DuckDB
@@ -186,22 +156,16 @@ pub struct ValidationReport {
 }
 
 impl DuckDBVerifier {
-    /// Verify Iceberg catalog contains expected tables and data
+    /// Verify Parquet files contain expected tables and data
     ///
     /// Steps:
-    /// 1. Connect to DuckDB with appropriate storage and catalog config
-    /// 2. List all tables in namespace
-    /// 3. Count rows in each table
-    /// 4. Validate schemas match expected ClickHouse format
-    /// 5. Retrieve sample data for sanity checks
-    pub async fn verify(&self, namespace: &str) -> Result<ValidationReport> {
-        // For now, this is a placeholder that would use either:
-        // 1. DuckDB Rust client (duckdb crate)
-        // 2. Shell out to duckdb CLI (similar to verify-duckdb.sh)
-        //
-        // The shell approach is simpler and reuses existing verify-duckdb.sh logic
-
-        let script = self.generate_verification_script(namespace)?;
+    /// 1. Connect to DuckDB with storage credentials
+    /// 2. Query Parquet files directly using glob patterns
+    /// 3. Count rows for each signal type
+    /// 4. Retrieve sample data for sanity checks
+    #[allow(unused_variables)]
+    pub async fn verify(&self, prefix: &str) -> Result<ValidationReport> {
+        let script = self.generate_verification_script(prefix)?;
         let output = self.execute_duckdb_script(&script).await?;
         let report = self.parse_verification_output(&output)?;
 
@@ -209,23 +173,12 @@ impl DuckDBVerifier {
     }
 
     /// Generate DuckDB SQL script for verification
-    fn generate_verification_script(&self, namespace: &str) -> Result<String> {
+    fn generate_verification_script(&self, _prefix: &str) -> Result<String> {
         let mut script = String::new();
 
-        // Install extensions (S3 Tables support is now GA in DuckDB)
-        if self.catalog_type == CatalogType::S3Tables {
-            script.push_str("INSTALL aws;\n");
-            script.push_str("INSTALL httpfs;\n");
-            script.push_str("INSTALL iceberg;\n");
-            script.push_str("LOAD aws;\n");
-            script.push_str("LOAD httpfs;\n");
-            script.push_str("LOAD iceberg;\n\n");
-        } else {
-            script.push_str("INSTALL httpfs;\n");
-            script.push_str("INSTALL iceberg;\n");
-            script.push_str("LOAD httpfs;\n");
-            script.push_str("LOAD iceberg;\n\n");
-        }
+        // Install extensions for S3/R2 access
+        script.push_str("INSTALL httpfs;\n");
+        script.push_str("LOAD httpfs;\n\n");
 
         // Create storage secret based on backend
         match &self.storage_config.backend {
@@ -291,117 +244,28 @@ impl DuckDBVerifier {
             }
         }
 
-        // Attach Iceberg catalog based on type OR direct Parquet scanning
-        match self.catalog_type {
-            CatalogType::NessieREST => {
-                script.push_str(&format!(
-                    "ATTACH 's3://otlp/' AS iceberg_catalog (
-    TYPE ICEBERG,
-    ENDPOINT '{}',
-    AUTHORIZATION_TYPE 'none'
-);\n\n",
-                    self.catalog_endpoint
-                ));
-            }
-            CatalogType::S3Tables => {
-                // S3 Tables uses ARN directly in ATTACH statement
-                // ARN format: arn:aws:s3tables:region:account:bucket/bucket-name
-                script.push_str(&format!(
-                    "ATTACH '{}' AS iceberg_catalog (
-    TYPE iceberg,
-    ENDPOINT_TYPE s3_tables
-);\n\n",
-                    self.catalog_endpoint
-                ));
-            }
-            CatalogType::R2Catalog => {
-                // R2 Data Catalog requires an Iceberg SECRET with API token
-                if let Some(token) = &self.catalog_token {
-                    script.push_str(&format!(
-                        "CREATE SECRET r2_catalog_secret (
-    TYPE ICEBERG,
-    TOKEN '{}'
-);\n\n",
-                        token
-                    ));
-                }
+        // Direct Parquet file scanning with glob patterns
+        let logs_path = self.get_parquet_scan_path("logs")?;
+        let traces_path = self.get_parquet_scan_path("traces")?;
+        let metrics_gauge_path = self.get_parquet_scan_path("metrics/gauge")?;
 
-                // Extract account and bucket from catalog endpoint for warehouse name
-                // Endpoint format: https://catalog.cloudflarestorage.com/<account>/<bucket>
-                // Warehouse name format: <account>_<bucket>
-                let parts: Vec<&str> = self.catalog_endpoint.split('/').collect();
-                let warehouse_name = if parts.len() >= 5 {
-                    // parts: ["https:", "", "catalog.cloudflarestorage.com", "<account>", "<bucket>"]
-                    format!("{}_{}", parts[3], parts[4])
-                } else {
-                    // Fallback if format is unexpected
-                    "default".to_string()
-                };
-
-                script.push_str(&format!(
-                    "ATTACH '{}' AS iceberg_catalog (
-    TYPE ICEBERG,
-    ENDPOINT '{}'
-);\n\n",
-                    warehouse_name, self.catalog_endpoint
-                ));
-            }
-            CatalogType::PlainParquet => {
-                // No catalog attachment needed for plain Parquet mode
-                // Will use direct read_parquet() queries instead
-            }
-        }
-
-        // Note: information_schema.tables query causes "NameListToString NOT IMPLEMENTED" error
-        // with S3 Tables catalog in DuckDB. We'll infer table existence from successful row counts instead.
-
-        // Count rows in tables that should exist based on test signals sent
-        // The full pipeline test sends: logs, metrics (gauge only), and traces
-        if self.catalog_type == CatalogType::PlainParquet {
-            // Plain Parquet mode: Direct file scanning with glob patterns
-            // NOTE: We only query logs here because traces/metrics may not exist in all tests.
-            // The specific test assertions will fail if expected data is missing.
-            let logs_path = self.get_parquet_scan_path("logs")?;
-            let traces_path = self.get_parquet_scan_path("traces")?;
-            let metrics_gauge_path = self.get_parquet_scan_path("metrics/gauge")?;
-
-            // Each query is wrapped in a subquery that returns 0 on error using DuckDB's error handling
-            // We use a UNION ALL approach with a dummy 0 row that we filter out
-            script.push_str(&format!(
-                "SELECT 'otel_logs' AS table_name, COUNT(*) AS row_count FROM read_parquet('{}');\n",
-                logs_path
-            ));
-            // Note: traces and metrics queries may fail if no files exist - handled via fallback below
-            script.push_str(&format!(
-                "-- OPTIONAL_TABLE: otel_traces\nSELECT 'otel_traces' AS table_name, COUNT(*) AS row_count FROM read_parquet('{}');\n",
-                traces_path
-            ));
-            script.push_str(&format!(
-                "-- OPTIONAL_TABLE: otel_metrics_gauge\nSELECT 'otel_metrics_gauge' AS table_name, COUNT(*) AS row_count FROM read_parquet('{}');\n",
-                metrics_gauge_path
-            ));
-        } else {
-            // Iceberg catalog mode: Query catalog tables directly
-            // Tables that don't exist will cause errors, but in practice all standard tests
-            // create these tables so this is fine. The test assertions will fail if expected data is missing.
-            script.push_str(&format!(
-                "SELECT 'otel_logs' AS table_name, COALESCE((SELECT COUNT(*) FROM iceberg_catalog.{}.otel_logs), 0) AS row_count;\n",
-                namespace
-            ));
-            script.push_str(&format!(
-                "SELECT 'otel_traces' AS table_name, COALESCE((SELECT COUNT(*) FROM iceberg_catalog.{}.otel_traces), 0) AS row_count;\n",
-                namespace
-            ));
-            script.push_str(&format!(
-                "SELECT 'otel_metrics_gauge' AS table_name, COALESCE((SELECT COUNT(*) FROM iceberg_catalog.{}.otel_metrics_gauge), 0) AS row_count;\n",
-                namespace
-            ));
-        }
+        script.push_str(&format!(
+            "SELECT 'otel_logs' AS table_name, COUNT(*) AS row_count FROM read_parquet('{}');\n",
+            logs_path
+        ));
+        script.push_str(&format!(
+            "-- OPTIONAL_TABLE: otel_traces\nSELECT 'otel_traces' AS table_name, COUNT(*) AS row_count FROM read_parquet('{}');\n",
+            traces_path
+        ));
+        script.push_str(&format!(
+            "-- OPTIONAL_TABLE: otel_metrics_gauge\nSELECT 'otel_metrics_gauge' AS table_name, COUNT(*) AS row_count FROM read_parquet('{}');\n",
+            metrics_gauge_path
+        ));
 
         Ok(script)
     }
 
-    /// Get path pattern for direct Parquet scanning (plain Parquet mode)
+    /// Get path pattern for direct Parquet scanning
     fn get_parquet_scan_path(&self, signal_type: &str) -> Result<String> {
         // Combine storage prefix (for test isolation) with signal type
         let full_prefix = match &self.storage_config.prefix {
@@ -441,7 +305,6 @@ impl DuckDBVerifier {
             .context("Failed to write DuckDB script")?;
 
         tracing::info!("DuckDB script written to: {:?}", script_path);
-        tracing::info!("Catalog endpoint for DuckDB: {}", self.catalog_endpoint);
 
         // Execute DuckDB with script file as argument (not stdin)
         // Using -f FILENAME reads file and exits, -markdown sets output format

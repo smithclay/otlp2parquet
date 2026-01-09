@@ -1,12 +1,12 @@
-//! Lambda + S3 Tables smoke test harness
+//! Lambda + S3 smoke test harness
 //!
-//! Tests otlp2parquet Lambda function with AWS S3 Tables Iceberg catalog.
+//! Tests otlp2parquet Lambda function with AWS S3.
 //!
 //! ## Architecture
-//! - Deploy: CloudFormation stack with Lambda function + S3 Tables bucket
+//! - Deploy: CloudFormation stack with Lambda function + S3 bucket
 //! - Send signals: POST to Lambda Function URL with OTLP payloads
 //! - Verify execution: Query CloudWatch Logs for errors
-//! - Verify data: DuckDB queries S3 Tables catalog + S3 Parquet files
+//! - Verify data: DuckDB queries S3 Parquet files directly
 //! - Cleanup: Delete CloudFormation stack + temp S3 bucket
 //!
 //! ## Prerequisites
@@ -16,12 +16,11 @@
 //! ## Environment Variables
 //! - `SMOKE_TEST_STACK_PREFIX`: Stack name prefix (default: "smoke-lambda")
 //! - `SMOKE_TEST_AWS_REGION`: AWS region (default: "us-west-2")
-//! - `SMOKE_TEST_S3_TABLES_NAMESPACE`: Iceberg namespace (default: "otel_smoke")
 //! - `SMOKE_TEST_LAMBDA_BUCKET`: (optional) S3 bucket for Lambda ZIP; auto-created if not set
 
 use super::{
-    CatalogMode, CatalogType, DeploymentInfo, DuckDBVerifier, ExecutionStatus, S3Credentials,
-    SmokeTestHarness, StorageBackend, StorageConfig, TestDataSet,
+    DeploymentInfo, DuckDBVerifier, ExecutionStatus, S3Credentials, SmokeTestHarness,
+    StorageBackend, StorageConfig, TestDataSet,
 };
 use anyhow::{Context, Result};
 use aws_config::BehaviorVersion;
@@ -29,7 +28,6 @@ use aws_sdk_cloudformation::Client as CfnClient;
 use aws_sdk_cloudwatchlogs::Client as LogsClient;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::Client as S3Client;
-use aws_sdk_s3tables::Client as S3TablesClient;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -41,29 +39,25 @@ pub struct LambdaHarness {
     stack_name: String,
     /// AWS region
     region: String,
-    /// S3 Tables namespace
-    namespace: String,
+    /// Prefix for test isolation
+    prefix: String,
     /// S3 bucket for Lambda ZIP upload
     lambda_bucket: String,
     /// S3 key for Lambda ZIP
     lambda_key: String,
     /// AWS SDK config
     aws_config: aws_config::SdkConfig,
-    /// Catalog mode (S3 Tables or plain Parquet)
-    catalog_mode: CatalogMode,
     /// Whether we created the lambda bucket (and should delete it on cleanup)
     owns_lambda_bucket: bool,
 }
 
 impl LambdaHarness {
-    /// Create harness with specific catalog mode
-    pub async fn with_catalog_mode(catalog_mode: CatalogMode) -> Result<Self> {
+    /// Create harness
+    pub async fn new() -> Result<Self> {
         let stack_prefix =
             std::env::var("SMOKE_TEST_STACK_PREFIX").unwrap_or_else(|_| "smoke-lambda".to_string());
         let region =
             std::env::var("SMOKE_TEST_AWS_REGION").unwrap_or_else(|_| "us-west-2".to_string());
-        let namespace = std::env::var("SMOKE_TEST_S3_TABLES_NAMESPACE")
-            .unwrap_or_else(|_| "otel_smoke".to_string());
 
         // Generate unique stack name for test isolation
         let test_id = uuid::Uuid::new_v4()
@@ -73,6 +67,7 @@ impl LambdaHarness {
             .unwrap()
             .to_string();
         let stack_name = format!("{}-{}", stack_prefix, test_id);
+        let prefix = format!("smoke-{}/", test_id);
 
         let aws_config = aws_config::defaults(BehaviorVersion::latest())
             .region(aws_config::Region::new(region.clone()))
@@ -142,11 +137,10 @@ impl LambdaHarness {
         Ok(Self {
             stack_name,
             region,
-            namespace,
+            prefix,
             lambda_bucket,
             lambda_key,
             aws_config,
-            catalog_mode,
             owns_lambda_bucket,
         })
     }
@@ -166,17 +160,15 @@ impl SmokeTestHarness for LambdaHarness {
         // Generate unique bucket name for data storage
         let data_bucket_name = format!("otlp2parquet-smoke-{}", &self.stack_name);
 
-        // Render template placeholders
-        let catalog_mode = match self.catalog_mode {
-            CatalogMode::Enabled => "iceberg",
-            CatalogMode::None => "none",
-        };
+        // Set prefix for test isolation
+        let storage_prefix = self.prefix.clone();
 
         // Use 's3' source for smoke tests (tests locally built binary, not GitHub release)
         let rendered = template_content
             .replace("{{STACK_NAME}}", &self.stack_name)
             .replace("{{BUCKET_NAME}}", &data_bucket_name)
-            .replace("{{CATALOG_MODE}}", catalog_mode)
+            .replace("{{CATALOG_MODE}}", "none")
+            .replace("{{STORAGE_PREFIX}}", &storage_prefix)
             .replace("{{LOG_RETENTION}}", "7")
             .replace("{{LAMBDA_VERSION}}", "latest");
 
@@ -206,7 +198,6 @@ impl SmokeTestHarness for LambdaHarness {
                 "LambdaSource=s3",
                 &format!("LambdaS3Bucket={}", self.lambda_bucket),
                 &format!("LambdaS3Key={}", self.lambda_key),
-                &format!("IcebergNamespace={}", self.namespace),
                 "--no-fail-on-empty-changeset",
             ])
             .output()
@@ -241,28 +232,11 @@ impl SmokeTestHarness for LambdaHarness {
             .context("FunctionUrl output not found")?
             .clone();
 
-        // Extract catalog endpoint and bucket based on catalog mode
-        let (catalog_endpoint, bucket) = match self.catalog_mode {
-            CatalogMode::Enabled => {
-                let s3_tables_arn = outputs
-                    .get("S3TablesBucketArn")
-                    .context("S3TablesBucketArn output not found")?
-                    .clone();
-                let s3_tables_name = outputs
-                    .get("S3TablesBucketName")
-                    .context("S3TablesBucketName output not found")?
-                    .clone();
-                (s3_tables_arn, s3_tables_name)
-            }
-            CatalogMode::None => {
-                let data_bucket = outputs
-                    .get("DataBucketName")
-                    .context("DataBucketName output not found")?
-                    .clone();
-                // No catalog endpoint for plain Parquet mode
-                ("".to_string(), data_bucket)
-            }
-        };
+        // Extract bucket name from outputs
+        let bucket = outputs
+            .get("DataBucketName")
+            .context("DataBucketName output not found")?
+            .clone();
 
         tracing::info!("Lambda deployed successfully: {}", endpoint);
 
@@ -272,9 +246,8 @@ impl SmokeTestHarness for LambdaHarness {
 
         Ok(DeploymentInfo {
             endpoint,
-            catalog_endpoint,
             bucket,
-            namespace: self.namespace.clone(),
+            prefix: self.prefix.clone(),
             resource_ids: HashMap::from([("stack_name".to_string(), self.stack_name.clone())]),
         })
     }
@@ -394,14 +367,7 @@ impl SmokeTestHarness for LambdaHarness {
     }
 
     fn duckdb_verifier(&self, info: &DeploymentInfo) -> DuckDBVerifier {
-        let catalog_type = match self.catalog_mode {
-            CatalogMode::Enabled => CatalogType::S3Tables,
-            CatalogMode::None => CatalogType::PlainParquet,
-        };
-
         DuckDBVerifier {
-            catalog_type,
-            catalog_endpoint: info.catalog_endpoint.clone(),
             storage_config: StorageConfig {
                 backend: StorageBackend::S3 {
                     region: self.region.clone(),
@@ -409,9 +375,8 @@ impl SmokeTestHarness for LambdaHarness {
                     endpoint: None,
                     credentials: S3Credentials::FromEnvironment,
                 },
-                prefix: None, // Lambda tests write to root of bucket
+                prefix: Some(info.prefix.clone()),
             },
-            catalog_token: None, // S3 Tables uses IAM authentication
         }
     }
 
@@ -420,149 +385,7 @@ impl SmokeTestHarness for LambdaHarness {
 
         let cfn_client = CfnClient::new(&self.aws_config);
 
-        // S3 Tables cleanup only needed in catalog mode
-        if self.catalog_mode == CatalogMode::Enabled {
-            let s3tables_client = S3TablesClient::new(&self.aws_config);
-
-            // Get stack outputs to find S3 Tables bucket ARN
-            let outputs = match self.get_stack_outputs(&cfn_client).await {
-                Ok(o) => o,
-                Err(e) => {
-                    tracing::warn!("Failed to get stack outputs for cleanup: {}", e);
-                    // Continue with stack deletion anyway
-                    cfn_client
-                        .delete_stack()
-                        .stack_name(&self.stack_name)
-                        .send()
-                        .await
-                        .context("Failed to delete CloudFormation stack")?;
-                    return Ok(());
-                }
-            };
-
-            if let Some(bucket_arn) = outputs.get("S3TablesBucketArn") {
-                tracing::info!("Deleting S3 Tables resources from bucket: {}", bucket_arn);
-
-                // Delete all tables in the namespace
-                match s3tables_client
-                    .list_tables()
-                    .table_bucket_arn(bucket_arn)
-                    .namespace(&self.namespace)
-                    .send()
-                    .await
-                {
-                    Ok(resp) => {
-                        for table in resp.tables() {
-                            let table_arn = table.table_arn();
-                            let table_name = table.name();
-                            tracing::info!("Deleting table: {}", table_arn);
-                            if let Err(e) = s3tables_client
-                                .delete_table()
-                                .table_bucket_arn(bucket_arn)
-                                .namespace(&self.namespace)
-                                .name(table_name)
-                                .send()
-                                .await
-                            {
-                                tracing::warn!("Failed to delete table {}: {}", table_arn, e);
-                            }
-                        }
-
-                        // Wait for all tables to be deleted (poll until empty)
-                        tracing::info!("Waiting for tables to be deleted...");
-                        let mut attempts = 0;
-                        loop {
-                            match s3tables_client
-                                .list_tables()
-                                .table_bucket_arn(bucket_arn)
-                                .namespace(&self.namespace)
-                                .send()
-                                .await
-                            {
-                                Ok(resp) if resp.tables().is_empty() => {
-                                    tracing::info!("All tables deleted successfully");
-                                    break;
-                                }
-                                Ok(resp) => {
-                                    let remaining = resp.tables().len();
-                                    tracing::info!(
-                                        "Still waiting for {} tables to delete...",
-                                        remaining
-                                    );
-                                    attempts += 1;
-                                    if attempts > 30 {
-                                        tracing::warn!(
-                                        "Timeout waiting for tables to delete, continuing anyway"
-                                    );
-                                        break;
-                                    }
-                                    tokio::time::sleep(Duration::from_secs(2)).await;
-                                }
-                                Err(e) => {
-                                    tracing::warn!("Error checking table deletion status: {}", e);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to list tables for cleanup: {}", e);
-                    }
-                }
-
-                // Delete the namespace (only if we created it)
-                tracing::info!("Deleting namespace: {}", self.namespace);
-                if let Err(e) = s3tables_client
-                    .delete_namespace()
-                    .table_bucket_arn(bucket_arn)
-                    .namespace(&self.namespace)
-                    .send()
-                    .await
-                {
-                    tracing::warn!("Failed to delete namespace {}: {}", self.namespace, e);
-                } else {
-                    // Wait for namespace to be deleted
-                    tracing::info!("Waiting for namespace to be deleted...");
-                    let mut attempts = 0;
-                    loop {
-                        match s3tables_client
-                            .list_namespaces()
-                            .table_bucket_arn(bucket_arn)
-                            .send()
-                            .await
-                        {
-                            Ok(resp) => {
-                                let namespace_exists = resp
-                                    .namespaces()
-                                    .iter()
-                                    .any(|ns| ns.namespace() == &[self.namespace.as_str()]);
-
-                                if !namespace_exists {
-                                    tracing::info!("Namespace deleted successfully");
-                                    break;
-                                }
-
-                                tracing::info!("Still waiting for namespace to delete...");
-                                attempts += 1;
-                                if attempts > 30 {
-                                    tracing::warn!(
-                                        "Timeout waiting for namespace to delete, continuing anyway"
-                                    );
-                                    break;
-                                }
-                                tokio::time::sleep(Duration::from_secs(2)).await;
-                            }
-                            Err(e) => {
-                                tracing::warn!("Error checking namespace deletion status: {}", e);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Now delete the CloudFormation stack
+        // Delete the CloudFormation stack
         cfn_client
             .delete_stack()
             .stack_name(&self.stack_name)
