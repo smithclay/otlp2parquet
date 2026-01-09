@@ -36,6 +36,11 @@ enum Commands {
         #[command(subcommand)]
         platform: otlp2parquet::deploy::DeployCommand,
     },
+    /// Generate configuration for connecting external services
+    Connect {
+        #[command(subcommand)]
+        service: otlp2parquet::connect::ConnectCommand,
+    },
     /// Start the HTTP server (default if no subcommand given)
     Serve,
 }
@@ -45,8 +50,17 @@ fn main() -> Result<()> {
 
     match cli.command {
         Some(Commands::Deploy { platform }) => platform.run(),
+        Some(Commands::Connect { service }) => run_connect(service),
         Some(Commands::Serve) | None => run_server(cli),
     }
+}
+
+fn run_connect(service: otlp2parquet::connect::ConnectCommand) -> Result<()> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("Failed to build tokio runtime")?
+        .block_on(service.run())
 }
 
 fn run_server(cli: Cli) -> Result<()> {

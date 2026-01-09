@@ -34,6 +34,7 @@ use tracing::{debug, error, info, warn};
 mod handlers;
 mod init;
 
+pub mod connect;
 pub mod deploy;
 
 use handlers::{handle_logs, handle_metrics, handle_traces, health_check, ready_check};
