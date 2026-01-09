@@ -8,7 +8,33 @@
 
 Receive OpenTelemetry logs, metrics, and traces and write them as Parquet files to local disk or cloud storage. Query with DuckDB, Spark, or anything that reads Parquet.
 
-![otlp2parquet architecture](docs/otlp2parquet-arch-dec2025.png)
+```mermaid
+flowchart LR
+    subgraph Sources["OpenTelemetry Sources"]
+        Traces
+        Metrics
+        Logs
+    end
+
+    subgraph OTLP2PARQUET
+        Decode["OTLP Decode"] --> Arrow["Arrow Mapping"] --> Write["Parquet Write"]
+    end
+
+    subgraph Storage["Storage"]
+        Local["Local File"]
+        S3["S3-Compatible"]
+    end
+
+    subgraph Query["Query Engines"]
+        DuckDB
+        Trino
+        Other["Other Consumers"]
+    end
+
+    Sources --> OTLP2PARQUET
+    OTLP2PARQUET --> Storage
+    Storage --> Query
+```
 
 ## Quick Start
 
