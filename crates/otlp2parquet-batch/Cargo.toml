@@ -1,5 +1,5 @@
 [package]
-name = "otlp2parquet-handlers"
+name = "otlp2parquet-batch"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -8,14 +8,14 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-otlp2parquet-batch = { workspace = true }
-otlp2parquet-common = { workspace = true }
+anyhow = { workspace = true }
+arrow = { workspace = true }
 otlp2records = { workspace = true }
-otlp2parquet-writer = { path = "../otlp2parquet-writer", default-features = false }
-serde_json = { workspace = true }
+parking_lot = "0.12"
 vrl = { version = "0.29", default-features = false, features = ["value"] }
-tracing = { workspace = true }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+js-sys = "0.3"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt"] }
 bytes = { version = "1", default-features = false }

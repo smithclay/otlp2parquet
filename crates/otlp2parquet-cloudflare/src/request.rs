@@ -6,7 +6,7 @@ use crate::do_config::WorkerEnvSource;
 use crate::{auth, errors, handlers, ingest, TraceContext};
 use flate2::read::GzDecoder;
 use once_cell::sync::OnceCell;
-use otlp2parquet_core::config::{Platform, RuntimeConfig};
+use otlp2parquet_common::config::{Platform, RuntimeConfig};
 use std::io::Read;
 use worker::*;
 
@@ -139,7 +139,7 @@ pub(crate) async fn handle(mut req: Request, env: Env, _ctx: Context) -> Result<
 
     let content_type_header = req.headers().get("content-type").ok().flatten();
     let content_type = content_type_header.as_deref();
-    let format = otlp2parquet_core::InputFormat::from_content_type(content_type);
+    let format = otlp2parquet_common::InputFormat::from_content_type(content_type);
     let content_encoding = req.headers().get("content-encoding").ok().flatten();
 
     let raw_body = req.bytes().await.map_err(|e| {
@@ -225,7 +225,7 @@ pub(crate) async fn handle(mut req: Request, env: Env, _ctx: Context) -> Result<
 }
 
 fn load_worker_config(env: &Env) -> Result<RuntimeConfig> {
-    use otlp2parquet_core::config::EnvSource;
+    use otlp2parquet_common::config::EnvSource;
 
     tracing::debug!("load_worker_config: starting");
     let provider = WorkerEnvSource { env };

@@ -42,8 +42,6 @@ test: ## Run tests for all testable feature combinations
 	@cargo test
 	@echo "==> Testing lambda..."
 	@cargo test -p otlp2parquet-lambda
-	@echo "==> Testing core (no features)..."
-	@cargo test -p otlp2parquet-core
 
 .PHONY: test-verbose
 test-verbose: ## Run tests with verbose output
@@ -176,27 +174,9 @@ wasm-full: wasm-compress wasm-profile ## Build, optimize, compress, and profile 
 # Demo WASM Build
 #
 
-WASM_DEMO_OUT := docs/query-demo/wasm
-
-.PHONY: wasm-demo
-wasm-demo: ## Build otlp2parquet-core WASM for browser demo
-	@echo "==> Building otlp2parquet-core WASM for browser demo..."
-	@if ! command -v wasm-pack >/dev/null 2>&1; then \
-		echo "Installing wasm-pack..."; \
-		cargo install wasm-pack; \
-	fi
-	@wasm-pack build crates/otlp2parquet-core \
-		--target web \
-		--out-dir ../../$(WASM_DEMO_OUT) \
-		--features wasm \
-		--release
-	@echo "==> WASM demo built to $(WASM_DEMO_OUT)/"
-	@SIZE=$$(stat -f%z $(WASM_DEMO_OUT)/otlp2parquet_core_bg.wasm 2>/dev/null || stat -c%s $(WASM_DEMO_OUT)/otlp2parquet_core_bg.wasm 2>/dev/null); \
-	python3 -c "import sys; size=int(sys.argv[1]); print(f\"==> WASM size: {size/1024:.1f} KB ({size/1024/1024:.3f} MB)\")" $$SIZE
-
 .PHONY: clean-wasm-demo
 clean-wasm-demo: ## Remove demo WASM artifacts
-	@rm -rf $(WASM_DEMO_OUT)
+	@rm -rf docs/query-demo/wasm
 	@echo "Cleaned demo WASM artifacts"
 
 #
@@ -342,7 +322,7 @@ publish-dry-run: ## Dry-run publish all crates to crates.io (in dependency order
 .PHONY: publish
 publish: ## Publish all crates to crates.io (in dependency order)
 	@echo "==> Publishing workspace crates to crates.io..."
-	@echo "Order: otlp2parquet-proto -> otlp2parquet-core -> otlp2parquet-writer -> otlp2parquet"
+	@echo "Order: otlp2parquet-proto -> otlp2parquet-common -> otlp2parquet-batch -> otlp2parquet-writer -> otlp2parquet-handlers -> otlp2parquet"
 	@if ! command -v cargo-ws >/dev/null 2>&1; then \
 		echo "Installing cargo-workspaces..."; \
 		cargo install cargo-workspaces; \

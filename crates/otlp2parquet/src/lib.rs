@@ -20,9 +20,9 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use otlp2parquet_core::batch::{BatchConfig, BatchManager, PassthroughBatcher};
-use otlp2parquet_core::config::RuntimeConfig;
-use otlp2parquet_core::parquet::encoding::set_parquet_row_group_size;
+use otlp2parquet_batch::{BatchConfig, BatchManager, PassthroughBatcher};
+use otlp2parquet_common::config::RuntimeConfig;
+use otlp2parquet_writer::set_parquet_row_group_size;
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

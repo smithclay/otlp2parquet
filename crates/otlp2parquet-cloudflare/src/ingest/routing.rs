@@ -2,7 +2,7 @@
 
 use crate::{make_do_id, SignalKey, TraceContext};
 use arrow::record_batch::RecordBatch;
-use otlp2parquet_core::batch::ipc::serialize_batch;
+use otlp2parquet_batch::ipc::serialize_batch;
 use serde::Deserialize;
 use worker::{Env, Headers, Method, Request, RequestInit, Response, Result};
 

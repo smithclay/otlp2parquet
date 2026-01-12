@@ -103,7 +103,7 @@ async fn handle_post(
     }
 
     // Detect input format from Content-Type header
-    let format = otlp2parquet_core::InputFormat::from_content_type(content_type);
+    let format = otlp2parquet_common::InputFormat::from_content_type(content_type);
 
     match signal {
         SignalKind::Logs => process_logs(body.as_ref(), format, content_type).await,
@@ -114,7 +114,7 @@ async fn handle_post(
 
 async fn process_logs(
     body: &[u8],
-    format: otlp2parquet_core::InputFormat,
+    format: otlp2parquet_common::InputFormat,
     content_type: Option<&str>,
 ) -> HttpResponseData {
     let result = process_logs_handler(body, format).await.map_err(|e| {
@@ -144,7 +144,7 @@ async fn process_logs(
 
 async fn process_metrics(
     body: &[u8],
-    format: otlp2parquet_core::InputFormat,
+    format: otlp2parquet_common::InputFormat,
     content_type: Option<&str>,
 ) -> HttpResponseData {
     let result = process_metrics_handler(body, format).await.map_err(|e| {
@@ -173,7 +173,7 @@ async fn process_metrics(
 
 async fn process_traces(
     body: &[u8],
-    format: otlp2parquet_core::InputFormat,
+    format: otlp2parquet_common::InputFormat,
     content_type: Option<&str>,
 ) -> HttpResponseData {
     let result = process_traces_handler(body, format).await.map_err(|e| {

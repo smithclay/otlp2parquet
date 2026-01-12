@@ -17,7 +17,7 @@ mod request;
 mod tracing_context;
 
 // Re-export Durable Object classes at crate root for worker-build
-pub use otlp2parquet_core::{MetricType, SignalKey};
+pub use otlp2parquet_common::{MetricType, SignalKey};
 pub use r#do::OtlpBatcherLegacy; // Migration stub for renamed old class
 pub use r#do::OtlpBatcherV2;
 pub use tracing_context::TraceContext;

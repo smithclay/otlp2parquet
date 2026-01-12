@@ -6,8 +6,8 @@
 // We don't add our own tokio - lambda_runtime provides it
 
 use lambda_runtime::{service_fn, Error, LambdaEvent};
-use otlp2parquet_core::config::{RuntimeConfig, StorageBackend};
-use otlp2parquet_core::parquet::encoding::set_parquet_row_group_size;
+use otlp2parquet_common::config::{RuntimeConfig, StorageBackend};
+use otlp2parquet_writer::set_parquet_row_group_size;
 use std::sync::Arc;
 
 mod handlers;

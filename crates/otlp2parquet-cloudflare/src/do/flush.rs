@@ -10,9 +10,9 @@
 use crate::r#do::config::{MAX_WRITE_RETRIES, WASM_MAX_FLUSH_BYTES};
 use crate::r#do::types::PendingBufferContext;
 use bytes::Bytes;
-use otlp2parquet_core::batch::ipc::{deserialize_batches, validate_ipc_header};
-use otlp2parquet_core::config::RuntimeConfig;
-use otlp2parquet_core::SignalKey;
+use otlp2parquet_batch::ipc::{deserialize_batches, validate_ipc_header};
+use otlp2parquet_common::config::RuntimeConfig;
+use otlp2parquet_common::SignalKey;
 use otlp2parquet_writer::{write_multi_batch, WriteMultiBatchRequest};
 use std::cell::RefCell;
 use std::str::FromStr;

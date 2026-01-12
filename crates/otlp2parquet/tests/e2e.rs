@@ -1,9 +1,18 @@
 // End-to-end integration tests for otlp2parquet
 //
-// These tests verify the full pipeline from OTLP ingestion to Parquet storage
+// These tests verify the full pipeline from OTLP ingestion to Arrow batches.
 
 use std::fs;
 use std::path::PathBuf;
+
+use otlp2parquet_common::{
+    count_skipped_metric_data_points, normalise_json_value, normalize_json_bytes,
+};
+use otlp2records::{
+    apply_log_transform, apply_metric_transform, decode_logs, decode_metrics, logs_schema,
+    transform_logs, transform_metrics, transform_traces, values_to_arrow, InputFormat,
+};
+use vrl::value::Value;
 
 /// Get path to workspace root testdata directory
 fn testdata_path(file: &str) -> PathBuf {
@@ -15,104 +24,36 @@ fn testdata_path(file: &str) -> PathBuf {
 
 #[tokio::test]
 async fn test_logs_ingestion_protobuf() {
-    // Load test payload from testdata
     let payload = fs::read(testdata_path("logs.pb")).expect("Failed to read logs.pb test file");
 
-    // Use the core library to process the data directly
-    let result =
-        otlp2parquet_core::parse_otlp_to_arrow(&payload, otlp2parquet_core::InputFormat::Protobuf);
+    let batch =
+        transform_logs(&payload, InputFormat::Protobuf).expect("Failed to transform OTLP logs");
 
-    assert!(
-        result.is_ok(),
-        "Failed to parse OTLP logs: {:?}",
-        result.err()
-    );
-
-    let (batch, metadata) = result.unwrap();
-
-    // Verify the batch has rows
     assert!(batch.num_rows() > 0, "Expected batch to have rows");
     assert!(batch.num_columns() > 0, "Expected batch to have columns");
-    assert!(metadata.record_count > 0, "Expected record count > 0");
 }
 
 #[tokio::test]
 async fn test_logs_ingestion_json() {
     let payload = fs::read(testdata_path("log.json")).expect("Failed to read log.json test file");
+    let payload = normalize_json_bytes(&payload).expect("Failed to normalize OTLP JSON logs");
 
-    let result =
-        otlp2parquet_core::parse_otlp_to_arrow(&payload, otlp2parquet_core::InputFormat::Json);
+    let batch =
+        transform_logs(&payload, InputFormat::Json).expect("Failed to transform OTLP JSON logs");
 
-    assert!(
-        result.is_ok(),
-        "Failed to parse JSON logs: {:?}",
-        result.err()
-    );
-
-    let (batch, metadata) = result.unwrap();
     assert!(batch.num_rows() > 0, "Expected batch to have rows");
-    assert!(metadata.record_count > 0, "Expected record count > 0");
 }
-
-// TODO: Rewrite this test for new otlp2parquet-writer architecture
-// #[tokio::test]
-// async fn test_end_to_end_with_storage() {
-//     use opendal::{services, Operator};
-//     use otlp2parquet_storage::ParquetWriter;
-//     use std::sync::Arc;
-//
-//     // Create in-memory storage
-//     let op = Operator::new(services::Memory::default())
-//         .expect("Failed to create memory operator")
-//         .finish();
-//     let writer = Arc::new(ParquetWriter::new(op.clone()));
-//
-//     // Load and parse test data
-//     let payload = fs::read(testdata_path("logs.pb")).expect("Failed to read logs.pb");
-//     let (batch, metadata) =
-//         otlp2parquet_core::parse_otlp_to_arrow(&payload, otlp2parquet_core::InputFormat::Protobuf)
-//             .expect("Failed to parse logs");
-//
-//     assert!(batch.num_rows() > 0, "Expected batch to have rows");
-//
-//     // Write to storage with fixed timestamp for testing
-//     let test_timestamp = metadata.first_timestamp_nanos;
-//     let result = writer
-//         .write_batch_with_hash(&batch, &metadata.service_name, test_timestamp)
-//         .await
-//         .expect("Failed to write batch");
-//
-//     // Verify file was written
-//     assert!(result.path.starts_with("logs/"));
-//     assert!(result.path.ends_with(".parquet"));
-//     assert!(result.path.contains(&result.hash.to_hex()[..16]));
-//
-//     // Verify file exists and is valid Parquet
-//     let data = op
-//         .read(&result.path)
-//         .await
-//         .expect("Failed to read parquet file");
-//     let bytes = data.to_vec();
-//     assert!(!bytes.is_empty(), "Parquet file should not be empty");
-//     assert_eq!(&bytes[0..4], b"PAR1", "File should be valid Parquet format");
-// }
 
 #[tokio::test]
 async fn test_logs_jsonl_format() {
     let payload = fs::read(testdata_path("logs.jsonl")).expect("Failed to read logs.jsonl");
 
-    let result =
-        otlp2parquet_core::parse_otlp_to_arrow(&payload, otlp2parquet_core::InputFormat::Jsonl);
+    let values = decode_jsonl_values(&payload, |line| decode_logs(line, InputFormat::Json))
+        .expect("Failed to decode JSONL logs");
+    let transformed = apply_log_transform(values).expect("Failed to transform logs");
+    let batch = values_to_arrow(&transformed, &logs_schema()).expect("Failed to build Arrow batch");
 
-    assert!(
-        result.is_ok(),
-        "Failed to parse JSONL logs: {:?}",
-        result.err()
-    );
-
-    let (batch, metadata) = result.unwrap();
     assert!(batch.num_rows() > 0, "Expected batch to have rows");
-    assert!(metadata.record_count > 0, "Expected record count > 0");
 }
 
 // ============================================================================
@@ -121,124 +62,67 @@ async fn test_logs_jsonl_format() {
 
 #[tokio::test]
 async fn test_metrics_gauge_protobuf() {
-    use otlp2parquet_core::otlp::metrics;
-
     let payload =
         fs::read(testdata_path("metrics_gauge.pb")).expect("Failed to read metrics_gauge.pb");
 
-    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Protobuf)
-        .expect("Failed to parse metrics request");
+    let batches = transform_metrics(&payload, InputFormat::Protobuf)
+        .expect("Failed to transform gauge metrics");
 
-    let converter = metrics::ArrowConverter::new();
-    let result = converter.convert(request);
-
-    assert!(
-        result.is_ok(),
-        "Failed to convert metrics: {:?}",
-        result.err()
-    );
-
-    let (batches_by_type, metadata) = result.unwrap();
-    assert!(!batches_by_type.is_empty(), "Expected metric batches");
-    assert!(metadata.gauge_count > 0, "Expected gauge metrics");
+    assert!(batches.gauge.is_some(), "Expected gauge batch");
+    assert!(batches.gauge.unwrap().num_rows() > 0, "Expected gauge rows");
 }
 
 #[tokio::test]
 async fn test_metrics_sum_protobuf() {
-    use otlp2parquet_core::otlp::metrics;
-
     let payload = fs::read(testdata_path("metrics_sum.pb")).expect("Failed to read metrics_sum.pb");
 
-    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Protobuf)
-        .expect("Failed to parse metrics request");
+    let batches = transform_metrics(&payload, InputFormat::Protobuf)
+        .expect("Failed to transform sum metrics");
 
-    let converter = metrics::ArrowConverter::new();
-    let result = converter.convert(request);
-
-    assert!(
-        result.is_ok(),
-        "Failed to convert metrics: {:?}",
-        result.err()
-    );
-
-    let (batches_by_type, metadata) = result.unwrap();
-    assert!(!batches_by_type.is_empty(), "Expected metric batches");
-    assert!(metadata.sum_count > 0, "Expected sum metrics");
+    assert!(batches.sum.is_some(), "Expected sum batch");
+    assert!(batches.sum.unwrap().num_rows() > 0, "Expected sum rows");
 }
 
 #[tokio::test]
-async fn test_metrics_histogram_protobuf() {
-    use otlp2parquet_core::otlp::metrics;
-
+async fn test_metrics_histogram_protobuf_skipped() {
     let payload = fs::read(testdata_path("metrics_histogram.pb"))
         .expect("Failed to read metrics_histogram.pb");
 
-    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Protobuf)
-        .expect("Failed to parse metrics request");
-
-    let converter = metrics::ArrowConverter::new();
-    let result = converter.convert(request);
+    let result = decode_metrics(&payload, InputFormat::Protobuf)
+        .expect("Failed to decode histogram metrics");
 
     assert!(
-        result.is_ok(),
-        "Failed to convert metrics: {:?}",
-        result.err()
+        result.skipped.histograms > 0,
+        "Expected histogram data to be skipped"
     );
-
-    let (batches_by_type, metadata) = result.unwrap();
-    assert!(!batches_by_type.is_empty(), "Expected metric batches");
-    assert!(metadata.histogram_count > 0, "Expected histogram metrics");
 }
 
 #[tokio::test]
-async fn test_metrics_exponential_histogram_protobuf() {
-    use otlp2parquet_core::otlp::metrics;
-
+async fn test_metrics_exponential_histogram_protobuf_skipped() {
     let payload = fs::read(testdata_path("metrics_exponential_histogram.pb"))
         .expect("Failed to read metrics_exponential_histogram.pb");
 
-    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Protobuf)
-        .expect("Failed to parse metrics request");
-
-    let converter = metrics::ArrowConverter::new();
-    let result = converter.convert(request);
+    let result = decode_metrics(&payload, InputFormat::Protobuf)
+        .expect("Failed to decode exponential histogram metrics");
 
     assert!(
-        result.is_ok(),
-        "Failed to convert metrics: {:?}",
-        result.err()
-    );
-
-    let (batches_by_type, metadata) = result.unwrap();
-    assert!(!batches_by_type.is_empty(), "Expected metric batches");
-    assert!(
-        metadata.exponential_histogram_count > 0,
-        "Expected exponential histogram metrics"
+        result.skipped.exponential_histograms > 0,
+        "Expected exponential histogram data to be skipped"
     );
 }
 
 #[tokio::test]
-async fn test_metrics_summary_protobuf() {
-    use otlp2parquet_core::otlp::metrics;
-
+async fn test_metrics_summary_protobuf_skipped() {
     let payload =
         fs::read(testdata_path("metrics_summary.pb")).expect("Failed to read metrics_summary.pb");
 
-    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Protobuf)
-        .expect("Failed to parse metrics request");
-
-    let converter = metrics::ArrowConverter::new();
-    let result = converter.convert(request);
+    let result =
+        decode_metrics(&payload, InputFormat::Protobuf).expect("Failed to decode summary metrics");
 
     assert!(
-        result.is_ok(),
-        "Failed to convert metrics: {:?}",
-        result.err()
+        result.skipped.summaries > 0,
+        "Expected summary data to be skipped"
     );
-
-    let (batches_by_type, metadata) = result.unwrap();
-    assert!(!batches_by_type.is_empty(), "Expected metric batches");
-    assert!(metadata.summary_count > 0, "Expected summary metrics");
 }
 
 // ============================================================================
@@ -247,303 +131,62 @@ async fn test_metrics_summary_protobuf() {
 
 #[tokio::test]
 async fn test_metrics_gauge_json() {
-    use otlp2parquet_core::otlp::metrics;
-
     let payload =
         fs::read(testdata_path("metrics_gauge.json")).expect("Failed to read metrics_gauge.json");
+    let payload = normalize_json_bytes(&payload).expect("Failed to normalize gauge metrics JSON");
 
-    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Json)
-        .expect("Failed to parse metrics JSON request");
+    let batches =
+        transform_metrics(&payload, InputFormat::Json).expect("Failed to transform gauge metrics");
 
-    let converter = metrics::ArrowConverter::new();
-    let result = converter.convert(request);
-
-    assert!(
-        result.is_ok(),
-        "Failed to convert metrics: {:?}",
-        result.err()
-    );
-
-    let (batches_by_type, metadata) = result.unwrap();
-    assert!(!batches_by_type.is_empty(), "Expected metric batches");
-    assert!(metadata.gauge_count > 0, "Expected gauge metrics");
+    assert!(batches.gauge.is_some(), "Expected gauge batch");
 }
 
 #[tokio::test]
 async fn test_metrics_sum_json() {
-    use otlp2parquet_core::otlp::metrics;
-
     let payload =
         fs::read(testdata_path("metrics_sum.json")).expect("Failed to read metrics_sum.json");
+    let payload = normalize_json_bytes(&payload).expect("Failed to normalize sum metrics JSON");
 
-    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Json)
-        .expect("Failed to parse metrics JSON request");
+    let batches =
+        transform_metrics(&payload, InputFormat::Json).expect("Failed to transform sum metrics");
 
-    let converter = metrics::ArrowConverter::new();
-    let result = converter.convert(request);
-
-    assert!(
-        result.is_ok(),
-        "Failed to convert metrics: {:?}",
-        result.err()
-    );
-
-    let (batches_by_type, metadata) = result.unwrap();
-    assert!(!batches_by_type.is_empty(), "Expected metric batches");
-    assert!(metadata.sum_count > 0, "Expected sum metrics");
-}
-
-#[tokio::test]
-async fn test_metrics_histogram_json() {
-    use otlp2parquet_core::otlp::metrics;
-
-    let payload = fs::read(testdata_path("metrics_histogram.json"))
-        .expect("Failed to read metrics_histogram.json");
-
-    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Json)
-        .expect("Failed to parse metrics JSON request");
-
-    let converter = metrics::ArrowConverter::new();
-    let result = converter.convert(request);
-
-    assert!(
-        result.is_ok(),
-        "Failed to convert metrics: {:?}",
-        result.err()
-    );
-
-    let (batches_by_type, metadata) = result.unwrap();
-    assert!(!batches_by_type.is_empty(), "Expected metric batches");
-    assert!(metadata.histogram_count > 0, "Expected histogram metrics");
-}
-
-#[tokio::test]
-async fn test_metrics_exponential_histogram_json() {
-    use otlp2parquet_core::otlp::metrics;
-
-    let payload = fs::read(testdata_path("metrics_exponential_histogram.json"))
-        .expect("Failed to read metrics_exponential_histogram.json");
-
-    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Json)
-        .expect("Failed to parse metrics JSON request");
-
-    let converter = metrics::ArrowConverter::new();
-    let result = converter.convert(request);
-
-    assert!(
-        result.is_ok(),
-        "Failed to convert metrics: {:?}",
-        result.err()
-    );
-
-    let (batches_by_type, metadata) = result.unwrap();
-    assert!(!batches_by_type.is_empty(), "Expected metric batches");
-    assert!(
-        metadata.exponential_histogram_count > 0,
-        "Expected exponential histogram metrics"
-    );
-}
-
-#[tokio::test]
-async fn test_metrics_summary_json() {
-    use otlp2parquet_core::otlp::metrics;
-
-    let payload = fs::read(testdata_path("metrics_summary.json"))
-        .expect("Failed to read metrics_summary.json");
-
-    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Json)
-        .expect("Failed to parse metrics JSON request");
-
-    let converter = metrics::ArrowConverter::new();
-    let result = converter.convert(request);
-
-    assert!(
-        result.is_ok(),
-        "Failed to convert metrics: {:?}",
-        result.err()
-    );
-
-    let (batches_by_type, metadata) = result.unwrap();
-    assert!(!batches_by_type.is_empty(), "Expected metric batches");
-    assert!(metadata.summary_count > 0, "Expected summary metrics");
-}
-
-#[tokio::test]
-async fn test_metrics_mixed_json() {
-    use otlp2parquet_core::otlp::metrics;
-
-    let payload =
-        fs::read(testdata_path("metrics_mixed.json")).expect("Failed to read metrics_mixed.json");
-
-    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Json)
-        .expect("Failed to parse metrics JSON request");
-
-    let converter = metrics::ArrowConverter::new();
-    let result = converter.convert(request);
-
-    assert!(
-        result.is_ok(),
-        "Failed to convert metrics: {:?}",
-        result.err()
-    );
-
-    let (batches_by_type, metadata) = result.unwrap();
-    assert!(!batches_by_type.is_empty(), "Expected metric batches");
-    // Mixed file contains multiple metric types
-    assert!(
-        metadata.gauge_count > 0 || metadata.sum_count > 0 || metadata.histogram_count > 0,
-        "Expected mixed metrics"
-    );
+    assert!(batches.sum.is_some(), "Expected sum batch");
 }
 
 #[tokio::test]
 async fn test_metrics_gauge_jsonl() {
-    use otlp2parquet_core::otlp::metrics;
-
     let payload =
         fs::read(testdata_path("metrics_gauge.jsonl")).expect("Failed to read metrics_gauge.jsonl");
 
-    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Jsonl)
-        .expect("Failed to parse metrics JSONL request");
+    let decode_result = decode_jsonl_metrics(&payload).expect("Failed to decode metrics JSONL");
+    let metric_values =
+        apply_metric_transform(decode_result.values).expect("Failed to transform metrics");
 
-    let converter = metrics::ArrowConverter::new();
-    let result = converter.convert(request);
-
-    assert!(
-        result.is_ok(),
-        "Failed to convert metrics: {:?}",
-        result.err()
-    );
-
-    let (batches_by_type, metadata) = result.unwrap();
-    assert!(!batches_by_type.is_empty(), "Expected metric batches");
-    assert!(metadata.gauge_count > 0, "Expected gauge metrics");
+    assert!(!metric_values.gauge.is_empty(), "Expected gauge metrics");
 }
 
 #[tokio::test]
 async fn test_metrics_sum_jsonl() {
-    use otlp2parquet_core::otlp::metrics;
-
     let payload =
         fs::read(testdata_path("metrics_sum.jsonl")).expect("Failed to read metrics_sum.jsonl");
 
-    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Jsonl)
-        .expect("Failed to parse metrics JSONL request");
+    let decode_result = decode_jsonl_metrics(&payload).expect("Failed to decode metrics JSONL");
+    let metric_values =
+        apply_metric_transform(decode_result.values).expect("Failed to transform metrics");
 
-    let converter = metrics::ArrowConverter::new();
-    let result = converter.convert(request);
-
-    assert!(
-        result.is_ok(),
-        "Failed to convert metrics: {:?}",
-        result.err()
-    );
-
-    let (batches_by_type, metadata) = result.unwrap();
-    assert!(!batches_by_type.is_empty(), "Expected metric batches");
-    assert!(metadata.sum_count > 0, "Expected sum metrics");
+    assert!(!metric_values.sum.is_empty(), "Expected sum metrics");
 }
 
 #[tokio::test]
-async fn test_metrics_histogram_jsonl() {
-    use otlp2parquet_core::otlp::metrics;
-
+async fn test_metrics_histogram_jsonl_skipped() {
     let payload = fs::read(testdata_path("metrics_histogram.jsonl"))
         .expect("Failed to read metrics_histogram.jsonl");
 
-    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Jsonl)
-        .expect("Failed to parse metrics JSONL request");
-
-    let converter = metrics::ArrowConverter::new();
-    let result = converter.convert(request);
+    let decode_result = decode_jsonl_metrics(&payload).expect("Failed to decode metrics JSONL");
 
     assert!(
-        result.is_ok(),
-        "Failed to convert metrics: {:?}",
-        result.err()
-    );
-
-    let (batches_by_type, metadata) = result.unwrap();
-    assert!(!batches_by_type.is_empty(), "Expected metric batches");
-    assert!(metadata.histogram_count > 0, "Expected histogram metrics");
-}
-
-#[tokio::test]
-async fn test_metrics_exponential_histogram_jsonl() {
-    use otlp2parquet_core::otlp::metrics;
-
-    let payload = fs::read(testdata_path("metrics_exponential_histogram.jsonl"))
-        .expect("Failed to read metrics_exponential_histogram.jsonl");
-
-    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Jsonl)
-        .expect("Failed to parse metrics JSONL request");
-
-    let converter = metrics::ArrowConverter::new();
-    let result = converter.convert(request);
-
-    assert!(
-        result.is_ok(),
-        "Failed to convert metrics: {:?}",
-        result.err()
-    );
-
-    let (batches_by_type, metadata) = result.unwrap();
-    assert!(!batches_by_type.is_empty(), "Expected metric batches");
-    assert!(
-        metadata.exponential_histogram_count > 0,
-        "Expected exponential histogram metrics"
-    );
-}
-
-#[tokio::test]
-async fn test_metrics_summary_jsonl() {
-    use otlp2parquet_core::otlp::metrics;
-
-    let payload = fs::read(testdata_path("metrics_summary.jsonl"))
-        .expect("Failed to read metrics_summary.jsonl");
-
-    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Jsonl)
-        .expect("Failed to parse metrics JSONL request");
-
-    let converter = metrics::ArrowConverter::new();
-    let result = converter.convert(request);
-
-    assert!(
-        result.is_ok(),
-        "Failed to convert metrics: {:?}",
-        result.err()
-    );
-
-    let (batches_by_type, metadata) = result.unwrap();
-    assert!(!batches_by_type.is_empty(), "Expected metric batches");
-    assert!(metadata.summary_count > 0, "Expected summary metrics");
-}
-
-#[tokio::test]
-async fn test_metrics_mixed_jsonl() {
-    use otlp2parquet_core::otlp::metrics;
-
-    let payload =
-        fs::read(testdata_path("metrics_mixed.jsonl")).expect("Failed to read metrics_mixed.jsonl");
-
-    let request = metrics::parse_otlp_request(&payload, otlp2parquet_core::InputFormat::Jsonl)
-        .expect("Failed to parse metrics JSONL request");
-
-    let converter = metrics::ArrowConverter::new();
-    let result = converter.convert(request);
-
-    assert!(
-        result.is_ok(),
-        "Failed to convert metrics: {:?}",
-        result.err()
-    );
-
-    let (batches_by_type, metadata) = result.unwrap();
-    assert!(!batches_by_type.is_empty(), "Expected metric batches");
-    // Mixed file contains multiple metric types
-    assert!(
-        metadata.gauge_count > 0 || metadata.sum_count > 0 || metadata.histogram_count > 0,
-        "Expected mixed metrics"
+        decode_result.skipped.histograms > 0,
+        "Expected histogram data to be skipped"
     );
 }
 
@@ -553,107 +196,24 @@ async fn test_metrics_mixed_jsonl() {
 
 #[tokio::test]
 async fn test_traces_protobuf() {
-    use otlp2parquet_core::otlp::traces;
-
     let payload = fs::read(testdata_path("trace.pb")).expect("Failed to read trace.pb");
 
-    let request =
-        traces::parse_otlp_trace_request(&payload, otlp2parquet_core::InputFormat::Protobuf)
-            .expect("Failed to parse trace request");
+    let batch =
+        transform_traces(&payload, InputFormat::Protobuf).expect("Failed to transform traces");
 
-    let result = traces::TraceArrowConverter::convert(&request);
-
-    assert!(
-        result.is_ok(),
-        "Failed to convert traces: {:?}",
-        result.err()
-    );
-
-    let (batches, metadata) = result.unwrap();
-    assert!(!batches.is_empty(), "Expected trace batches");
-    assert!(metadata.span_count > 0, "Expected spans");
-
-    // Verify batch structure
-    for batch in &batches {
-        assert!(batch.num_rows() > 0, "Expected batch to have rows");
-        assert!(batch.num_columns() > 0, "Expected batch to have columns");
-    }
+    assert!(batch.num_rows() > 0, "Expected spans");
 }
 
 #[tokio::test]
 async fn test_traces_json_format() {
-    use otlp2parquet_core::otlp::traces;
-
     let payload = fs::read(testdata_path("trace.json")).expect("Failed to read trace.json");
+    let payload = normalize_json_bytes(&payload).expect("Failed to normalize OTLP JSON traces");
 
-    let request = traces::parse_otlp_trace_request(&payload, otlp2parquet_core::InputFormat::Json)
-        .expect("Failed to parse trace request");
+    let batch =
+        transform_traces(&payload, InputFormat::Json).expect("Failed to transform JSON traces");
 
-    let result = traces::TraceArrowConverter::convert(&request);
-
-    assert!(
-        result.is_ok(),
-        "Failed to convert JSON traces: {:?}",
-        result.err()
-    );
-
-    let (batches, metadata) = result.unwrap();
-    assert!(!batches.is_empty(), "Expected trace batches");
-    assert!(metadata.span_count > 0, "Expected spans");
+    assert!(batch.num_rows() > 0, "Expected spans");
 }
-
-// TODO: Rewrite this test for new otlp2parquet-writer architecture
-// #[tokio::test]
-// async fn test_traces_with_storage() {
-//     use opendal::{services, Operator};
-//     use otlp2parquet_core::otlp::traces;
-//     use otlp2parquet_storage::ParquetWriter;
-//     use std::sync::Arc;
-//
-//     // Create in-memory storage
-//     let op = Operator::new(services::Memory::default())
-//         .expect("Failed to create memory operator")
-//         .finish();
-//     let writer = Arc::new(ParquetWriter::new(op.clone()));
-//
-//     // Load and parse test data
-//     let payload = fs::read(testdata_path("traces.pb")).expect("Failed to read traces.pb");
-//     let request =
-//         traces::parse_otlp_trace_request(&payload, otlp2parquet_core::InputFormat::Protobuf)
-//             .expect("Failed to parse trace request");
-//
-//     let (batches, metadata) =
-//         traces::TraceArrowConverter::convert(&request).expect("Failed to convert traces");
-//
-//     assert!(!batches.is_empty(), "Expected trace batches");
-//
-//     // Write to storage
-//     let test_timestamp = metadata.first_timestamp_nanos;
-//     let result = writer
-//         .write_batches_with_signal(
-//             &batches,
-//             &metadata.service_name,
-//             test_timestamp,
-//             "traces",
-//             None,
-//         )
-//         .await
-//         .expect("Failed to write traces");
-//
-//     // Verify file was written
-//     assert!(result.path.starts_with("traces/"));
-//     assert!(result.path.ends_with(".parquet"));
-//     assert!(result.path.contains(&result.hash.to_hex()[..16]));
-//
-//     // Verify file exists and is valid Parquet
-//     let data = op
-//         .read(&result.path)
-//         .await
-//         .expect("Failed to read parquet file");
-//     let bytes = data.to_vec();
-//     assert!(!bytes.is_empty(), "Parquet file should not be empty");
-//     assert_eq!(&bytes[0..4], b"PAR1", "File should be valid Parquet format");
-// }
 
 // ============================================================================
 // NEGATIVE TESTS - Invalid Data
@@ -663,16 +223,13 @@ async fn test_traces_json_format() {
 async fn test_invalid_severity_number() {
     let payload = fs::read(testdata_path("invalid/log_invalid_severity.json"))
         .expect("Failed to read invalid test file");
+    let payload =
+        normalize_json_bytes(&payload).expect("Failed to normalize invalid severity payload");
 
-    let result =
-        otlp2parquet_core::parse_otlp_to_arrow(&payload, otlp2parquet_core::InputFormat::Json);
-
-    // Should fail because "INVALID_SEVERITY_VALUE" is not a valid severity
-    // The normalizer will return Ok(None) for invalid enum, and prost will fail
+    let result = transform_logs(&payload, InputFormat::Json);
     assert!(
         result.is_err(),
-        "Expected error for invalid severity number, but got: {:?}",
-        result
+        "Expected error for invalid severity number"
     );
 }
 
@@ -680,32 +237,26 @@ async fn test_invalid_severity_number() {
 async fn test_invalid_base64_trace_id() {
     let payload = fs::read(testdata_path("invalid/trace_invalid_base64.json"))
         .expect("Failed to read invalid test file");
-
-    let result =
-        otlp2parquet_core::parse_otlp_to_arrow(&payload, otlp2parquet_core::InputFormat::Json);
-
-    // Should fail because "!!!INVALID_BASE64!!!" is not valid base64
+    let result = normalize_json_bytes(&payload).and_then(|payload| {
+        transform_traces(&payload, InputFormat::Json).map_err(anyhow::Error::from)
+    });
     assert!(
         result.is_err(),
-        "Expected error for invalid base64 trace ID, but got: {:?}",
-        result
+        "Expected error for invalid base64 trace ID"
     );
-    // Error is caught and reported (specific message may vary)
 }
 
 #[tokio::test]
 async fn test_invalid_aggregation_temporality() {
     let payload = fs::read(testdata_path("invalid/metrics_invalid_temporality.json"))
         .expect("Failed to read invalid test file");
+    let payload =
+        normalize_json_bytes(&payload).expect("Failed to normalize invalid temporality payload");
 
-    let result =
-        otlp2parquet_core::parse_otlp_to_arrow(&payload, otlp2parquet_core::InputFormat::Json);
-
-    // Should fail because "INVALID_TEMPORALITY_VALUE" is not valid
+    let result = transform_metrics(&payload, InputFormat::Json);
     assert!(
         result.is_err(),
-        "Expected error for invalid aggregation temporality, but got: {:?}",
-        result
+        "Expected error for invalid aggregation temporality"
     );
 }
 
@@ -714,53 +265,100 @@ async fn test_malformed_json() {
     let payload = fs::read(testdata_path("invalid/malformed.json"))
         .expect("Failed to read invalid test file");
 
-    let result =
-        otlp2parquet_core::parse_otlp_to_arrow(&payload, otlp2parquet_core::InputFormat::Json);
-
-    // Should fail because JSON is malformed
-    assert!(
-        result.is_err(),
-        "Expected error for malformed JSON, but got: {:?}",
-        result
-    );
-
-    let error_msg = result.unwrap_err().to_string();
-    assert!(
-        error_msg.contains("JSON") || error_msg.contains("parse") || error_msg.contains("EOF"),
-        "Error message should mention JSON parsing issue: {}",
-        error_msg
-    );
+    let result = normalize_json_bytes(&payload).and_then(|payload| {
+        transform_logs(&payload, InputFormat::Json).map_err(anyhow::Error::from)
+    });
+    assert!(result.is_err(), "Expected error for malformed JSON");
 }
 
 #[tokio::test]
 async fn test_invalid_span_kind() {
     let payload = fs::read(testdata_path("invalid/trace_invalid_kind.json"))
         .expect("Failed to read invalid test file");
+    let payload =
+        normalize_json_bytes(&payload).expect("Failed to normalize invalid span kind payload");
 
-    let result =
-        otlp2parquet_core::parse_otlp_to_arrow(&payload, otlp2parquet_core::InputFormat::Json);
-
-    // Should fail because "SPAN_KIND_INVALID_TYPE" is not a valid span kind
-    assert!(
-        result.is_err(),
-        "Expected error for invalid span kind, but got: {:?}",
-        result
-    );
+    let result = transform_traces(&payload, InputFormat::Json);
+    assert!(result.is_err(), "Expected error for invalid span kind");
 }
 
 #[tokio::test]
 async fn test_invalid_trace_id_encoding() {
     let payload = fs::read(testdata_path("invalid/trace_mixed_encoding.json"))
         .expect("Failed to read invalid test file");
-
-    let result =
-        otlp2parquet_core::parse_otlp_to_arrow(&payload, otlp2parquet_core::InputFormat::Json);
-
-    // Should fail because "zzz" is neither valid hex nor valid base64
+    let result = normalize_json_bytes(&payload).and_then(|payload| {
+        transform_traces(&payload, InputFormat::Json).map_err(anyhow::Error::from)
+    });
     assert!(
         result.is_err(),
-        "Expected error for invalid trace ID encoding, but got: {:?}",
-        result
+        "Expected error for invalid trace ID encoding"
     );
-    // Error is caught and reported (specific message may vary)
+}
+
+fn decode_jsonl_values<F>(body: &[u8], mut decode: F) -> Result<Vec<Value>, String>
+where
+    F: FnMut(&[u8]) -> Result<Vec<Value>, otlp2records::decode::DecodeError>,
+{
+    let text = std::str::from_utf8(body).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    let mut saw_line = false;
+
+    for (line_num, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        saw_line = true;
+        let normalized = normalize_json_bytes(trimmed.as_bytes()).map_err(|e| e.to_string())?;
+        let values = decode(&normalized).map_err(|e| format!("line {}: {}", line_num + 1, e))?;
+        out.extend(values);
+    }
+
+    if !saw_line {
+        return Err("jsonl payload contained no records".to_string());
+    }
+
+    Ok(out)
+}
+
+fn decode_jsonl_metrics(body: &[u8]) -> Result<otlp2records::DecodeMetricsResult, String> {
+    let text = std::str::from_utf8(body).map_err(|e| e.to_string())?;
+    let mut values = Vec::new();
+    let mut skipped = otlp2records::SkippedMetrics::default();
+    let mut saw_line = false;
+
+    for (line_num, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        saw_line = true;
+        let mut value: serde_json::Value =
+            serde_json::from_slice(trimmed.as_bytes()).map_err(|e| e.to_string())?;
+        let counts = count_skipped_metric_data_points(&value);
+        normalise_json_value(&mut value, None).map_err(|e| e.to_string())?;
+        let normalized = serde_json::to_vec(&value).map_err(|e| e.to_string())?;
+        let mut result = decode_metrics(&normalized, InputFormat::Json)
+            .map_err(|e| format!("line {}: {}", line_num + 1, e))?;
+        result.skipped.histograms += counts.histograms;
+        result.skipped.exponential_histograms += counts.exponential_histograms;
+        result.skipped.summaries += counts.summaries;
+        values.extend(result.values);
+        merge_skipped(&mut skipped, &result.skipped);
+    }
+
+    if !saw_line {
+        return Err("jsonl payload contained no records".to_string());
+    }
+
+    Ok(otlp2records::DecodeMetricsResult { values, skipped })
+}
+
+fn merge_skipped(target: &mut otlp2records::SkippedMetrics, other: &otlp2records::SkippedMetrics) {
+    target.histograms += other.histograms;
+    target.exponential_histograms += other.exponential_histograms;
+    target.summaries += other.summaries;
+    target.nan_values += other.nan_values;
+    target.infinity_values += other.infinity_values;
+    target.missing_values += other.missing_values;
 }

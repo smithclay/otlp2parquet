@@ -8,7 +8,7 @@ use arrow::array::RecordBatch;
 use bytes::Bytes;
 #[cfg(not(target_family = "wasm"))]
 use futures::future::BoxFuture;
-use otlp2parquet_core::SignalType;
+use otlp2parquet_common::SignalType;
 #[cfg(target_family = "wasm")]
 use parquet::arrow::ArrowWriter;
 #[cfg(not(target_family = "wasm"))]
@@ -116,7 +116,7 @@ async fn write_plain_parquet(
     let mut parquet_writer = AsyncArrowWriter::try_new(
         async_writer,
         batch.schema(),
-        Some(otlp2parquet_core::parquet::encoding::writer_properties().clone()),
+        Some(crate::encoding::writer_properties().clone()),
     )
     .map_err(|e| WriterError::write_failure(format!("Failed to create Parquet writer: {}", e)))?;
 
@@ -186,7 +186,7 @@ async fn write_plain_parquet(
         let mut writer = ArrowWriter::try_new(
             &mut buffer,
             batch.schema(),
-            Some(otlp2parquet_core::parquet::encoding::writer_properties().clone()),
+            Some(crate::encoding::writer_properties().clone()),
         )
         .map_err(|e| {
             WriterError::write_failure(format!("Failed to create Parquet writer: {}", e))
@@ -284,7 +284,7 @@ async fn write_plain_parquet_multi(
         let mut writer = ArrowWriter::try_new(
             &mut buffer,
             expected_schema,
-            Some(otlp2parquet_core::parquet::encoding::writer_properties().clone()),
+            Some(crate::encoding::writer_properties().clone()),
         )
         .map_err(|e| {
             WriterError::write_failure(format!("Failed to create Parquet writer: {}", e))
@@ -534,78 +534,76 @@ mod tests {
     #[test]
     fn test_real_otlp_timestamp_from_testdata() {
         // Parse actual OTLP logs from testdata to see what timestamp values we get
-        use otlp2parquet_core::otlp;
+        use otlp2records::{decode_logs, InputFormat};
+        use vrl::value::{KeyString, Value};
 
         // Read the test data file
         let test_data =
             std::fs::read("../../testdata/logs.pb").expect("Failed to read testdata/logs.pb");
 
         // Parse OTLP request
-        let request =
-            otlp::parse_otlp_request(&test_data, otlp2parquet_core::InputFormat::Protobuf)
-                .expect("Failed to parse OTLP request");
+        let values =
+            decode_logs(&test_data, InputFormat::Protobuf).expect("Failed to decode OTLP logs");
 
         println!("\n=== Real OTLP Test Data Analysis ===");
-        println!("Resource logs count: {}", request.resource_logs.len());
+        println!("Decoded log count: {}", values.len());
 
-        // Get first resource logs
-        if let Some(resource_logs) = request.resource_logs.first() {
-            if let Some(scope_logs) = resource_logs.scope_logs.first() {
-                if let Some(log_record) = scope_logs.log_records.first() {
-                    let time_unix_nano = log_record.time_unix_nano;
+        let time_key: KeyString = "time_unix_nano".into();
+        if let Some(Value::Object(map)) = values.first() {
+            if let Some(Value::Integer(time_unix_nano)) = map.get(&time_key) {
+                let time_unix_nano = *time_unix_nano as u64;
 
-                    println!("Raw OTLP time_unix_nano: {}", time_unix_nano);
-                    println!("Timestamp digits: {}", time_unix_nano.to_string().len());
+                println!("Raw OTLP time_unix_nano: {}", time_unix_nano);
+                println!("Timestamp digits: {}", time_unix_nano.to_string().len());
 
-                    // Test all three conversion scenarios
-                    println!("\n--- Conversion Analysis ---");
+                // Test all three conversion scenarios
+                println!("\n--- Conversion Analysis ---");
 
-                    // Scenario 1: If this is nanoseconds (expected)
-                    let ms_from_nano = time_unix_nano / 1_000_000;
+                // Scenario 1: If this is nanoseconds (expected)
+                let ms_from_nano = time_unix_nano / 1_000_000;
+                println!(
+                    "If nanoseconds -> milliseconds (/ 1_000_000): {} ({} digits)",
+                    ms_from_nano,
+                    ms_from_nano.to_string().len()
+                );
+
+                // Scenario 2: If this is microseconds (hypothesis)
+                let ms_from_micro = time_unix_nano / 1_000;
+                println!(
+                    "If microseconds -> milliseconds (/ 1_000): {} ({} digits)",
+                    ms_from_micro,
+                    ms_from_micro.to_string().len()
+                );
+
+                // Scenario 3: If this is already milliseconds
+                println!(
+                    "If already milliseconds (/ 1): {} ({} digits)",
+                    time_unix_nano,
+                    time_unix_nano.to_string().len()
+                );
+
+                // Check if this matches the error pattern
+                if ms_from_nano.to_string().len() == 10 {
+                    println!("\n⚠️  FOUND THE BUG!");
                     println!(
-                        "If nanoseconds -> milliseconds (/ 1_000_000): {} ({} digits)",
-                        ms_from_nano,
-                        ms_from_nano.to_string().len()
+                        "   Current conversion (nanos / 1_000_000) produces 10 digits: {}",
+                        ms_from_nano
                     );
-
-                    // Scenario 2: If this is microseconds (hypothesis)
-                    let ms_from_micro = time_unix_nano / 1_000;
                     println!(
-                        "If microseconds -> milliseconds (/ 1_000): {} ({} digits)",
-                        ms_from_micro,
-                        ms_from_micro.to_string().len()
+                        "   This suggests the input '{}' is in MICROSECONDS, not nanoseconds",
+                        time_unix_nano
                     );
-
-                    // Scenario 3: If this is already milliseconds
                     println!(
-                        "If already milliseconds (/ 1): {} ({} digits)",
-                        time_unix_nano,
-                        time_unix_nano.to_string().len()
+                        "   Correct conversion should be: {} / 1_000 = {} (13 digits)",
+                        time_unix_nano, ms_from_micro
                     );
-
-                    // Check if this matches the error pattern
-                    if ms_from_nano.to_string().len() == 10 {
-                        println!("\n⚠️  FOUND THE BUG!");
-                        println!(
-                            "   Current conversion (nanos / 1_000_000) produces 10 digits: {}",
-                            ms_from_nano
-                        );
-                        println!(
-                            "   This suggests the input '{}' is in MICROSECONDS, not nanoseconds",
-                            time_unix_nano
-                        );
-                        println!(
-                            "   Correct conversion should be: {} / 1_000 = {} (13 digits)",
-                            time_unix_nano, ms_from_micro
-                        );
-                    } else if ms_from_nano.to_string().len() == 13 {
-                        println!("\n✓ Conversion is correct");
-                        println!("   Input '{}' is in nanoseconds", time_unix_nano);
-                        println!(
-                            "   Output '{}' is in milliseconds (13 digits)",
-                            ms_from_nano
-                        );
-                    }
+                } else if ms_from_nano.to_string().len() == 13 {
+                    println!("\n✓ Conversion is correct");
+                    println!("   Input '{}' is in nanoseconds", time_unix_nano);
+                    println!(
+                        "   Output '{}' is in milliseconds (13 digits)",
+                        ms_from_nano
+                    );
                 }
             }
         }

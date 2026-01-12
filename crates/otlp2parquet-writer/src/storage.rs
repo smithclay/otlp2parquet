@@ -3,7 +3,7 @@
 //! Provides a global operator for direct Parquet writes.
 
 use once_cell::sync::OnceCell;
-use otlp2parquet_core::config::{RuntimeConfig, StorageBackend};
+use otlp2parquet_common::config::{RuntimeConfig, StorageBackend};
 
 static OPERATOR: OnceCell<opendal::Operator> = OnceCell::new();
 static STORAGE_PREFIX: OnceCell<Option<String>> = OnceCell::new();

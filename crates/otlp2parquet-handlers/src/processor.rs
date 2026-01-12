@@ -7,31 +7,34 @@ pub struct ProcessingResult {
 }
 
 use crate::error::OtlpError;
-use otlp2parquet_core::batch::LogSignalProcessor;
-use otlp2parquet_core::{otlp, InputFormat, SignalType};
+use otlp2parquet_batch::{LogSignalProcessor, PassthroughBatcher};
+use otlp2parquet_common::{
+    count_skipped_metric_data_points, normalise_json_value, normalize_json_bytes, InputFormat,
+    MetricType, SignalType,
+};
 use otlp2parquet_writer::WriteBatchRequest;
+use otlp2records::{
+    apply_log_transform, apply_metric_transform, apply_trace_transform, decode_logs,
+    decode_metrics, decode_traces, gauge_schema, sum_schema, traces_schema, DecodeMetricsResult,
+    InputFormat as RecordsFormat, SkippedMetrics,
+};
+use std::collections::HashMap;
+use vrl::value::{KeyString, Value};
 
 /// Process OTLP logs request
 pub async fn process_logs(body: &[u8], format: InputFormat) -> Result<ProcessingResult, OtlpError> {
-    // Parse OTLP request
-    let request =
-        otlp::parse_otlp_request(body, format).map_err(|e| OtlpError::InvalidRequest {
-            message: format!("Failed to parse OTLP logs request: {}", e),
-            hint: Some(
-                "Ensure the request body contains valid OTLP protobuf, JSON, or JSONL format."
-                    .into(),
-            ),
-        })?;
+    let values = decode_logs_values(body, format)?;
+    let transformed = apply_log_transform(values).map_err(|e| OtlpError::ConversionFailed {
+        signal: "logs".into(),
+        message: e.to_string(),
+    })?;
 
-    // Split by service name
-    let per_service_requests = otlp::logs::split_request_by_service(request);
-
-    // Convert to Arrow via PassthroughBatcher
-    let passthrough = otlp2parquet_core::batch::PassthroughBatcher::<LogSignalProcessor>::default();
+    let per_service_values = group_values_by_service(transformed);
+    let passthrough = PassthroughBatcher::<LogSignalProcessor>::default();
     let mut batches = Vec::new();
     let mut total_records = 0;
 
-    for subset in per_service_requests {
+    for (_, subset) in per_service_values {
         let batch = passthrough
             .ingest(&subset)
             .map_err(|e| OtlpError::ConversionFailed {
@@ -42,7 +45,6 @@ pub async fn process_logs(body: &[u8], format: InputFormat) -> Result<Processing
         batches.push(batch);
     }
 
-    // Write batches
     let mut paths = Vec::new();
     let batch_count = batches.len();
     for batch in batches {
@@ -75,54 +77,44 @@ pub async fn process_traces(
     body: &[u8],
     format: InputFormat,
 ) -> Result<ProcessingResult, OtlpError> {
-    // Parse OTLP traces request
-    let request = otlp::traces::parse_otlp_trace_request(body, format).map_err(|e| {
-        OtlpError::InvalidRequest {
-            message: format!("Failed to parse OTLP traces request: {}", e),
-            hint: Some(
-                "Ensure the request body contains valid OTLP protobuf, JSON, or JSONL format."
-                    .into(),
-            ),
-        }
+    let values = decode_traces_values(body, format)?;
+    let transformed = apply_trace_transform(values).map_err(|e| OtlpError::ConversionFailed {
+        signal: "traces".into(),
+        message: e.to_string(),
     })?;
 
-    // Split by service name
-    let per_service_requests = otlp::traces::split_request_by_service(request);
-
+    let per_service_values = group_values_by_service(transformed);
     let mut paths = Vec::new();
     let mut spans_processed = 0;
 
-    for subset in per_service_requests {
-        let (batches, metadata) =
-            otlp::traces::TraceArrowConverter::convert(&subset).map_err(|e| {
-                OtlpError::ConversionFailed {
-                    signal: "traces".into(),
-                    message: e.to_string(),
-                }
-            })?;
+    for (service_name, subset) in per_service_values {
+        let batch = otlp2records::values_to_arrow(&subset, &traces_schema()).map_err(|e| {
+            OtlpError::ConversionFailed {
+                signal: "traces".into(),
+                message: e.to_string(),
+            }
+        })?;
 
-        if batches.is_empty() || metadata.span_count == 0 {
+        if batch.num_rows() == 0 {
             continue;
         }
 
-        spans_processed += metadata.span_count;
+        let first_timestamp_micros = first_timestamp_micros(&subset);
+        spans_processed += subset.len();
 
-        // Write traces
-        for batch in &batches {
-            let path = otlp2parquet_writer::write_batch(WriteBatchRequest {
-                batch,
-                signal_type: SignalType::Traces,
-                metric_type: None,
-                service_name: metadata.service_name.as_ref(),
-                timestamp_micros: metadata.first_timestamp_micros,
-            })
-            .await
-            .map_err(|e| OtlpError::StorageFailed {
-                message: e.to_string(),
-            })?;
+        let path = otlp2parquet_writer::write_batch(WriteBatchRequest {
+            batch: &batch,
+            signal_type: SignalType::Traces,
+            metric_type: None,
+            service_name: &service_name,
+            timestamp_micros: first_timestamp_micros,
+        })
+        .await
+        .map_err(|e| OtlpError::StorageFailed {
+            message: e.to_string(),
+        })?;
 
-            paths.push(path);
-        }
+        paths.push(path);
     }
 
     let batch_count = paths.len();
@@ -138,67 +130,23 @@ pub async fn process_metrics(
     body: &[u8],
     format: InputFormat,
 ) -> Result<ProcessingResult, OtlpError> {
-    // Parse OTLP metrics request
-    let request =
-        otlp::metrics::parse_otlp_request(body, format).map_err(|e| OtlpError::InvalidRequest {
-            message: format!("Failed to parse OTLP metrics request: {}", e),
-            hint: Some(
-                "Ensure the request body contains valid OTLP protobuf, JSON, or JSONL format."
-                    .into(),
-            ),
-        })?;
+    let decode_result = decode_metrics_values(body, format)?;
+    report_skipped_metrics(&decode_result.skipped);
 
-    // Split by service name
-    let per_service_requests = otlp::metrics::split_request_by_service(request);
-    let converter = otlp::metrics::ArrowConverter::new();
+    let metric_values =
+        apply_metric_transform(decode_result.values).map_err(|e| OtlpError::ConversionFailed {
+            signal: "metrics".into(),
+            message: e.to_string(),
+        })?;
 
     let mut paths = Vec::new();
     let mut total_data_points = 0;
 
-    for subset in per_service_requests {
-        let (batches_by_type, metadata) =
-            converter
-                .convert(subset)
-                .map_err(|e| OtlpError::ConversionFailed {
-                    signal: "metrics".into(),
-                    message: e.to_string(),
-                })?;
+    total_data_points +=
+        write_metric_batches(MetricType::Gauge, &metric_values.gauge, &mut paths).await?;
 
-        // Skip empty subsets to avoid wasted work
-        if batches_by_type.is_empty() {
-            continue;
-        }
-
-        // Count total data points
-        total_data_points += metadata.gauge_count
-            + metadata.sum_count
-            + metadata.histogram_count
-            + metadata.exponential_histogram_count
-            + metadata.summary_count;
-
-        let service_name = metadata.service_name().to_string();
-
-        // Write each metric type
-        for (metric_type, batch) in batches_by_type {
-            let timestamp_micros = metadata
-                .first_timestamp_for(&metric_type)
-                .unwrap_or_default();
-
-            let path = otlp2parquet_writer::write_batch(WriteBatchRequest {
-                batch: &batch,
-                signal_type: SignalType::Metrics,
-                metric_type: Some(&metric_type),
-                service_name: &service_name,
-                timestamp_micros,
-            })
-            .await
-            .map_err(|e| OtlpError::StorageFailed {
-                message: e.to_string(),
-            })?;
-
-            paths.push(path);
-        }
-    }
+    total_data_points +=
+        write_metric_batches(MetricType::Sum, &metric_values.sum, &mut paths).await?;
 
     let batch_count = paths.len();
     Ok(ProcessingResult {
@@ -206,6 +154,290 @@ pub async fn process_metrics(
         records_processed: total_data_points,
         batches_flushed: batch_count,
     })
+}
+
+async fn write_metric_batches(
+    metric_type: MetricType,
+    values: &[Value],
+    paths: &mut Vec<String>,
+) -> Result<usize, OtlpError> {
+    if values.is_empty() {
+        return Ok(0);
+    }
+
+    let schema = match metric_type {
+        MetricType::Gauge => gauge_schema(),
+        MetricType::Sum => sum_schema(),
+        _ => {
+            return Ok(0);
+        }
+    };
+
+    let mut total_data_points = 0;
+
+    for (service_name, subset) in group_values_by_service(values.to_vec()) {
+        let batch = otlp2records::values_to_arrow(&subset, &schema).map_err(|e| {
+            OtlpError::ConversionFailed {
+                signal: "metrics".into(),
+                message: e.to_string(),
+            }
+        })?;
+
+        if batch.num_rows() == 0 {
+            continue;
+        }
+
+        let first_timestamp_micros = first_timestamp_micros(&subset);
+        total_data_points += subset.len();
+
+        let path = otlp2parquet_writer::write_batch(WriteBatchRequest {
+            batch: &batch,
+            signal_type: SignalType::Metrics,
+            metric_type: Some(metric_type.as_str()),
+            service_name: &service_name,
+            timestamp_micros: first_timestamp_micros,
+        })
+        .await
+        .map_err(|e| OtlpError::StorageFailed {
+            message: e.to_string(),
+        })?;
+
+        paths.push(path);
+    }
+
+    Ok(total_data_points)
+}
+
+fn decode_logs_values(body: &[u8], format: InputFormat) -> Result<Vec<Value>, OtlpError> {
+    match format {
+        InputFormat::Jsonl => {
+            decode_jsonl_values(body, |line| decode_logs(line, RecordsFormat::Json))
+                .map_err(|e| invalid_request("logs", e))
+        }
+        InputFormat::Json => {
+            let normalized =
+                normalize_json_bytes(body).map_err(|e| invalid_request("logs", e.to_string()))?;
+            decode_logs(&normalized, RecordsFormat::Json)
+                .map_err(|e| invalid_request("logs", e.to_string()))
+        }
+        InputFormat::Protobuf => decode_logs(body, to_records_format(format))
+            .map_err(|e| invalid_request("logs", e.to_string())),
+    }
+}
+
+fn decode_traces_values(body: &[u8], format: InputFormat) -> Result<Vec<Value>, OtlpError> {
+    match format {
+        InputFormat::Jsonl => {
+            decode_jsonl_values(body, |line| decode_traces(line, RecordsFormat::Json))
+                .map_err(|e| invalid_request("traces", e))
+        }
+        InputFormat::Json => {
+            let normalized =
+                normalize_json_bytes(body).map_err(|e| invalid_request("traces", e.to_string()))?;
+            decode_traces(&normalized, RecordsFormat::Json)
+                .map_err(|e| invalid_request("traces", e.to_string()))
+        }
+        InputFormat::Protobuf => decode_traces(body, to_records_format(format))
+            .map_err(|e| invalid_request("traces", e.to_string())),
+    }
+}
+
+fn decode_metrics_values(
+    body: &[u8],
+    format: InputFormat,
+) -> Result<DecodeMetricsResult, OtlpError> {
+    match format {
+        InputFormat::Jsonl => decode_jsonl_metrics(body),
+        InputFormat::Json => decode_metrics_json(body),
+        InputFormat::Protobuf => decode_metrics(body, to_records_format(format))
+            .map_err(|e| invalid_request("metrics", e.to_string())),
+    }
+}
+
+fn decode_jsonl_values<F>(body: &[u8], mut decode: F) -> Result<Vec<Value>, String>
+where
+    F: FnMut(&[u8]) -> Result<Vec<Value>, otlp2records::decode::DecodeError>,
+{
+    let text = std::str::from_utf8(body).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    let mut saw_line = false;
+
+    for (line_num, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        saw_line = true;
+        let normalized = normalize_json_bytes(trimmed.as_bytes())
+            .map_err(|e| format!("line {}: {}", line_num + 1, e))?;
+        let values = decode(&normalized).map_err(|e| format!("line {}: {}", line_num + 1, e))?;
+        out.extend(values);
+    }
+
+    if !saw_line {
+        return Err("jsonl payload contained no records".to_string());
+    }
+
+    Ok(out)
+}
+
+fn decode_jsonl_metrics(body: &[u8]) -> Result<DecodeMetricsResult, OtlpError> {
+    let text = std::str::from_utf8(body).map_err(|e| invalid_request("metrics", e.to_string()))?;
+    let mut values = Vec::new();
+    let mut skipped = SkippedMetrics::default();
+    let mut saw_line = false;
+
+    for (line_num, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        saw_line = true;
+        let mut value: serde_json::Value = serde_json::from_slice(trimmed.as_bytes())
+            .map_err(|e| invalid_request("metrics", format!("line {}: {}", line_num + 1, e)))?;
+        let counts = count_skipped_metric_data_points(&value);
+        normalise_json_value(&mut value, None)
+            .map_err(|e| invalid_request("metrics", format!("line {}: {}", line_num + 1, e)))?;
+        let normalized = serde_json::to_vec(&value)
+            .map_err(|e| invalid_request("metrics", format!("line {}: {}", line_num + 1, e)))?;
+        let mut result = decode_metrics(&normalized, RecordsFormat::Json)
+            .map_err(|e| invalid_request("metrics", format!("line {}: {}", line_num + 1, e)))?;
+        result.skipped.histograms += counts.histograms;
+        result.skipped.exponential_histograms += counts.exponential_histograms;
+        result.skipped.summaries += counts.summaries;
+        values.extend(result.values);
+        merge_skipped(&mut skipped, &result.skipped);
+    }
+
+    if !saw_line {
+        return Err(invalid_request(
+            "metrics",
+            "jsonl payload contained no records".to_string(),
+        ));
+    }
+
+    Ok(DecodeMetricsResult { values, skipped })
+}
+
+fn decode_metrics_json(body: &[u8]) -> Result<DecodeMetricsResult, OtlpError> {
+    let mut value: serde_json::Value =
+        serde_json::from_slice(body).map_err(|e| invalid_request("metrics", e.to_string()))?;
+    let counts = count_skipped_metric_data_points(&value);
+    normalise_json_value(&mut value, None)
+        .map_err(|e| invalid_request("metrics", e.to_string()))?;
+    let normalized =
+        serde_json::to_vec(&value).map_err(|e| invalid_request("metrics", e.to_string()))?;
+    let mut result = decode_metrics(&normalized, RecordsFormat::Json)
+        .map_err(|e| invalid_request("metrics", e.to_string()))?;
+    result.skipped.histograms += counts.histograms;
+    result.skipped.exponential_histograms += counts.exponential_histograms;
+    result.skipped.summaries += counts.summaries;
+    Ok(result)
+}
+
+fn merge_skipped(target: &mut SkippedMetrics, other: &SkippedMetrics) {
+    target.histograms += other.histograms;
+    target.exponential_histograms += other.exponential_histograms;
+    target.summaries += other.summaries;
+    target.nan_values += other.nan_values;
+    target.infinity_values += other.infinity_values;
+    target.missing_values += other.missing_values;
+}
+
+fn report_skipped_metrics(skipped: &SkippedMetrics) {
+    if skipped.has_skipped() {
+        tracing::debug!(
+            histograms = skipped.histograms,
+            exponential_histograms = skipped.exponential_histograms,
+            summaries = skipped.summaries,
+            nan_values = skipped.nan_values,
+            infinity_values = skipped.infinity_values,
+            missing_values = skipped.missing_values,
+            total = skipped.total(),
+            "Skipped unsupported or invalid metric data points"
+        );
+    }
+}
+
+fn invalid_request(signal: &str, message: impl Into<String>) -> OtlpError {
+    OtlpError::InvalidRequest {
+        message: format!(
+            "Failed to parse OTLP {} request: {}",
+            signal,
+            message.into()
+        ),
+        hint: Some(
+            "Ensure the request body contains valid OTLP protobuf, JSON, or JSONL format.".into(),
+        ),
+    }
+}
+
+fn to_records_format(format: InputFormat) -> RecordsFormat {
+    match format {
+        InputFormat::Protobuf => RecordsFormat::Protobuf,
+        InputFormat::Json => RecordsFormat::Json,
+        InputFormat::Jsonl => RecordsFormat::Json,
+    }
+}
+
+fn group_values_by_service(values: Vec<Value>) -> Vec<(String, Vec<Value>)> {
+    let mut order = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
+    let mut groups: Vec<Vec<Value>> = Vec::new();
+
+    for value in values {
+        let service = extract_service_name(&value);
+        let idx = if let Some(idx) = index.get(&service) {
+            *idx
+        } else {
+            let idx = groups.len();
+            index.insert(service.clone(), idx);
+            order.push(service);
+            groups.push(Vec::new());
+            idx
+        };
+        groups[idx].push(value);
+    }
+
+    order.into_iter().zip(groups).collect()
+}
+
+fn extract_service_name(value: &Value) -> String {
+    let key: KeyString = "service_name".into();
+    if let Value::Object(map) = value {
+        if let Some(Value::Bytes(bytes)) = map.get(&key) {
+            if !bytes.is_empty() {
+                return String::from_utf8_lossy(bytes).into_owned();
+            }
+        }
+    }
+    "unknown".to_string()
+}
+
+fn first_timestamp_micros(values: &[Value]) -> i64 {
+    let key: KeyString = "timestamp".into();
+    let mut min: Option<i64> = None;
+
+    for value in values {
+        if let Value::Object(map) = value {
+            if let Some(ts) = map.get(&key) {
+                if let Some(millis) = value_to_i64(ts) {
+                    let micros = millis.saturating_mul(1_000);
+                    min = Some(min.map_or(micros, |current| current.min(micros)));
+                }
+            }
+        }
+    }
+
+    min.unwrap_or(0)
+}
+
+fn value_to_i64(value: &Value) -> Option<i64> {
+    match value {
+        Value::Integer(i) => Some(*i),
+        Value::Float(f) => Some(f.into_inner() as i64),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -227,8 +459,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_logs_invalid_request() {
-        use otlp2parquet_core::InputFormat;
-
         let invalid_data = b"not valid otlp data";
 
         let result = process_logs(invalid_data, InputFormat::Protobuf).await;
@@ -239,166 +469,35 @@ mod tests {
         assert!(err.message().contains("Failed to parse OTLP logs request"));
     }
 
-    #[tokio::test]
-    async fn test_process_logs_valid_request() {
-        use otlp2parquet_core::config::{FsConfig, StorageBackend, StorageConfig};
-        use otlp2parquet_core::InputFormat;
+    #[test]
+    fn test_group_values_by_service_preserves_order() {
+        let values = vec![
+            make_value("service-a"),
+            make_value("service-b"),
+            make_value("service-a"),
+        ];
 
-        // Read test data
-        let test_data = std::fs::read("../../testdata/logs.pb").expect("Failed to read testdata");
-
-        // Initialize storage for plain Parquet mode
-        let temp_dir = std::env::temp_dir().join("otlp2parquet-handlers-test");
-        std::fs::create_dir_all(&temp_dir).ok();
-
-        let runtime_config = otlp2parquet_core::config::RuntimeConfig {
-            batch: Default::default(),
-            request: Default::default(),
-            storage: StorageConfig {
-                backend: StorageBackend::Fs,
-                parquet_row_group_size: 100_000,
-                fs: Some(FsConfig {
-                    path: temp_dir.to_string_lossy().to_string(),
-                }),
-                s3: None,
-                r2: None,
-            },
-            server: None,
-            lambda: None,
-            cloudflare: None,
-        };
-
-        otlp2parquet_writer::initialize_storage(&runtime_config)
-            .expect("Failed to initialize storage");
-
-        let result = process_logs(&test_data, InputFormat::Protobuf)
-            .await
-            .expect("Failed to process logs");
-
-        assert!(result.records_processed > 0);
-        assert!(!result.paths_written.is_empty());
-        assert_eq!(result.batches_flushed, result.paths_written.len());
-
-        // Cleanup
-        std::fs::remove_dir_all(&temp_dir).ok();
+        let grouped = group_values_by_service(values);
+        assert_eq!(grouped.len(), 2);
+        assert_eq!(grouped[0].0, "service-a");
+        assert_eq!(grouped[1].0, "service-b");
+        assert_eq!(grouped[0].1.len(), 2);
+        assert_eq!(grouped[1].1.len(), 1);
     }
 
-    #[tokio::test]
-    async fn test_process_traces_invalid_request() {
-        use otlp2parquet_core::InputFormat;
-
-        let invalid_data = b"not valid otlp data";
-
-        let result = process_traces(invalid_data, InputFormat::Protobuf).await;
-
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert_eq!(err.error_type(), "InvalidRequest");
-        assert!(err
-            .message()
-            .contains("Failed to parse OTLP traces request"));
-    }
-
-    #[tokio::test]
-    async fn test_process_traces_valid_request() {
-        use otlp2parquet_core::config::{FsConfig, StorageBackend, StorageConfig};
-        use otlp2parquet_core::InputFormat;
-
-        // Read test data
-        let test_data = std::fs::read("../../testdata/traces.pb").expect("Failed to read testdata");
-
-        // Initialize storage
-        let temp_dir = std::env::temp_dir().join("otlp2parquet-handlers-test-traces");
-        std::fs::create_dir_all(&temp_dir).ok();
-
-        let runtime_config = otlp2parquet_core::config::RuntimeConfig {
-            batch: Default::default(),
-            request: Default::default(),
-            storage: StorageConfig {
-                backend: StorageBackend::Fs,
-                parquet_row_group_size: 100_000,
-                fs: Some(FsConfig {
-                    path: temp_dir.to_string_lossy().to_string(),
-                }),
-                s3: None,
-                r2: None,
-            },
-            server: None,
-            lambda: None,
-            cloudflare: None,
-        };
-
-        otlp2parquet_writer::initialize_storage(&runtime_config)
-            .expect("Failed to initialize storage");
-
-        let result = process_traces(&test_data, InputFormat::Protobuf)
-            .await
-            .expect("Failed to process traces");
-
-        assert!(result.records_processed > 0);
-        assert!(!result.paths_written.is_empty());
-
-        // Cleanup
-        std::fs::remove_dir_all(&temp_dir).ok();
-    }
-
-    #[tokio::test]
-    async fn test_process_metrics_invalid_request() {
-        use otlp2parquet_core::InputFormat;
-
-        let invalid_data = b"not valid otlp data";
-
-        let result = process_metrics(invalid_data, InputFormat::Protobuf).await;
-
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert_eq!(err.error_type(), "InvalidRequest");
-        assert!(err
-            .message()
-            .contains("Failed to parse OTLP metrics request"));
-    }
-
-    #[tokio::test]
-    async fn test_process_metrics_valid_request() {
-        use otlp2parquet_core::config::{FsConfig, StorageBackend, StorageConfig};
-        use otlp2parquet_core::InputFormat;
-
-        // Read test data
-        let test_data =
-            std::fs::read("../../testdata/metrics_gauge.pb").expect("Failed to read testdata");
-
-        // Initialize storage
-        let temp_dir = std::env::temp_dir().join("otlp2parquet-handlers-test-metrics");
-        std::fs::create_dir_all(&temp_dir).ok();
-
-        let runtime_config = otlp2parquet_core::config::RuntimeConfig {
-            batch: Default::default(),
-            request: Default::default(),
-            storage: StorageConfig {
-                backend: StorageBackend::Fs,
-                parquet_row_group_size: 100_000,
-                fs: Some(FsConfig {
-                    path: temp_dir.to_string_lossy().to_string(),
-                }),
-                s3: None,
-                r2: None,
-            },
-            server: None,
-            lambda: None,
-            cloudflare: None,
-        };
-
-        otlp2parquet_writer::initialize_storage(&runtime_config)
-            .expect("Failed to initialize storage");
-
-        let result = process_metrics(&test_data, InputFormat::Protobuf)
-            .await
-            .expect("Failed to process metrics");
-
-        assert!(result.records_processed > 0);
-        assert!(!result.paths_written.is_empty());
-
-        // Cleanup
-        std::fs::remove_dir_all(&temp_dir).ok();
+    fn make_value(service_name: &str) -> Value {
+        let mut map = vrl::value::ObjectMap::new();
+        map.insert(
+            "service_name".into(),
+            Value::Bytes(bytes::Bytes::copy_from_slice(service_name.as_bytes())),
+        );
+        map.insert("timestamp".into(), Value::Integer(1_700_000_000));
+        map.insert("observed_timestamp".into(), Value::Integer(1_700_000_000));
+        map.insert("severity_number".into(), Value::Integer(9));
+        map.insert(
+            "severity_text".into(),
+            Value::Bytes(bytes::Bytes::copy_from_slice("INFO".as_bytes())),
+        );
+        Value::Object(map)
     }
 }

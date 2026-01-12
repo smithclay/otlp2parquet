@@ -16,7 +16,7 @@ use crate::r#do::config::{
 };
 use crate::r#do::types::{BatchKey, IngestResponse, RecentBatches};
 use bytes::Bytes;
-use otlp2parquet_core::config::RuntimeConfig;
+use otlp2parquet_common::config::RuntimeConfig;
 use std::cell::RefCell;
 use worker::{durable_object, DurableObject, Env, Request, Response, Result, State};
 

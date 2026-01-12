@@ -3,7 +3,7 @@
 //! This module provides the environment variable accessor and storage initialization
 //! logic used by both the main Worker and Durable Objects.
 
-use otlp2parquet_core::config::{EnvSource, Platform, RuntimeConfig, ENV_PREFIX};
+use otlp2parquet_common::config::{EnvSource, Platform, RuntimeConfig, ENV_PREFIX};
 use worker::{Env, Result};
 
 /// Environment source for Cloudflare Workers.

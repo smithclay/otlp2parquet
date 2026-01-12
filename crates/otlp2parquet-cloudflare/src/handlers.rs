@@ -27,7 +27,7 @@ fn convert_to_worker_error(err: OtlpError, request_id: &str) -> worker::Error {
 /// Handle logs request
 pub async fn handle_logs_request(
     body_bytes: &[u8],
-    format: otlp2parquet_core::InputFormat,
+    format: otlp2parquet_common::InputFormat,
     content_type: Option<&str>,
     request_id: &str,
 ) -> Result<Response> {
@@ -57,7 +57,7 @@ pub async fn handle_logs_request(
 /// Handle traces request
 pub async fn handle_traces_request(
     body_bytes: &[u8],
-    format: otlp2parquet_core::InputFormat,
+    format: otlp2parquet_common::InputFormat,
     content_type: Option<&str>,
     request_id: &str,
 ) -> Result<Response> {
@@ -84,7 +84,7 @@ pub async fn handle_traces_request(
 /// Handle metrics request (separate from logs due to multiple batches per type)
 pub async fn handle_metrics_request(
     body_bytes: &[u8],
-    format: otlp2parquet_core::InputFormat,
+    format: otlp2parquet_common::InputFormat,
     content_type: Option<&str>,
     request_id: &str,
 ) -> Result<Response> {

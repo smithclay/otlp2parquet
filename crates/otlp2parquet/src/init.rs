@@ -3,7 +3,7 @@
 // Storage backend and logging/tracing setup
 
 use anyhow::Result;
-use otlp2parquet_core::config::{LogFormat, RuntimeConfig, StorageBackend};
+use otlp2parquet_common::config::{LogFormat, RuntimeConfig, StorageBackend};
 use tracing::info;
 
 /// Initialize storage from RuntimeConfig
