@@ -69,12 +69,23 @@ pub async fn route_to_batcher(
         let mut response = stub.fetch_with_request(request).await?;
 
         if response.status_code() == 200 {
-            if let Ok(body) = response.json::<serde_json::Value>().await {
-                if let Some(records) = body.get("buffered_records").and_then(|v| v.as_i64()) {
-                    latest_records = records;
+            match response.json::<serde_json::Value>().await {
+                Ok(body) => {
+                    if let Some(records) = body.get("buffered_records").and_then(|v| v.as_i64()) {
+                        latest_records = records;
+                    }
+                    if let Some(bytes) = body.get("buffered_bytes").and_then(|v| v.as_i64()) {
+                        latest_bytes = bytes;
+                    }
                 }
-                if let Some(bytes) = body.get("buffered_bytes").and_then(|v| v.as_i64()) {
-                    latest_bytes = bytes;
+                Err(e) => {
+                    tracing::warn!(
+                        signal_key = %signal_key,
+                        service_name = %service_name,
+                        batch_index,
+                        error = %e,
+                        "Failed to parse DO response body despite 200 status"
+                    );
                 }
             }
         }

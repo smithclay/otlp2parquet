@@ -3,6 +3,4 @@
 pub mod batch;
 pub mod ipc;
 
-pub use batch::{
-    BatchConfig, BatchManager, CompletedBatch, LogMetadata, LogSignalProcessor, PassthroughBatcher,
-};
+pub use batch::{BatchConfig, BatchManager, CompletedBatch};

@@ -8,7 +8,7 @@ pub mod error;
 pub mod processor;
 
 pub use codec::{
-    decode_logs_partitioned, decode_metrics_partitioned, decode_traces_partitioned, merge_skipped,
+    decode_logs_partitioned, decode_metrics_partitioned, decode_traces_partitioned,
     report_skipped_metrics, PartitionedBatch, PartitionedMetrics, ServiceGroupedBatches,
     SkippedMetrics,
 };

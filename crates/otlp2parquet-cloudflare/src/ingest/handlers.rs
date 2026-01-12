@@ -181,12 +181,17 @@ pub async fn handle_batched_metrics(
 
     report_skipped_metrics(&partitioned.skipped);
 
+    let skipped = &partitioned.skipped;
     if partitioned.gauge.is_empty() && partitioned.sum.is_empty() {
         return Response::from_json(&serde_json::json!({
             "status": "accepted",
             "mode": "batched",
             "buffered_records": 0,
             "buffered_bytes": 0,
+            "skipped_histograms": skipped.histograms,
+            "skipped_exponential_histograms": skipped.exponential_histograms,
+            "skipped_summaries": skipped.summaries,
+            "skipped_invalid": skipped.nan_values + skipped.infinity_values + skipped.missing_values,
         }));
     }
 
@@ -195,7 +200,45 @@ pub async fn handle_batched_metrics(
     responses.extend(route_metric_batches(ctx, MetricType::Gauge, partitioned.gauge).await?);
     responses.extend(route_metric_batches(ctx, MetricType::Sum, partitioned.sum).await?);
 
-    aggregate_do_responses(responses, ctx.request_id).await
+    // Aggregate responses and include skipped metrics info
+    let num_routed = responses.len();
+    let mut total_records: i64 = 0;
+    let mut total_bytes: i64 = 0;
+
+    for mut response in responses {
+        let status = response.status_code();
+        if status != 200 {
+            let body = response.text().await.unwrap_or_default();
+            tracing::error!(
+                request_id = %ctx.request_id,
+                status,
+                body_preview = %body.chars().take(200).collect::<String>(),
+                "DO returned non-success status"
+            );
+            return Response::error(format!("Durable Object returned status {}", status), status);
+        }
+
+        if let Ok(body) = response.json::<serde_json::Value>().await {
+            if let Some(records) = body.get("buffered_records").and_then(|v| v.as_i64()) {
+                total_records = total_records.saturating_add(records);
+            }
+            if let Some(bytes) = body.get("buffered_bytes").and_then(|v| v.as_i64()) {
+                total_bytes = total_bytes.saturating_add(bytes);
+            }
+        }
+    }
+
+    Response::from_json(&serde_json::json!({
+        "status": "accepted",
+        "mode": "batched",
+        "buffered_records": total_records,
+        "buffered_bytes": total_bytes,
+        "metric_types_routed": num_routed,
+        "skipped_histograms": skipped.histograms,
+        "skipped_exponential_histograms": skipped.exponential_histograms,
+        "skipped_summaries": skipped.summaries,
+        "skipped_invalid": skipped.nan_values + skipped.infinity_values + skipped.missing_values,
+    }))
 }
 
 async fn route_metric_batches(

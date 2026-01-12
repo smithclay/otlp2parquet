@@ -87,17 +87,13 @@ async fn handle_signal(
     }
 
     match signal {
-        SignalType::Logs => process_logs(state, format, body).await,
-        SignalType::Traces => process_traces(state, format, body).await,
-        SignalType::Metrics => process_metrics(state, format, body).await,
+        SignalType::Logs => process_logs(format, body).await,
+        SignalType::Traces => process_traces(format, body).await,
+        SignalType::Metrics => process_metrics(format, body).await,
     }
 }
 
-async fn process_logs(
-    _state: &AppState,
-    format: InputFormat,
-    body: axum::body::Bytes,
-) -> Result<Response, AppError> {
+async fn process_logs(format: InputFormat, body: axum::body::Bytes) -> Result<Response, AppError> {
     let start = Instant::now();
     counter!("otlp.ingest.requests", 1);
     histogram!("otlp.ingest.bytes", body.len() as f64);
@@ -167,7 +163,6 @@ async fn process_logs(
 }
 
 async fn process_traces(
-    _state: &AppState,
     format: InputFormat,
     body: axum::body::Bytes,
 ) -> Result<Response, AppError> {
@@ -258,7 +253,6 @@ async fn process_traces(
 }
 
 async fn process_metrics(
-    _state: &AppState,
     format: InputFormat,
     body: axum::body::Bytes,
 ) -> Result<Response, AppError> {
@@ -398,7 +392,6 @@ async fn write_metric_batches(
 /// Persist a completed batch from the BatchManager to storage.
 /// Used by background flush and shutdown handlers.
 pub(crate) async fn persist_log_batch(
-    _state: &AppState,
     completed: &CompletedBatch,
 ) -> Result<Vec<String>, anyhow::Error> {
     let mut paths = Vec::new();

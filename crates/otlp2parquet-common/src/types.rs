@@ -4,7 +4,6 @@
 
 use std::fmt;
 use std::str::FromStr;
-use std::sync::Arc;
 
 /// OpenTelemetry signal types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -267,25 +266,4 @@ mod tests {
         assert!(SignalKey::from_str("unknown").is_err()); // Unknown signal
         assert!(SignalKey::from_str("metrics:unknown").is_err()); // Unknown metric type
     }
-}
-
-/// Result of writing a Parquet file
-///
-/// Contains metadata needed for storage tracking and downstream metadata consumers
-#[derive(Clone)]
-pub struct ParquetWriteResult {
-    /// Path where the file was written
-    pub path: String,
-    /// Blake3 content hash
-    pub hash: Blake3Hash,
-    /// File size in bytes
-    pub file_size: u64,
-    /// Number of rows written
-    pub row_count: i64,
-    /// Arrow schema used
-    pub arrow_schema: Arc<arrow::datatypes::Schema>,
-    /// Parquet metadata for downstream consumers
-    pub parquet_metadata: Arc<parquet::file::metadata::ParquetMetaData>,
-    /// Timestamp when write completed
-    pub completed_at: chrono::DateTime<chrono::Utc>,
 }

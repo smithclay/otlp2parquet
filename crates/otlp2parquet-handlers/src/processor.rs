@@ -4,18 +4,20 @@
 
 use crate::codec::{
     decode_logs_partitioned, decode_metrics_partitioned, decode_traces_partitioned,
-    report_skipped_metrics, ServiceGroupedBatches,
+    report_skipped_metrics, ServiceGroupedBatches, SkippedMetrics,
 };
 use crate::error::OtlpError;
 use otlp2parquet_common::{InputFormat, MetricType, SignalType};
 use otlp2parquet_writer::WriteBatchRequest;
 
 /// Result of processing a signal request
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct ProcessingResult {
     pub paths_written: Vec<String>,
     pub records_processed: usize,
     pub batches_flushed: usize,
+    /// Metrics that were skipped (unsupported types, invalid values)
+    pub skipped: Option<SkippedMetrics>,
 }
 
 /// Process OTLP logs request
@@ -52,6 +54,7 @@ pub async fn process_logs(body: &[u8], format: InputFormat) -> Result<Processing
         paths_written: paths,
         records_processed: total_records,
         batches_flushed: batch_count,
+        skipped: None,
     })
 }
 
@@ -93,6 +96,7 @@ pub async fn process_traces(
         paths_written: paths,
         records_processed: total_spans,
         batches_flushed: batch_count,
+        skipped: None,
     })
 }
 
@@ -117,10 +121,16 @@ pub async fn process_metrics(
     total_data_points += write_metric_batches(MetricType::Sum, partitioned.sum, &mut paths).await?;
 
     let batch_count = paths.len();
+    let skipped = if partitioned.skipped.has_skipped() {
+        Some(partitioned.skipped)
+    } else {
+        None
+    };
     Ok(ProcessingResult {
         paths_written: paths,
         records_processed: total_data_points,
         batches_flushed: batch_count,
+        skipped,
     })
 }
 
@@ -196,6 +206,7 @@ mod tests {
             paths_written: vec!["path1".to_string(), "path2".to_string()],
             records_processed: 100,
             batches_flushed: 2,
+            skipped: None,
         };
 
         assert_eq!(result.paths_written.len(), 2);

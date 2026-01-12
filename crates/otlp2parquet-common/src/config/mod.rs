@@ -312,7 +312,7 @@ fn platform_defaults(platform: Platform) -> RuntimeConfig {
     let storage_backend = defaults
         .storage_backend
         .parse::<StorageBackend>()
-        .expect("invalid default storage backend");
+        .unwrap_or(StorageBackend::Fs);
 
     let storage = match storage_backend {
         StorageBackend::Fs => StorageConfig {

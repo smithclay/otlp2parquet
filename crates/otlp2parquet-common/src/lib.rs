@@ -7,7 +7,7 @@ pub use config::{
     BatchConfig, CloudflareConfig, EnvSource, FsConfig, LambdaConfig, LogFormat, Platform,
     RequestConfig, RuntimeConfig, ServerConfig, StorageBackend, StorageConfig, ENV_PREFIX,
 };
-pub use types::{Blake3Hash, MetricType, ParquetWriteResult, SignalKey, SignalType};
+pub use types::{Blake3Hash, MetricType, SignalKey, SignalType};
 
 // Re-export from otlp2records
 pub use otlp2records::{

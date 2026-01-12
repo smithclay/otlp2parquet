@@ -48,6 +48,7 @@ otlp2parquet-writer = { version = "0.6.0", path = "crates/otlp2parquet-writer" }
 otlp2records = { git = "https://github.com/smithclay/otlp2records", rev = "66e88fdc006acb63fe57b600f2ff25a3c841dea7", default-features = false }
 
 # Arrow/Parquet - MINIMAL features only
+# Version pinned to 54 to match otlp2records dependency
 arrow = { version = "54", default-features = false, features = ["ipc"] }
 parquet = { version = "54", default-features = false, features = ["snap", "arrow", "async"] }
 

@@ -13,7 +13,8 @@ Ingest OTLP logs/metrics/traces over HTTP (protobuf/JSON/JSONL), convert to Arro
 
 ## Workspace Map
 - `otlp2parquet-proto`: Generated OTLP protobuf definitions (prost).
-- `otlp2parquet-core`: OTLP parsing, schema, Arrow conversion, batching, config, and platform detection. Pure layer (no async I/O).
+- `otlp2parquet-common`: Shared types, configuration, and re-exports from otlp2records.
+- `otlp2parquet-batch`: In-memory batch accumulation and Arrow IPC utilities.
 - `otlp2parquet-writer`: Parquet writing and storage initialization.
 - `otlp2parquet-handlers`: Shared HTTP/signal processing (parse → convert → write) reused by all platforms.
 - `otlp2parquet`: Main CLI/Server (Axum HTTP, multi-backend storage).

@@ -9,22 +9,8 @@ use otlp2records::{
 
 // Re-export types that consumers need
 pub use otlp2records::{
-    InputFormat as RecordsInputFormat, PartitionedBatch, PartitionedMetrics, ServiceGroupedBatches,
-    SkippedMetrics,
+    PartitionedBatch, PartitionedMetrics, ServiceGroupedBatches, SkippedMetrics,
 };
-
-// Re-export InputFormat from common for backward compatibility
-pub use otlp2parquet_common::InputFormat as CommonInputFormat;
-
-/// Merge skip counts from one SkippedMetrics into another
-pub fn merge_skipped(target: &mut SkippedMetrics, other: &SkippedMetrics) {
-    target.histograms += other.histograms;
-    target.exponential_histograms += other.exponential_histograms;
-    target.summaries += other.summaries;
-    target.nan_values += other.nan_values;
-    target.infinity_values += other.infinity_values;
-    target.missing_values += other.missing_values;
-}
 
 /// Report skipped metrics via tracing.
 /// Uses warn level to ensure visibility in production logs.
@@ -87,28 +73,6 @@ pub fn decode_metrics_partitioned(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_merge_skipped() {
-        let mut target = SkippedMetrics::default();
-        let other = SkippedMetrics {
-            histograms: 1,
-            exponential_histograms: 2,
-            summaries: 3,
-            nan_values: 4,
-            infinity_values: 5,
-            missing_values: 6,
-        };
-
-        merge_skipped(&mut target, &other);
-
-        assert_eq!(target.histograms, 1);
-        assert_eq!(target.exponential_histograms, 2);
-        assert_eq!(target.summaries, 3);
-        assert_eq!(target.nan_values, 4);
-        assert_eq!(target.infinity_values, 5);
-        assert_eq!(target.missing_values, 6);
-    }
 
     #[test]
     fn test_decode_logs_partitioned_empty_jsonl() {

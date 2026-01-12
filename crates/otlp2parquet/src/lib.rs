@@ -260,7 +260,7 @@ async fn flush_pending_batches(state: &AppState) -> Result<()> {
         for completed in pending {
             let rows = completed.metadata.record_count;
             let service = completed.metadata.service_name.as_ref().to_string();
-            match handlers::persist_log_batch(state, &completed).await {
+            match handlers::persist_log_batch(&completed).await {
                 Ok(paths) => {
                     for path in paths {
                         info!(
@@ -306,7 +306,7 @@ async fn run_background_flush(state: AppState, shutdown: Arc<AtomicBool>, interv
                     for completed in expired {
                         let rows = completed.metadata.record_count;
                         let service = completed.metadata.service_name.as_ref().to_string();
-                        match handlers::persist_log_batch(&state, &completed).await {
+                        match handlers::persist_log_batch(&completed).await {
                             Ok(paths) => {
                                 for path in &paths {
                                     info!(
