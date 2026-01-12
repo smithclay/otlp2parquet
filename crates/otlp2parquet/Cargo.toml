@@ -55,7 +55,7 @@ tempfile = "3.13"
 # Docker e2e tests
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 aws-config = { version = "1.8", default-features = false, features = ["rustls", "behavior-version-latest", "rt-tokio"] }
-aws-sdk-s3 = { version = "1.118", default-features = false, features = ["rustls", "rt-tokio"] }
+aws-sdk-s3 = { version = "1.119", default-features = false, features = ["rustls", "rt-tokio"] }
 aws-credential-types = "1.2"
 # Smoke test dependencies
 tokio = { workspace = true, features = ["process"] }
