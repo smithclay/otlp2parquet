@@ -533,79 +533,38 @@ mod tests {
 
     #[test]
     fn test_real_otlp_timestamp_from_testdata() {
-        // Parse actual OTLP logs from testdata to see what timestamp values we get
-        use otlp2records::{decode_logs, InputFormat};
-        use vrl::value::{KeyString, Value};
+        // Parse actual OTLP logs from testdata and verify timestamp column values
+        use arrow::array::TimestampMillisecondArray;
+        use otlp2records::{transform_logs, InputFormat};
 
         // Read the test data file
         let test_data =
             std::fs::read("../../testdata/logs.pb").expect("Failed to read testdata/logs.pb");
 
-        // Parse OTLP request
-        let values =
-            decode_logs(&test_data, InputFormat::Protobuf).expect("Failed to decode OTLP logs");
+        // Parse OTLP request to Arrow
+        let batch =
+            transform_logs(&test_data, InputFormat::Protobuf).expect("Failed to transform logs");
 
         println!("\n=== Real OTLP Test Data Analysis ===");
-        println!("Decoded log count: {}", values.len());
+        println!("Batch row count: {}", batch.num_rows());
 
-        let time_key: KeyString = "time_unix_nano".into();
-        if let Some(Value::Object(map)) = values.first() {
-            if let Some(Value::Integer(time_unix_nano)) = map.get(&time_key) {
-                let time_unix_nano = *time_unix_nano as u64;
+        // Extract the timestamp column (stored in milliseconds)
+        if let Some(ts_col) = batch.column_by_name("timestamp") {
+            if let Some(ts_array) = ts_col.as_any().downcast_ref::<TimestampMillisecondArray>() {
+                let timestamp_ms = ts_array.value(0);
+                println!("Timestamp (milliseconds): {}", timestamp_ms);
+                println!("Timestamp digits: {}", timestamp_ms.to_string().len());
 
-                println!("Raw OTLP time_unix_nano: {}", time_unix_nano);
-                println!("Timestamp digits: {}", time_unix_nano.to_string().len());
-
-                // Test all three conversion scenarios
-                println!("\n--- Conversion Analysis ---");
-
-                // Scenario 1: If this is nanoseconds (expected)
-                let ms_from_nano = time_unix_nano / 1_000_000;
-                println!(
-                    "If nanoseconds -> milliseconds (/ 1_000_000): {} ({} digits)",
-                    ms_from_nano,
-                    ms_from_nano.to_string().len()
+                assert_eq!(
+                    timestamp_ms.to_string().len(),
+                    13,
+                    "Timestamp should be 13 digits (milliseconds since epoch)"
                 );
-
-                // Scenario 2: If this is microseconds (hypothesis)
-                let ms_from_micro = time_unix_nano / 1_000;
-                println!(
-                    "If microseconds -> milliseconds (/ 1_000): {} ({} digits)",
-                    ms_from_micro,
-                    ms_from_micro.to_string().len()
-                );
-
-                // Scenario 3: If this is already milliseconds
-                println!(
-                    "If already milliseconds (/ 1): {} ({} digits)",
-                    time_unix_nano,
-                    time_unix_nano.to_string().len()
-                );
-
-                // Check if this matches the error pattern
-                if ms_from_nano.to_string().len() == 10 {
-                    println!("\n⚠️  FOUND THE BUG!");
-                    println!(
-                        "   Current conversion (nanos / 1_000_000) produces 10 digits: {}",
-                        ms_from_nano
-                    );
-                    println!(
-                        "   This suggests the input '{}' is in MICROSECONDS, not nanoseconds",
-                        time_unix_nano
-                    );
-                    println!(
-                        "   Correct conversion should be: {} / 1_000 = {} (13 digits)",
-                        time_unix_nano, ms_from_micro
-                    );
-                } else if ms_from_nano.to_string().len() == 13 {
-                    println!("\n✓ Conversion is correct");
-                    println!("   Input '{}' is in nanoseconds", time_unix_nano);
-                    println!(
-                        "   Output '{}' is in milliseconds (13 digits)",
-                        ms_from_nano
-                    );
-                }
+            } else {
+                panic!("timestamp column is not TimestampMillisecondArray");
             }
+        } else {
+            panic!("No timestamp column found");
         }
     }
 

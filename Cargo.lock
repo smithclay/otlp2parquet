@@ -2941,7 +2941,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "vrl",
 ]
 
 [[package]]
@@ -2954,7 +2953,6 @@ dependencies = [
  "js-sys",
  "otlp2records",
  "parking_lot 0.12.5",
- "vrl",
 ]
 
 [[package]]
@@ -2983,7 +2981,6 @@ dependencies = [
  "tracing-subscriber",
  "tracing-web",
  "uuid",
- "vrl",
  "wasm-bindgen",
  "worker",
 ]
@@ -3008,6 +3005,7 @@ dependencies = [
 name = "otlp2parquet-handlers"
 version = "0.6.0"
 dependencies = [
+ "arrow",
  "bytes",
  "ordered-float 4.6.0",
  "otlp2parquet-batch",
@@ -3017,7 +3015,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "vrl",
 ]
 
 [[package]]
@@ -3075,14 +3072,12 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "vrl",
 ]
 
 [[package]]
 name = "otlp2records"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dce27e6355e887e5b24ada739fbe450463d7c646f19bd41dc4b282615243fdb5"
+source = "git+https://github.com/smithclay/otlp2records?rev=f227949e15f6471a84f74d438caa299b655fce95#f227949e15f6471a84f74d438caa299b655fce95"
 dependencies = [
  "arrow",
  "base64 0.21.7",
@@ -3090,6 +3085,7 @@ dependencies = [
  "chrono-tz",
  "const-hex",
  "getrandom 0.2.16",
+ "indexmap 2.12.1",
  "once_cell",
  "opentelemetry-proto",
  "ordered-float 4.6.0",

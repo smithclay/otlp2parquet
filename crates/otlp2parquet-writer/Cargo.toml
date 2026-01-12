@@ -36,5 +36,5 @@ js-sys = "0.3"
 
 [dev-dependencies]
 otlp2records = { workspace = true }
-vrl = { version = "0.29", default-features = false, features = ["value"] }
+arrow = { workspace = true }
 tokio = { version = "1", features = ["full"] }

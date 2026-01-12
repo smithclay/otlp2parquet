@@ -20,7 +20,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use otlp2parquet_batch::{BatchConfig, BatchManager, PassthroughBatcher};
+use otlp2parquet_batch::{BatchConfig, BatchManager};
 use otlp2parquet_common::config::RuntimeConfig;
 use otlp2parquet_writer::set_parquet_row_group_size;
 use serde_json::json;
@@ -45,7 +45,6 @@ use init::init_writer;
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub batcher: Option<Arc<BatchManager>>,
-    pub passthrough: PassthroughBatcher,
     pub max_payload_bytes: usize,
 }
 
@@ -180,7 +179,6 @@ pub async fn run_with_config(config: RuntimeConfig) -> Result<()> {
     // Create app state
     let state = AppState {
         batcher,
-        passthrough: PassthroughBatcher::default(),
         max_payload_bytes,
     };
 

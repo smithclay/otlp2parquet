@@ -6,14 +6,9 @@ use crate::{MetricType, SignalKey};
 use futures::future::try_join_all;
 use otlp2parquet_common::InputFormat;
 use otlp2parquet_handlers::{
-    decode_logs_values, decode_metrics_values, decode_traces_values, first_timestamp_micros,
-    group_values_by_service, report_skipped_metrics,
+    decode_logs_partitioned, decode_metrics_partitioned, decode_traces_partitioned,
+    report_skipped_metrics, ServiceGroupedBatches,
 };
-use otlp2records::{
-    apply_log_transform, apply_metric_transform, apply_trace_transform, gauge_schema, logs_schema,
-    sum_schema, traces_schema,
-};
-use vrl::value::Value;
 use worker::{Response, Result};
 
 /// Handle batched logs - parse, convert to Arrow, route to DO.
@@ -34,8 +29,8 @@ pub async fn handle_batched_logs(
     body: &[u8],
     format: InputFormat,
 ) -> Result<Response> {
-    let values = match decode_logs_values(body, format) {
-        Ok(values) => values,
+    let grouped = match decode_logs_partitioned(body, format) {
+        Ok(grouped) => grouped,
         Err(message) => {
             tracing::Span::current().record("error", message.as_str());
             tracing::error!(
@@ -50,49 +45,20 @@ pub async fn handle_batched_logs(
         }
     };
 
-    let transformed = match apply_log_transform(values) {
-        Ok(values) => values,
-        Err(e) => {
-            tracing::Span::current().record("error", e.to_string().as_str());
-            tracing::error!(
-                request_id = %ctx.request_id,
-                error = ?e,
-                "Failed to convert logs to Arrow"
-            );
-            return Ok(invalid_request_response(
-                format!("Failed to convert logs: {}", e),
-                ctx.request_id,
-            ));
-        }
-    };
-
-    let per_service_values = group_values_by_service(transformed);
     let mut responses = Vec::new();
 
-    for (service_name, subset) in per_service_values {
-        let batch = match otlp2records::values_to_arrow(&subset, &logs_schema()) {
-            Ok(batch) => batch,
-            Err(e) => {
-                tracing::Span::current().record("error", e.to_string().as_str());
-                tracing::error!(
-                    request_id = %ctx.request_id,
-                    error = ?e,
-                    "Failed to convert logs to Arrow"
-                );
-                return Ok(invalid_request_response(
-                    format!("Failed to convert logs: {}", e),
-                    ctx.request_id,
-                ));
-            }
-        };
+    for pb in grouped.batches {
+        if pb.batch.num_rows() == 0 {
+            continue;
+        }
 
-        tracing::Span::current().record("service_name", &service_name);
-        tracing::Span::current().record("record_count", subset.len());
+        tracing::Span::current().record("service_name", pb.service_name.as_ref());
+        tracing::Span::current().record("record_count", pb.record_count);
 
         tracing::debug!(
             request_id = %ctx.request_id,
-            service = %service_name,
-            records = subset.len(),
+            service = %pb.service_name,
+            records = pb.record_count,
             "Batching logs"
         );
 
@@ -100,9 +66,9 @@ pub async fn handle_batched_logs(
             ctx.env,
             ctx.trace_ctx,
             SignalKey::Logs,
-            &service_name,
-            &[batch],
-            first_timestamp_micros(&subset),
+            &pb.service_name,
+            &[pb.batch],
+            pb.min_timestamp_micros,
         )
         .await?;
 
@@ -130,8 +96,8 @@ pub async fn handle_batched_traces(
     body: &[u8],
     format: InputFormat,
 ) -> Result<Response> {
-    let values = match decode_traces_values(body, format) {
-        Ok(values) => values,
+    let grouped = match decode_traces_partitioned(body, format) {
+        Ok(grouped) => grouped,
         Err(message) => {
             tracing::Span::current().record("error", message.as_str());
             tracing::error!(
@@ -146,49 +112,20 @@ pub async fn handle_batched_traces(
         }
     };
 
-    let transformed = match apply_trace_transform(values) {
-        Ok(values) => values,
-        Err(e) => {
-            tracing::Span::current().record("error", e.to_string().as_str());
-            tracing::error!(
-                request_id = %ctx.request_id,
-                error = ?e,
-                "Failed to convert traces to Arrow"
-            );
-            return Ok(invalid_request_response(
-                format!("Failed to convert traces: {}", e),
-                ctx.request_id,
-            ));
-        }
-    };
-
-    let per_service_values = group_values_by_service(transformed);
     let mut responses = Vec::new();
 
-    for (service_name, subset) in per_service_values {
-        let batch = match otlp2records::values_to_arrow(&subset, &traces_schema()) {
-            Ok(batch) => batch,
-            Err(e) => {
-                tracing::Span::current().record("error", e.to_string().as_str());
-                tracing::error!(
-                    request_id = %ctx.request_id,
-                    error = ?e,
-                    "Failed to convert traces to Arrow"
-                );
-                return Ok(invalid_request_response(
-                    format!("Failed to convert traces: {}", e),
-                    ctx.request_id,
-                ));
-            }
-        };
+    for pb in grouped.batches {
+        if pb.batch.num_rows() == 0 {
+            continue;
+        }
 
-        tracing::Span::current().record("service_name", &service_name);
-        tracing::Span::current().record("record_count", subset.len());
+        tracing::Span::current().record("service_name", pb.service_name.as_ref());
+        tracing::Span::current().record("record_count", pb.record_count);
 
         tracing::debug!(
             request_id = %ctx.request_id,
-            service = %service_name,
-            spans = subset.len(),
+            service = %pb.service_name,
+            spans = pb.record_count,
             "Batching traces"
         );
 
@@ -196,9 +133,9 @@ pub async fn handle_batched_traces(
             ctx.env,
             ctx.trace_ctx,
             SignalKey::Traces,
-            &service_name,
-            &[batch],
-            first_timestamp_micros(&subset),
+            &pb.service_name,
+            &[pb.batch],
+            pb.min_timestamp_micros,
         )
         .await?;
 
@@ -226,7 +163,7 @@ pub async fn handle_batched_metrics(
     body: &[u8],
     format: InputFormat,
 ) -> Result<Response> {
-    let decode_result = match decode_metrics_values(body, format) {
+    let partitioned = match decode_metrics_partitioned(body, format) {
         Ok(result) => result,
         Err(message) => {
             tracing::Span::current().record("error", message.as_str());
@@ -242,25 +179,9 @@ pub async fn handle_batched_metrics(
         }
     };
 
-    report_skipped_metrics(&decode_result.skipped);
+    report_skipped_metrics(&partitioned.skipped);
 
-    let metric_values = match apply_metric_transform(decode_result.values) {
-        Ok(values) => values,
-        Err(e) => {
-            tracing::Span::current().record("error", e.to_string().as_str());
-            tracing::error!(
-                request_id = %ctx.request_id,
-                error = ?e,
-                "Failed to convert metrics to Arrow"
-            );
-            return Ok(invalid_request_response(
-                format!("Failed to convert metrics: {}", e),
-                ctx.request_id,
-            ));
-        }
-    };
-
-    if metric_values.gauge.is_empty() && metric_values.sum.is_empty() {
+    if partitioned.gauge.is_empty() && partitioned.sum.is_empty() {
         return Response::from_json(&serde_json::json!({
             "status": "accepted",
             "mode": "batched",
@@ -271,51 +192,50 @@ pub async fn handle_batched_metrics(
 
     let mut responses = Vec::new();
 
-    responses.extend(route_metric_values(ctx, MetricType::Gauge, metric_values.gauge).await?);
-    responses.extend(route_metric_values(ctx, MetricType::Sum, metric_values.sum).await?);
+    responses.extend(route_metric_batches(ctx, MetricType::Gauge, partitioned.gauge).await?);
+    responses.extend(route_metric_batches(ctx, MetricType::Sum, partitioned.sum).await?);
 
     aggregate_do_responses(responses, ctx.request_id).await
 }
 
-async fn route_metric_values(
+async fn route_metric_batches(
     ctx: &BatchContext<'_>,
     metric_type: MetricType,
-    values: Vec<Value>,
+    grouped: ServiceGroupedBatches,
 ) -> Result<Vec<Response>> {
-    if values.is_empty() {
+    if grouped.is_empty() {
         return Ok(Vec::new());
     }
 
-    let schema = match metric_type {
-        MetricType::Gauge => gauge_schema(),
-        MetricType::Sum => sum_schema(),
+    // Validate supported metric types
+    match metric_type {
+        MetricType::Gauge | MetricType::Sum => {}
         _ => {
             tracing::warn!(
                 metric_type = ?metric_type,
-                count = values.len(),
+                count = grouped.total_records,
                 "Unsupported metric type - data not persisted"
             );
             return Ok(Vec::new());
         }
     };
 
-    let futures = group_values_by_service(values)
+    let futures = grouped
+        .batches
         .into_iter()
-        .map(|(service_name, subset)| {
-            let schema = schema.clone();
+        .filter(|pb| pb.batch.num_rows() > 0)
+        .map(|pb| {
+            let service_name = pb.service_name.to_string();
+            let min_timestamp = pb.min_timestamp_micros;
             async move {
-                let batch = otlp2records::values_to_arrow(&subset, &schema).map_err(|e| {
-                    worker::Error::RustError(format!("Failed to convert metrics to Arrow: {}", e))
-                })?;
-
                 route_single_metric(
                     ctx.env,
                     ctx.trace_ctx,
                     ctx.request_id,
                     SignalKey::Metrics(metric_type),
                     &service_name,
-                    batch,
-                    first_timestamp_micros(&subset),
+                    pb.batch,
+                    min_timestamp,
                 )
                 .await
             }

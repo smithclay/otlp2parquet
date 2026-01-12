@@ -45,7 +45,7 @@ otlp2parquet-proto = { version = "0.6.0", path = "crates/otlp2parquet-proto" }
 otlp2parquet-common = { version = "0.6.0", path = "crates/otlp2parquet-common" }
 otlp2parquet-batch = { version = "0.6.0", path = "crates/otlp2parquet-batch" }
 otlp2parquet-writer = { version = "0.6.0", path = "crates/otlp2parquet-writer" }
-otlp2records = { version = "0.1", default-features = false }
+otlp2records = { git = "https://github.com/smithclay/otlp2records", rev = "f227949e15f6471a84f74d438caa299b655fce95", default-features = false }
 
 # Arrow/Parquet - MINIMAL features only
 arrow = { version = "54", default-features = false, features = ["ipc"] }

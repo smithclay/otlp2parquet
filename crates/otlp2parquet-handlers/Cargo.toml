@@ -12,8 +12,8 @@ otlp2parquet-batch = { workspace = true }
 otlp2parquet-common = { workspace = true }
 otlp2records = { workspace = true }
 otlp2parquet-writer = { path = "../otlp2parquet-writer", default-features = false }
+arrow = { workspace = true }
 serde_json = { workspace = true }
-vrl = { version = "0.29", default-features = false, features = ["value"] }
 tracing = { workspace = true }
 
 [dev-dependencies]

@@ -9,11 +9,10 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use arrow::array::RecordBatch;
-use otlp2records::{logs_schema, values_to_arrow};
+use otlp2records::PartitionedBatch;
 use parking_lot::Mutex;
-use vrl::value::{KeyString, Value};
 
 mod buffered_batch;
 
@@ -102,27 +101,28 @@ pub trait SignalProcessor {
 
 type BatchIngestResult<M> = Result<(Vec<CompletedBatch<M>>, M)>;
 
-/// Log-specific signal processor.
+/// Log-specific signal processor using Arrow-native PartitionedBatch.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LogSignalProcessor;
 
 impl SignalProcessor for LogSignalProcessor {
-    type Request = Vec<Value>;
+    type Request = PartitionedBatch;
     type Metadata = LogMetadata;
 
     fn estimate_row_count(request: &Self::Request) -> usize {
-        request.len()
+        request.record_count
     }
 
     fn convert_request(
         request: &Self::Request,
         _capacity_hint: usize,
     ) -> Result<(Vec<RecordBatch>, Self::Metadata)> {
-        let metadata = build_log_metadata(request);
-        let schema = logs_schema();
-        let batch = values_to_arrow(request, &schema)
-            .context("Failed to convert OTLP log values to Arrow")?;
-        Ok((vec![batch], metadata))
+        let metadata = LogMetadata {
+            service_name: Arc::clone(&request.service_name),
+            first_timestamp_micros: request.min_timestamp_micros,
+            record_count: request.record_count,
+        };
+        Ok((vec![request.batch.clone()], metadata))
     }
 }
 
@@ -271,85 +271,52 @@ impl<P: SignalProcessor> PassthroughBatcher<P> {
     }
 }
 
-fn build_log_metadata(values: &[Value]) -> LogMetadata {
-    LogMetadata {
-        service_name: extract_service_name(values),
-        first_timestamp_micros: extract_first_timestamp_micros(values),
-        record_count: values.len(),
-    }
-}
-
-fn extract_service_name(values: &[Value]) -> Arc<str> {
-    let key: KeyString = "service_name".into();
-    for value in values {
-        if let Value::Object(map) = value {
-            if let Some(Value::Bytes(bytes)) = map.get(&key) {
-                if !bytes.is_empty() {
-                    return Arc::from(String::from_utf8_lossy(bytes).into_owned());
-                }
-            }
-        }
-    }
-    Arc::from("unknown")
-}
-
-fn extract_first_timestamp_micros(values: &[Value]) -> i64 {
-    let key: KeyString = "timestamp".into();
-    let mut min_micros: Option<i64> = None;
-
-    for value in values {
-        if let Value::Object(map) = value {
-            if let Some(timestamp) = map.get(&key) {
-                if let Some(millis) = value_to_i64(timestamp) {
-                    let micros = millis.saturating_mul(1_000);
-                    min_micros = Some(min_micros.map_or(micros, |min| min.min(micros)));
-                }
-            }
-        }
-    }
-
-    min_micros.unwrap_or(0)
-}
-
-fn value_to_i64(value: &Value) -> Option<i64> {
-    match value {
-        Value::Integer(i) => Some(*i),
-        Value::Float(f) => Some(f.into_inner() as i64),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow::array::{Int64Array, StringArray, TimestampMillisecondArray};
+    use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+    use std::sync::Arc as StdArc;
 
-    fn create_test_values(service_name: &str, record_count: usize) -> Vec<Value> {
-        let mut out = Vec::with_capacity(record_count);
-        for i in 0..record_count {
-            let mut map = vrl::value::ObjectMap::new();
-            map.insert("timestamp".into(), Value::Integer(1_700_000_000 + i as i64));
-            map.insert(
-                "observed_timestamp".into(),
-                Value::Integer(1_700_000_100 + i as i64),
-            );
-            map.insert(
-                "service_name".into(),
-                Value::Bytes(bytes::Bytes::copy_from_slice(service_name.as_bytes())),
-            );
-            map.insert("severity_number".into(), Value::Integer(9));
-            map.insert(
-                "severity_text".into(),
-                Value::Bytes("INFO".as_bytes().into()),
-            );
-            out.push(Value::Object(map));
+    fn create_test_batch(service_name: &str, record_count: usize) -> PartitionedBatch {
+        let schema = StdArc::new(Schema::new(vec![
+            Field::new(
+                "timestamp",
+                DataType::Timestamp(TimeUnit::Millisecond, None),
+                false,
+            ),
+            Field::new("service_name", DataType::Utf8, true),
+            Field::new("severity_number", DataType::Int64, true),
+        ]));
+
+        let timestamps: Vec<i64> = (0..record_count)
+            .map(|i| 1_700_000_000_000 + i as i64)
+            .collect();
+        let services: Vec<&str> = vec![service_name; record_count];
+        let severities: Vec<i64> = vec![9; record_count];
+
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                StdArc::new(TimestampMillisecondArray::from(timestamps.clone())),
+                StdArc::new(StringArray::from(services)),
+                StdArc::new(Int64Array::from(severities)),
+            ],
+        )
+        .unwrap();
+
+        PartitionedBatch {
+            batch,
+            service_name: Arc::from(service_name),
+            min_timestamp_micros: timestamps[0] * 1000, // Convert ms to us
+            record_count,
         }
-        out
     }
 
     #[test]
     fn test_passthrough_batcher() {
         let batcher = PassthroughBatcher::<LogSignalProcessor>::default();
-        let request = create_test_values("test-service", 10);
+        let request = create_test_batch("test-service", 10);
 
         let result = batcher.ingest(&request);
         assert!(result.is_ok());
@@ -370,14 +337,14 @@ mod tests {
         let manager = BatchManager::<LogSignalProcessor>::new(config);
 
         // First request - should not flush
-        let request1 = create_test_values("test-service", 10);
-        let approx1 = request1.len() * 32;
+        let request1 = create_test_batch("test-service", 10);
+        let approx1 = 320; // Approximate bytes
         let (completed1, _meta1) = manager.ingest(&request1, approx1).unwrap();
         assert_eq!(completed1.len(), 0); // Not flushed yet
 
         // Second request - should not flush (total 20 rows)
-        let request2 = create_test_values("test-service", 10);
-        let approx2 = request2.len() * 32;
+        let request2 = create_test_batch("test-service", 10);
+        let approx2 = 320;
         let (completed2, _meta2) = manager.ingest(&request2, approx2).unwrap();
         assert_eq!(completed2.len(), 0); // Still not flushed
 
@@ -389,13 +356,13 @@ mod tests {
         };
         let manager_small = BatchManager::<LogSignalProcessor>::new(config_small);
 
-        let req1 = create_test_values("test-service", 10);
-        let approx_small_1 = req1.len() * 32;
+        let req1 = create_test_batch("test-service", 10);
+        let approx_small_1 = 320;
         let (c1, _) = manager_small.ingest(&req1, approx_small_1).unwrap();
         assert_eq!(c1.len(), 0); // 10 rows < 20, no flush
 
-        let req2 = create_test_values("test-service", 10);
-        let approx_small_2 = req2.len() * 32;
+        let req2 = create_test_batch("test-service", 10);
+        let approx_small_2 = 320;
         let (c2, _) = manager_small.ingest(&req2, approx_small_2).unwrap();
         assert_eq!(c2.len(), 1); // 10 + 10 = 20 rows, should flush!
         assert_eq!(
