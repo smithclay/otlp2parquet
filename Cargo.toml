@@ -12,7 +12,7 @@ exclude = ["examples/generate-parquet-testdata"]
 resolver = "2"
 
 [workspace.package]
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 authors = ["otlp2parquet Contributors"]
 license = "Apache-2.0"
@@ -40,10 +40,10 @@ opt-level = 3
 
 [workspace.dependencies]
 # Internal crates - all use workspace version
-otlp2parquet-proto = { version = "0.6.0", path = "crates/otlp2parquet-proto" }
-otlp2parquet-common = { version = "0.6.0", path = "crates/otlp2parquet-common" }
-otlp2parquet-writer = { version = "0.6.0", path = "crates/otlp2parquet-writer" }
-otlp2records = { git = "https://github.com/smithclay/otlp2records", rev = "66e88fdc006acb63fe57b600f2ff25a3c841dea7", default-features = false }
+otlp2parquet-proto = { version = "0.7.0", path = "crates/otlp2parquet-proto" }
+otlp2parquet-common = { version = "0.7.0", path = "crates/otlp2parquet-common" }
+otlp2parquet-writer = { version = "0.7.0", path = "crates/otlp2parquet-writer" }
+otlp2records = { version = "0.1.1", default-features = false }
 
 # Arrow/Parquet - MINIMAL features only
 # Version pinned to 54 to match otlp2records dependency

@@ -2873,7 +2873,7 @@ dependencies = [
 
 [[package]]
 name = "otlp2parquet"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "arrow",
@@ -2914,7 +2914,7 @@ dependencies = [
 
 [[package]]
 name = "otlp2parquet-cloudflare"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -2937,7 +2937,7 @@ dependencies = [
 
 [[package]]
 name = "otlp2parquet-common"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "hex",
@@ -2949,7 +2949,7 @@ dependencies = [
 
 [[package]]
 name = "otlp2parquet-handlers"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "bytes",
  "ordered-float 4.6.0",
@@ -2962,7 +2962,7 @@ dependencies = [
 
 [[package]]
 name = "otlp2parquet-lambda"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "aws_lambda_events",
@@ -2983,7 +2983,7 @@ dependencies = [
 
 [[package]]
 name = "otlp2parquet-proto"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "prost",
  "prost-build",
@@ -2993,7 +2993,7 @@ dependencies = [
 
 [[package]]
 name = "otlp2parquet-writer"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "arrow",
@@ -3017,8 +3017,9 @@ dependencies = [
 
 [[package]]
 name = "otlp2records"
-version = "0.1.0"
-source = "git+https://github.com/smithclay/otlp2records?rev=66e88fdc006acb63fe57b600f2ff25a3c841dea7#66e88fdc006acb63fe57b600f2ff25a3c841dea7"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "211cc3d5f8bf526182219089db58207c22ddf7b3ed6ceb255b9319e753c168b9"
 dependencies = [
  "arrow",
  "base64 0.21.7",
