@@ -17,6 +17,17 @@ pub enum SignalType {
     Metrics,
 }
 
+impl SignalType {
+    /// Returns the string representation used in logging and metrics
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SignalType::Logs => "logs",
+            SignalType::Traces => "traces",
+            SignalType::Metrics => "metrics",
+        }
+    }
+}
+
 /// Metric data point types (the 5 OTLP metric kinds)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MetricType {

@@ -128,8 +128,14 @@ pub fn decode_metrics_partitioned(
 // JSONL handling - process line by line and concatenate results
 // =============================================================================
 
-/// Decode JSONL logs payload, processing line by line.
-fn decode_logs_jsonl_partitioned(body: &[u8]) -> Result<ServiceGroupedBatches, String> {
+use arrow::array::RecordBatch;
+use otlp2records::Result as RecordsResult;
+
+/// Generic JSONL decoder that processes each line and concatenates results.
+fn decode_jsonl_partitioned<F>(body: &[u8], transform: F) -> Result<ServiceGroupedBatches, String>
+where
+    F: Fn(&[u8]) -> RecordsResult<RecordBatch>,
+{
     let text = std::str::from_utf8(body).map_err(|e| e.to_string())?;
     let mut batches = Vec::new();
     let mut saw_line = false;
@@ -142,8 +148,7 @@ fn decode_logs_jsonl_partitioned(body: &[u8]) -> Result<ServiceGroupedBatches, S
         saw_line = true;
         let normalized = normalize_json_bytes(trimmed.as_bytes())
             .map_err(|e| format!("line {}: {}", line_num + 1, e))?;
-        let batch = transform_logs(&normalized, RecordsFormat::Json)
-            .map_err(|e| format!("line {}: {}", line_num + 1, e))?;
+        let batch = transform(&normalized).map_err(|e| format!("line {}: {}", line_num + 1, e))?;
         if batch.num_rows() > 0 {
             batches.push(batch);
         }
@@ -157,46 +162,20 @@ fn decode_logs_jsonl_partitioned(body: &[u8]) -> Result<ServiceGroupedBatches, S
         return Ok(ServiceGroupedBatches::default());
     }
 
-    // Concatenate all batches and then group by service
     let schema = batches[0].schema();
     let combined =
         concat_batches(&schema, &batches).map_err(|e| format!("concat batches: {}", e))?;
     Ok(group_batch_by_service(combined))
 }
 
+/// Decode JSONL logs payload, processing line by line.
+fn decode_logs_jsonl_partitioned(body: &[u8]) -> Result<ServiceGroupedBatches, String> {
+    decode_jsonl_partitioned(body, |data| transform_logs(data, RecordsFormat::Json))
+}
+
 /// Decode JSONL traces payload, processing line by line.
 fn decode_traces_jsonl_partitioned(body: &[u8]) -> Result<ServiceGroupedBatches, String> {
-    let text = std::str::from_utf8(body).map_err(|e| e.to_string())?;
-    let mut batches = Vec::new();
-    let mut saw_line = false;
-
-    for (line_num, line) in text.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        saw_line = true;
-        let normalized = normalize_json_bytes(trimmed.as_bytes())
-            .map_err(|e| format!("line {}: {}", line_num + 1, e))?;
-        let batch = transform_traces(&normalized, RecordsFormat::Json)
-            .map_err(|e| format!("line {}: {}", line_num + 1, e))?;
-        if batch.num_rows() > 0 {
-            batches.push(batch);
-        }
-    }
-
-    if !saw_line {
-        return Err("jsonl payload contained no records".to_string());
-    }
-
-    if batches.is_empty() {
-        return Ok(ServiceGroupedBatches::default());
-    }
-
-    let schema = batches[0].schema();
-    let combined =
-        concat_batches(&schema, &batches).map_err(|e| format!("concat batches: {}", e))?;
-    Ok(group_batch_by_service(combined))
+    decode_jsonl_partitioned(body, |data| transform_traces(data, RecordsFormat::Json))
 }
 
 /// Decode JSONL metrics payload, processing line by line.

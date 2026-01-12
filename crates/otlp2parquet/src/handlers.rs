@@ -21,30 +21,13 @@ use tracing::{debug, info};
 
 use crate::{AppError, AppState};
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum SignalKind {
-    Logs,
-    Traces,
-    Metrics,
-}
-
-impl SignalKind {
-    fn as_str(&self) -> &'static str {
-        match self {
-            SignalKind::Logs => "logs",
-            SignalKind::Traces => "traces",
-            SignalKind::Metrics => "metrics",
-        }
-    }
-}
-
 /// POST /v1/logs - OTLP log ingestion endpoint
 pub(crate) async fn handle_logs(
     State(state): State<AppState>,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<Response, AppError> {
-    handle_signal(SignalKind::Logs, &state, headers, body).await
+    handle_signal(SignalType::Logs, &state, headers, body).await
 }
 
 /// POST /v1/traces - OTLP trace ingestion endpoint (stub)
@@ -53,7 +36,7 @@ pub(crate) async fn handle_traces(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<Response, AppError> {
-    handle_signal(SignalKind::Traces, &state, headers, body).await
+    handle_signal(SignalType::Traces, &state, headers, body).await
 }
 
 /// POST /v1/metrics - OTLP metrics ingestion endpoint
@@ -62,7 +45,7 @@ pub(crate) async fn handle_metrics(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<Response, AppError> {
-    handle_signal(SignalKind::Metrics, &state, headers, body).await
+    handle_signal(SignalType::Metrics, &state, headers, body).await
 }
 
 /// GET /health - Basic health check
@@ -78,7 +61,7 @@ pub(crate) async fn ready_check(State(_state): State<AppState>) -> impl IntoResp
 }
 
 async fn handle_signal(
-    signal: SignalKind,
+    signal: SignalType,
     state: &AppState,
     headers: HeaderMap,
     body: axum::body::Bytes,
@@ -104,9 +87,9 @@ async fn handle_signal(
     }
 
     match signal {
-        SignalKind::Logs => process_logs(state, format, body).await,
-        SignalKind::Traces => process_traces(state, format, body).await,
-        SignalKind::Metrics => process_metrics(state, format, body).await,
+        SignalType::Logs => process_logs(state, format, body).await,
+        SignalType::Traces => process_traces(state, format, body).await,
+        SignalType::Metrics => process_metrics(state, format, body).await,
     }
 }
 

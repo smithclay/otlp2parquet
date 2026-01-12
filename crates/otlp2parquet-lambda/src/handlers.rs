@@ -14,6 +14,7 @@ use std::borrow::Cow;
 use std::io::Read;
 
 use crate::{HttpResponseData, LambdaState};
+use otlp2parquet_common::SignalType;
 
 const HEALTHY_TEXT: &str = "Healthy";
 
@@ -26,13 +27,6 @@ fn convert_to_http_response(err: OtlpError) -> HttpResponseData {
         "hint": err.hint(),
     });
     HttpResponseData::json(status_code, response_body.to_string())
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum SignalKind {
-    Logs,
-    Traces,
-    Metrics,
 }
 
 /// Handle incoming HTTP request based on method and path
@@ -73,9 +67,9 @@ async fn handle_post(
     state: &LambdaState,
 ) -> HttpResponseData {
     let signal = match path {
-        "/v1/logs" => SignalKind::Logs,
-        "/v1/traces" => SignalKind::Traces,
-        "/v1/metrics" => SignalKind::Metrics,
+        "/v1/logs" => SignalType::Logs,
+        "/v1/traces" => SignalType::Traces,
+        "/v1/metrics" => SignalType::Metrics,
         _ => return HttpResponseData::json(404, json!({ "error": "not found" }).to_string()),
     };
 
@@ -106,9 +100,9 @@ async fn handle_post(
     let format = otlp2parquet_common::InputFormat::from_content_type(content_type);
 
     match signal {
-        SignalKind::Logs => process_logs(body.as_ref(), format, content_type).await,
-        SignalKind::Metrics => process_metrics(body.as_ref(), format, content_type).await,
-        SignalKind::Traces => process_traces(body.as_ref(), format, content_type).await,
+        SignalType::Logs => process_logs(body.as_ref(), format, content_type).await,
+        SignalType::Metrics => process_metrics(body.as_ref(), format, content_type).await,
+        SignalType::Traces => process_traces(body.as_ref(), format, content_type).await,
     }
 }
 
