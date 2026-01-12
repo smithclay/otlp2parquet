@@ -10,7 +10,4 @@ pub use config::{
 pub use types::{Blake3Hash, MetricType, SignalKey, SignalType};
 
 // Re-export from otlp2records
-pub use otlp2records::{
-    count_skipped_metric_data_points, normalise_json_value, normalize_json_bytes, InputFormat,
-    MetricSkipCounts,
-};
+pub use otlp2records::InputFormat;

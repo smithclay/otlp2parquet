@@ -2990,13 +2990,9 @@ name = "otlp2parquet-common"
 version = "0.6.0"
 dependencies = [
  "anyhow",
- "arrow",
- "chrono",
  "hex",
  "otlp2records",
- "parquet",
  "serde",
- "serde_json",
  "toml",
  "tracing",
 ]
@@ -3005,14 +3001,12 @@ dependencies = [
 name = "otlp2parquet-handlers"
 version = "0.6.0"
 dependencies = [
- "arrow",
  "bytes",
  "ordered-float 4.6.0",
  "otlp2parquet-batch",
  "otlp2parquet-common",
  "otlp2parquet-writer",
  "otlp2records",
- "serde_json",
  "tokio",
  "tracing",
 ]
@@ -3054,7 +3048,6 @@ version = "0.6.0"
 dependencies = [
  "anyhow",
  "arrow",
- "async-trait",
  "blake3",
  "bytes",
  "futures",

@@ -6,9 +6,10 @@ use thiserror::Error;
 ///
 /// Examples:
 /// - "lTkWygojZsXFtfv07Rlzw80moyduOwJcZJ63grtT" -> "lTkW...grtT"
-/// - "short" -> "s]***[t" (for secrets < 10 chars)
+/// - "short" -> "s***t" (for secrets < 10 chars)
 /// - "" -> "(empty)"
-pub fn redact_secret(secret: &str) -> String {
+#[allow(dead_code)] // Used for error messages, kept for future use
+fn redact_secret(secret: &str) -> String {
     if secret.is_empty() {
         return "(empty)".to_string();
     }
