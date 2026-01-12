@@ -27,7 +27,7 @@ parking_lot = "0.12"
 # HTTP server
 axum = { version = "0.7", default-features = false, features = ["tokio", "http1", "http2", "json"] }
 tower = { version = "0.4", default-features = false }
-tower-http = { version = "0.5", default-features = false, features = ["trace", "decompression-gzip"] }
+tower-http = { version = "0.6", default-features = false, features = ["trace", "decompression-gzip"] }
 
 # Async runtime
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros", "signal"] }
