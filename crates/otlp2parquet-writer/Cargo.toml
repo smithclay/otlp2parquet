@@ -10,7 +10,6 @@ repository.workspace = true
 [dependencies]
 otlp2parquet-common = { workspace = true }
 arrow = { workspace = true }
-blake3 = { workspace = true }
 anyhow = "1"
 thiserror = "2"
 tracing = "0.1"

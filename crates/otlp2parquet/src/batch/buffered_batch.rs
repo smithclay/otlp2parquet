@@ -6,45 +6,7 @@ use anyhow::{bail, Result};
 use arrow::array::RecordBatch;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::time::Duration;
-
-#[cfg(target_family = "wasm")]
-use js_sys::Date;
-
-#[derive(Clone, Copy, Debug)]
-#[cfg(not(target_family = "wasm"))]
-struct BatchInstant(std::time::Instant);
-
-#[cfg(not(target_family = "wasm"))]
-impl BatchInstant {
-    fn now() -> Self {
-        Self(std::time::Instant::now())
-    }
-
-    fn elapsed(&self) -> Duration {
-        self.0.elapsed()
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-#[cfg(target_family = "wasm")]
-struct BatchInstant {
-    start_ms: u64,
-}
-
-#[cfg(target_family = "wasm")]
-impl BatchInstant {
-    fn now() -> Self {
-        Self {
-            start_ms: Date::now() as u64,
-        }
-    }
-
-    fn elapsed(&self) -> Duration {
-        let now_ms = Date::now() as u64;
-        Duration::from_millis(now_ms.saturating_sub(self.start_ms))
-    }
-}
+use std::time::Instant;
 
 use super::{BatchConfig, BatchMetadata, CompletedBatch};
 
@@ -56,7 +18,7 @@ pub(crate) struct BufferedBatch<M: BatchMetadata> {
     total_bytes: usize, // Approximate size for flushing decisions
     first_timestamp: i64,
     service_name: Arc<str>,
-    created_at: BatchInstant,
+    created_at: Instant,
     _marker: PhantomData<M>,
 }
 
@@ -72,7 +34,7 @@ impl<M: BatchMetadata> BufferedBatch<M> {
                 i64::MAX
             },
             service_name: Arc::clone(metadata.service_name()),
-            created_at: BatchInstant::now(),
+            created_at: Instant::now(),
             _marker: PhantomData,
         }
     }

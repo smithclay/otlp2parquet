@@ -15,11 +15,14 @@ name = "otlp2parquet"
 path = "src/main.rs"
 
 [dependencies]
-otlp2parquet-batch = { workspace = true }
 otlp2parquet-common = { workspace = true }
 otlp2parquet-handlers = { path = "../otlp2parquet-handlers" }
 otlp2parquet-writer = { workspace = true }
 otlp2records = { workspace = true }
+
+# Batching (server-only)
+arrow = { workspace = true }
+parking_lot = "0.12"
 
 # HTTP server
 axum = { version = "0.7", default-features = false, features = ["tokio", "http1", "http2", "json"] }

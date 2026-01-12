@@ -9,15 +9,16 @@ use axum::{
     Json,
 };
 use metrics::{counter, histogram};
-use otlp2parquet_batch::CompletedBatch;
 use otlp2parquet_common::{InputFormat, MetricType, SignalType};
+
+use crate::batch::CompletedBatch;
 use otlp2parquet_handlers::{
     decode_logs_partitioned, decode_metrics_partitioned, decode_traces_partitioned,
     report_skipped_metrics, ServiceGroupedBatches,
 };
 use serde_json::json;
 use std::time::Instant;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::{AppError, AppState};
 
@@ -30,7 +31,7 @@ pub(crate) async fn handle_logs(
     handle_signal(SignalType::Logs, &state, headers, body).await
 }
 
-/// POST /v1/traces - OTLP trace ingestion endpoint (stub)
+/// POST /v1/traces - OTLP trace ingestion endpoint
 pub(crate) async fn handle_traces(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -55,8 +56,6 @@ pub(crate) async fn health_check() -> impl IntoResponse {
 
 /// GET /ready - Readiness check
 pub(crate) async fn ready_check(State(_state): State<AppState>) -> impl IntoResponse {
-    // Writer is always ready after initialization
-    // TODO: Add actual health checks if needed (e.g., test write to storage)
     (StatusCode::OK, Json(json!({"status": "ready"})))
 }
 
@@ -87,16 +86,21 @@ async fn handle_signal(
     }
 
     match signal {
-        SignalType::Logs => process_logs(format, body).await,
+        SignalType::Logs => process_logs(state, format, body).await,
         SignalType::Traces => process_traces(format, body).await,
         SignalType::Metrics => process_metrics(format, body).await,
     }
 }
 
-async fn process_logs(format: InputFormat, body: axum::body::Bytes) -> Result<Response, AppError> {
+async fn process_logs(
+    state: &AppState,
+    format: InputFormat,
+    body: axum::body::Bytes,
+) -> Result<Response, AppError> {
     let start = Instant::now();
+    let body_len = body.len();
     counter!("otlp.ingest.requests", 1);
-    histogram!("otlp.ingest.bytes", body.len() as f64);
+    histogram!("otlp.ingest.bytes", body_len as f64);
 
     let parse_start = Instant::now();
     let grouped = decode_logs_partitioned(&body, format).map_err(|e| {
@@ -109,6 +113,99 @@ async fn process_logs(format: InputFormat, body: axum::body::Bytes) -> Result<Re
         "parse"
     );
 
+    // Use batching if enabled, otherwise write directly
+    if let Some(ref batcher) = state.batcher {
+        process_logs_batched(batcher, grouped, body_len, start).await
+    } else {
+        process_logs_direct(grouped, start).await
+    }
+}
+
+/// Process logs with batching - accumulate in memory, flush when thresholds hit
+async fn process_logs_batched(
+    batcher: &crate::batch::BatchManager,
+    grouped: otlp2parquet_handlers::ServiceGroupedBatches,
+    body_len: usize,
+    start: Instant,
+) -> Result<Response, AppError> {
+    let mut total_records: usize = 0;
+    let mut buffered_records: usize = 0;
+    let mut flushed_paths = Vec::new();
+
+    // Approximate bytes per batch (distribute body size across batches)
+    let batch_count = grouped.batches.len().max(1);
+    let approx_bytes_per_batch = body_len / batch_count;
+
+    let write_start = Instant::now();
+    for pb in grouped.batches {
+        if pb.batch.num_rows() == 0 {
+            continue;
+        }
+
+        total_records += pb.record_count;
+        counter!("otlp.ingest.records", pb.record_count as u64);
+
+        // Ingest into batcher - may return completed batches if thresholds hit
+        let (completed, _metadata) = batcher
+            .ingest(&pb, approx_bytes_per_batch)
+            .map_err(|e| AppError::internal(anyhow::anyhow!("Batch ingestion failed: {}", e)))?;
+
+        if completed.is_empty() {
+            // Records buffered, not yet flushed
+            buffered_records += pb.record_count;
+            debug!(
+                service = %pb.service_name,
+                records = pb.record_count,
+                "Buffered logs"
+            );
+        } else {
+            // Thresholds hit - flush completed batches
+            for batch in completed {
+                let paths = persist_log_batch(&batch).await.map_err(|e| {
+                    AppError::internal(anyhow::anyhow!("Failed to flush batch: {}", e))
+                })?;
+
+                for path in &paths {
+                    info!(
+                        path = %path,
+                        service = %batch.metadata.service_name,
+                        rows = batch.metadata.record_count,
+                        "Flushed batch (threshold)"
+                    );
+                }
+                flushed_paths.extend(paths);
+            }
+        }
+    }
+
+    debug!(
+        elapsed_us = write_start.elapsed().as_micros() as u64,
+        signal = "logs",
+        "batch_ingest"
+    );
+
+    histogram!(
+        "otlp.ingest.latency_ms",
+        start.elapsed().as_secs_f64() * 1000.0
+    );
+
+    let response = Json(json!({
+        "status": "ok",
+        "mode": "batched",
+        "records_processed": total_records,
+        "records_buffered": buffered_records,
+        "flush_count": flushed_paths.len(),
+        "partitions": flushed_paths,
+    }));
+
+    Ok((StatusCode::OK, response).into_response())
+}
+
+/// Process logs directly - write each batch immediately (no batching)
+async fn process_logs_direct(
+    grouped: otlp2parquet_handlers::ServiceGroupedBatches,
+    start: Instant,
+) -> Result<Response, AppError> {
     let mut uploaded_paths = Vec::new();
     let mut total_records: usize = 0;
 
@@ -154,6 +251,7 @@ async fn process_logs(format: InputFormat, body: axum::body::Bytes) -> Result<Re
 
     let response = Json(json!({
         "status": "ok",
+        "mode": "direct",
         "records_processed": total_records,
         "flush_count": uploaded_paths.len(),
         "partitions": uploaded_paths,
@@ -346,7 +444,7 @@ async fn write_metric_batches(
     match metric_type {
         MetricType::Gauge | MetricType::Sum => {}
         _ => {
-            tracing::warn!(
+            warn!(
                 metric_type = ?metric_type,
                 count = grouped.total_records,
                 "Unsupported metric type - data not persisted"

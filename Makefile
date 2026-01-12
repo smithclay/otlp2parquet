@@ -322,7 +322,7 @@ publish-dry-run: ## Dry-run publish all crates to crates.io (in dependency order
 .PHONY: publish
 publish: ## Publish all crates to crates.io (in dependency order)
 	@echo "==> Publishing workspace crates to crates.io..."
-	@echo "Order: otlp2parquet-proto -> otlp2parquet-common -> otlp2parquet-batch -> otlp2parquet-writer -> otlp2parquet-handlers -> otlp2parquet"
+	@echo "Order: otlp2parquet-proto -> otlp2parquet-common -> otlp2parquet-writer -> otlp2parquet-handlers -> otlp2parquet"
 	@if ! command -v cargo-ws >/dev/null 2>&1; then \
 		echo "Installing cargo-workspaces..."; \
 		cargo install cargo-workspaces; \

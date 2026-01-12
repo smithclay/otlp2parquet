@@ -14,21 +14,16 @@ Ingest OTLP logs/metrics/traces over HTTP (protobuf/JSON/JSONL), convert to Arro
 ## Workspace Map
 - `otlp2parquet-proto`: Generated OTLP protobuf definitions (prost).
 - `otlp2parquet-common`: Shared types, configuration, and re-exports from otlp2records.
-- `otlp2parquet-batch`: In-memory batch accumulation and Arrow IPC utilities.
 - `otlp2parquet-writer`: Parquet writing and storage initialization.
 - `otlp2parquet-handlers`: Shared HTTP/signal processing (parse → convert → write) reused by all platforms.
-- `otlp2parquet`: Main CLI/Server (Axum HTTP, multi-backend storage).
-- `otlp2parquet-lambda`: AWS Lambda runtime adapter (S3).
-- `otlp2parquet-cloudflare`: Cloudflare Workers WASM adapter (R2).
+- `otlp2parquet`: Main CLI/Server (Axum HTTP, multi-backend storage, in-memory batching).
+- `otlp2parquet-lambda`: AWS Lambda runtime adapter (S3, writes per-request).
+- `otlp2parquet-cloudflare`: Cloudflare Workers WASM adapter (R2, writes per-request).
 
 ## Signals & Partitioning
 - **Logs**: single schema; `logs/{service}/year=.../month=.../day=.../hour=.../{timestamp}-{uuid}.parquet`
 - **Metrics**: five schemas; `metrics/{type}/{service}/year=.../month=.../day=.../hour=.../{timestamp}-{uuid}.parquet`
 - **Traces**: single schema; `traces/{service}/year=.../month=.../day=.../hour=.../{timestamp}-{uuid}.parquet`
-
-## Cloudflare Workers Batching
-- **Durable Objects (DO)**: Optional batching via `OtlpBatcher` DO accumulates records in memory, flushes on row count (`OTLP2PARQUET_BATCH_MAX_ROWS`) or age (`OTLP2PARQUET_BATCH_MAX_AGE_SECS`) thresholds.
-- **Wrangler config**: Template at `crates/otlp2parquet/templates/wrangler.toml` uses conditional blocks (`{{#BATCHING}}...{{/BATCHING}}`) for DO bindings and migrations.
 
 ## Coding Standards
 - Use `tracing::*` macros only; no `println!/eprintln!` in production paths.

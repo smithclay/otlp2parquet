@@ -1,10 +1,9 @@
 //! Configuration loading for Cloudflare Workers.
 //!
-//! This module provides the environment variable accessor and storage initialization
-//! logic used by both the main Worker and Durable Objects.
+//! This module provides the environment variable accessor for Cloudflare Workers.
 
-use otlp2parquet_common::config::{EnvSource, Platform, RuntimeConfig, ENV_PREFIX};
-use worker::{Env, Result};
+use otlp2parquet_common::config::{EnvSource, ENV_PREFIX};
+use worker::Env;
 
 /// Environment source for Cloudflare Workers.
 ///
@@ -73,31 +72,4 @@ impl EnvSource for WorkerEnvSource<'_> {
         tracing::warn!(key = %key, "EnvSource (raw): not found anywhere");
         None
     }
-}
-
-/// Load config and initialize storage for the Durable Object context.
-///
-/// This must be called before any write operations since DOs run in their own isolate.
-/// Returns the RuntimeConfig for use in platform-specific configuration needs.
-///
-/// # Errors
-///
-/// Returns an error if configuration loading or storage initialization fails.
-pub(crate) fn ensure_storage_initialized(env: &Env) -> Result<RuntimeConfig> {
-    let provider = WorkerEnvSource { env };
-    let inline = provider.get("CONFIG_CONTENT");
-
-    let config = RuntimeConfig::load_for_platform_with_env(
-        Platform::CloudflareWorkers,
-        inline.as_deref(),
-        &provider,
-    )
-    .map_err(|e| worker::Error::RustError(format!("DO config error: {}", e)))?;
-
-    tracing::info!("Config loaded in DO context");
-
-    otlp2parquet_writer::initialize_storage(&config)
-        .map_err(|e| worker::Error::RustError(format!("DO storage init error: {}", e)))?;
-
-    Ok(config)
 }

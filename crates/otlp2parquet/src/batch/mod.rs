@@ -1,8 +1,11 @@
-// otlp2parquet-batch - Optimization layer for batching
-//
-// Accumulates Arrow batches in memory and merges them into larger Arrow batches.
-// This reduces the number of storage writes and improves compression efficiency.
-//
+//! In-memory batch accumulation for server mode.
+//!
+//! Accumulates Arrow batches in memory and merges them into larger Arrow batches.
+//! This reduces the number of storage writes and improves compression efficiency.
+//!
+//! Note: This module provides the batching infrastructure for when `batch.enabled=true`
+//! in the server config. Currently the handlers write directly per-request, but this
+//! infrastructure is available for future use.
 
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -250,27 +253,6 @@ impl<P: SignalProcessor> BatchManager<P> {
     }
 }
 
-/// Lightweight helper when batching is disabled entirely.
-///
-/// Converts each OTLP request directly to an Arrow batch without accumulation.
-#[derive(Debug, Clone)]
-pub struct PassthroughBatcher<P: SignalProcessor = LogSignalProcessor>(PhantomData<P>);
-
-impl<P: SignalProcessor> Default for PassthroughBatcher<P> {
-    fn default() -> Self {
-        Self(PhantomData)
-    }
-}
-
-impl<P: SignalProcessor> PassthroughBatcher<P> {
-    pub fn ingest(&self, request: &P::Request) -> Result<CompletedBatch<P::Metadata>> {
-        let capacity_hint = P::estimate_row_count(request);
-        let (batches, metadata) = P::convert_request(request, capacity_hint)?;
-
-        Ok(CompletedBatch { batches, metadata })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -311,20 +293,6 @@ mod tests {
             min_timestamp_micros: timestamps[0] * 1000, // Convert ms to us
             record_count,
         }
-    }
-
-    #[test]
-    fn test_passthrough_batcher() {
-        let batcher = PassthroughBatcher::<LogSignalProcessor>::default();
-        let request = create_test_batch("test-service", 10);
-
-        let result = batcher.ingest(&request);
-        assert!(result.is_ok());
-
-        let completed = result.unwrap();
-        assert_eq!(completed.batches[0].num_rows(), 10);
-        assert_eq!(completed.metadata.service_name.as_ref(), "test-service");
-        assert_eq!(completed.metadata.record_count, 10);
     }
 
     #[test]

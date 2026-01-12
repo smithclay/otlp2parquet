@@ -75,18 +75,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
-name = "arrayref"
-version = "0.3.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
-
-[[package]]
-name = "arrayvec"
-version = "0.7.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
-
-[[package]]
 name = "arrow"
 version = "54.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -948,20 +936,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
 
 [[package]]
-name = "blake3"
-version = "1.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2468ef7d57b3fb7e16b576e8377cdbde2320c60e1491e961d11da40fc4f02a2d"
-dependencies = [
- "arrayref",
- "arrayvec",
- "cc",
- "cfg-if",
- "constant_time_eq",
- "cpufeatures",
-]
-
-[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1219,12 +1193,6 @@ dependencies = [
  "once_cell",
  "tiny-keccak",
 ]
-
-[[package]]
-name = "constant_time_eq"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
 name = "core-foundation"
@@ -2908,6 +2876,7 @@ name = "otlp2parquet"
 version = "0.6.0"
 dependencies = [
  "anyhow",
+ "arrow",
  "async-trait",
  "aws-config",
  "aws-credential-types",
@@ -2922,12 +2891,12 @@ dependencies = [
  "dialoguer",
  "flate2",
  "metrics",
- "otlp2parquet-batch",
  "otlp2parquet-common",
  "otlp2parquet-handlers",
  "otlp2parquet-proto",
  "otlp2parquet-writer",
  "otlp2records",
+ "parking_lot 0.12.5",
  "paste",
  "prost",
  "rand 0.8.5",
@@ -2944,35 +2913,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "otlp2parquet-batch"
-version = "0.6.0"
-dependencies = [
- "anyhow",
- "arrow",
- "bytes",
- "js-sys",
- "otlp2records",
- "parking_lot 0.12.5",
-]
-
-[[package]]
 name = "otlp2parquet-cloudflare"
 version = "0.6.0"
 dependencies = [
- "arrow",
- "async-trait",
  "base64 0.22.1",
- "bytes",
  "flate2",
- "futures",
  "getrandom 0.3.4",
- "indexmap 2.12.1",
  "once_cell",
- "otlp2parquet-batch",
  "otlp2parquet-common",
  "otlp2parquet-handlers",
  "otlp2parquet-writer",
- "otlp2records",
  "serde",
  "serde_json",
  "subtle",
@@ -3003,7 +2953,6 @@ version = "0.6.0"
 dependencies = [
  "bytes",
  "ordered-float 4.6.0",
- "otlp2parquet-batch",
  "otlp2parquet-common",
  "otlp2parquet-writer",
  "otlp2records",
@@ -3048,7 +2997,6 @@ version = "0.6.0"
 dependencies = [
  "anyhow",
  "arrow",
- "blake3",
  "bytes",
  "futures",
  "getrandom 0.2.16",

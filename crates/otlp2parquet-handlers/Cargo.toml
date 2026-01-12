@@ -8,7 +8,6 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-otlp2parquet-batch = { workspace = true }
 otlp2parquet-common = { workspace = true }
 otlp2records = { workspace = true }
 otlp2parquet-writer = { path = "../otlp2parquet-writer", default-features = false }

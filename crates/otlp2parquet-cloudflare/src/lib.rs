@@ -7,19 +7,12 @@
 //! Entry point is #[event(fetch)] macro, not main().
 
 mod auth;
-#[allow(clippy::module_inception)]
-mod r#do;
 mod do_config;
 mod errors;
 mod handlers;
-mod ingest;
 mod request;
 mod tracing_context;
 
-// Re-export Durable Object classes at crate root for worker-build
-pub use otlp2parquet_common::{MetricType, SignalKey};
-pub use r#do::OtlpBatcherLegacy; // Migration stub for renamed old class
-pub use r#do::OtlpBatcherV2;
 pub use tracing_context::TraceContext;
 
 use tracing_subscriber::fmt::format::Pretty;
@@ -27,30 +20,6 @@ use tracing_subscriber::fmt::time::UtcTime;
 use tracing_subscriber::prelude::*;
 use tracing_web::{performance_layer, MakeConsoleWriter};
 use worker::*;
-
-/// Durable Object ID separator between signal key and service name.
-pub(crate) const DO_ID_SEPARATOR: char = '|';
-
-/// Version suffix for DO IDs to force fresh instances when needed.
-/// Increment this to invalidate all existing DO instances and create new ones.
-/// v3: Fixed set_alarm to use offset instead of absolute timestamp
-const DO_ID_VERSION: &str = "v3";
-
-/// Create DO ID name from signal key and service name.
-/// Format: "{signal_key}|{service_name}|{version}"
-/// Example: "logs|my-service|v2" or "metrics:gauge|my-service|v2"
-pub(crate) fn make_do_id(signal_key: &SignalKey, service_name: &str) -> String {
-    format!(
-        "{}{}{}{}{}",
-        signal_key, DO_ID_SEPARATOR, service_name, DO_ID_SEPARATOR, DO_ID_VERSION
-    )
-}
-
-/// Parse DO ID into (signal_key_str, service_name).
-/// Returns the raw signal string which can be parsed with SignalKey::from_str().
-pub(crate) fn parse_do_id(id: &str) -> Option<(&str, &str)> {
-    id.split_once(DO_ID_SEPARATOR)
-}
 
 /// Initialize tracing subscriber for Cloudflare Workers.
 /// Uses tracing-web to output structured JSON logs to the Workers console.
