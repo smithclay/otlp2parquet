@@ -17,6 +17,7 @@ path = "src/main.rs"
 [dependencies]
 otlp2parquet-batch = { workspace = true }
 otlp2parquet-common = { workspace = true }
+otlp2parquet-handlers = { path = "../otlp2parquet-handlers" }
 otlp2parquet-writer = { workspace = true }
 otlp2records = { workspace = true }
 vrl = { version = "0.29", default-features = false, features = ["value"] }

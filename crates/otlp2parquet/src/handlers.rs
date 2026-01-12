@@ -11,20 +11,18 @@ use axum::{
 };
 use metrics::{counter, histogram};
 use otlp2parquet_batch::{CompletedBatch, LogMetadata};
-use otlp2parquet_common::{
-    count_skipped_metric_data_points, normalise_json_value, normalize_json_bytes, InputFormat,
-    MetricType, SignalType,
+use otlp2parquet_common::{InputFormat, MetricType, SignalType};
+use otlp2parquet_handlers::{
+    first_timestamp_micros, group_values_by_service, report_skipped_metrics,
 };
 use otlp2records::{
-    apply_log_transform, apply_metric_transform, apply_trace_transform, decode_logs,
-    decode_metrics, decode_traces, gauge_schema, sum_schema, traces_schema, DecodeMetricsResult,
-    InputFormat as RecordsFormat, SkippedMetrics,
+    apply_log_transform, apply_metric_transform, apply_trace_transform, gauge_schema, sum_schema,
+    traces_schema, DecodeMetricsResult,
 };
 use serde_json::json;
-use std::collections::HashMap;
 use std::time::Instant;
 use tracing::{debug, info};
-use vrl::value::{KeyString, Value};
+use vrl::value::Value;
 
 use crate::{AppError, AppState};
 
@@ -349,8 +347,8 @@ async fn process_metrics(
     let convert_start = Instant::now();
     let mut uploaded_paths = Vec::new();
 
-    uploaded_paths.extend(write_metric_batches(MetricType::Gauge, &metric_values.gauge).await?);
-    uploaded_paths.extend(write_metric_batches(MetricType::Sum, &metric_values.sum).await?);
+    uploaded_paths.extend(write_metric_batches(MetricType::Gauge, metric_values.gauge).await?);
+    uploaded_paths.extend(write_metric_batches(MetricType::Sum, metric_values.sum).await?);
 
     debug!(
         elapsed_us = convert_start.elapsed().as_micros() as u64,
@@ -424,151 +422,28 @@ pub(crate) async fn persist_log_batch(
     Ok(uploaded_paths)
 }
 
+// =============================================================================
+// Thin wrappers that convert codec String errors to anyhow::Error
+// =============================================================================
+
 fn decode_logs_values(body: &[u8], format: InputFormat) -> anyhow::Result<Vec<Value>> {
-    match format {
-        InputFormat::Jsonl => {
-            decode_jsonl_values(body, |line| decode_logs(line, RecordsFormat::Json))
-                .map_err(|e| anyhow::anyhow!("Failed to parse OTLP logs request: {}", e))
-        }
-        InputFormat::Json => {
-            let normalized = normalize_json_bytes(body)?;
-            decode_logs(&normalized, RecordsFormat::Json)
-                .map_err(|e| anyhow::anyhow!("Failed to parse OTLP logs request: {}", e))
-        }
-        InputFormat::Protobuf => decode_logs(body, to_records_format(format))
-            .map_err(|e| anyhow::anyhow!("Failed to parse OTLP logs request: {}", e)),
-    }
+    otlp2parquet_handlers::decode_logs_values(body, format)
+        .map_err(|e| anyhow::anyhow!("Failed to parse OTLP logs request: {}", e))
 }
 
 fn decode_traces_values(body: &[u8], format: InputFormat) -> anyhow::Result<Vec<Value>> {
-    match format {
-        InputFormat::Jsonl => {
-            decode_jsonl_values(body, |line| decode_traces(line, RecordsFormat::Json))
-                .map_err(|e| anyhow::anyhow!("Failed to parse OTLP traces request: {}", e))
-        }
-        InputFormat::Json => {
-            let normalized = normalize_json_bytes(body)?;
-            decode_traces(&normalized, RecordsFormat::Json)
-                .map_err(|e| anyhow::anyhow!("Failed to parse OTLP traces request: {}", e))
-        }
-        InputFormat::Protobuf => decode_traces(body, to_records_format(format))
-            .map_err(|e| anyhow::anyhow!("Failed to parse OTLP traces request: {}", e)),
-    }
+    otlp2parquet_handlers::decode_traces_values(body, format)
+        .map_err(|e| anyhow::anyhow!("Failed to parse OTLP traces request: {}", e))
 }
 
 fn decode_metrics_values(body: &[u8], format: InputFormat) -> anyhow::Result<DecodeMetricsResult> {
-    match format {
-        InputFormat::Jsonl => decode_jsonl_metrics(body),
-        InputFormat::Json => decode_metrics_json(body),
-        InputFormat::Protobuf => decode_metrics(body, to_records_format(format))
-            .map_err(|e| anyhow::anyhow!("Failed to parse OTLP metrics request: {}", e)),
-    }
-}
-
-fn decode_jsonl_values<F>(body: &[u8], mut decode: F) -> Result<Vec<Value>, String>
-where
-    F: FnMut(&[u8]) -> Result<Vec<Value>, otlp2records::decode::DecodeError>,
-{
-    let text = std::str::from_utf8(body).map_err(|e| e.to_string())?;
-    let mut out = Vec::new();
-    let mut saw_line = false;
-
-    for (line_num, line) in text.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        saw_line = true;
-        let normalized = normalize_json_bytes(trimmed.as_bytes()).map_err(|e| e.to_string())?;
-        let values = decode(&normalized).map_err(|e| format!("line {}: {}", line_num + 1, e))?;
-        out.extend(values);
-    }
-
-    if !saw_line {
-        return Err("jsonl payload contained no records".to_string());
-    }
-
-    Ok(out)
-}
-
-fn decode_jsonl_metrics(body: &[u8]) -> anyhow::Result<DecodeMetricsResult> {
-    let text = std::str::from_utf8(body)
-        .map_err(|e| anyhow::anyhow!("Failed to parse OTLP metrics request: {}", e))?;
-    let mut values = Vec::new();
-    let mut skipped = SkippedMetrics::default();
-    let mut saw_line = false;
-
-    for (line_num, line) in text.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        saw_line = true;
-        let mut value: serde_json::Value =
-            serde_json::from_slice(trimmed.as_bytes()).map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to parse OTLP metrics request (line {}): {}",
-                    line_num + 1,
-                    e
-                )
-            })?;
-        let counts = count_skipped_metric_data_points(&value);
-        normalise_json_value(&mut value, None).map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to parse OTLP metrics request (line {}): {}",
-                line_num + 1,
-                e
-            )
-        })?;
-        let normalized = serde_json::to_vec(&value).map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to parse OTLP metrics request (line {}): {}",
-                line_num + 1,
-                e
-            )
-        })?;
-        let mut result = decode_metrics(&normalized, RecordsFormat::Json).map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to parse OTLP metrics request (line {}): {}",
-                line_num + 1,
-                e
-            )
-        })?;
-        result.skipped.histograms += counts.histograms;
-        result.skipped.exponential_histograms += counts.exponential_histograms;
-        result.skipped.summaries += counts.summaries;
-        values.extend(result.values);
-        merge_skipped(&mut skipped, &result.skipped);
-    }
-
-    if !saw_line {
-        return Err(anyhow::anyhow!(
-            "Failed to parse OTLP metrics request: jsonl payload contained no records"
-        ));
-    }
-
-    Ok(DecodeMetricsResult { values, skipped })
-}
-
-fn decode_metrics_json(body: &[u8]) -> anyhow::Result<DecodeMetricsResult> {
-    let mut value: serde_json::Value = serde_json::from_slice(body)
-        .map_err(|e| anyhow::anyhow!("Failed to parse OTLP metrics request: {}", e))?;
-    let counts = count_skipped_metric_data_points(&value);
-    normalise_json_value(&mut value, None)
-        .map_err(|e| anyhow::anyhow!("Failed to parse OTLP metrics request: {}", e))?;
-    let normalized = serde_json::to_vec(&value)
-        .map_err(|e| anyhow::anyhow!("Failed to parse OTLP metrics request: {}", e))?;
-    let mut result = decode_metrics(&normalized, RecordsFormat::Json)
-        .map_err(|e| anyhow::anyhow!("Failed to parse OTLP metrics request: {}", e))?;
-    result.skipped.histograms += counts.histograms;
-    result.skipped.exponential_histograms += counts.exponential_histograms;
-    result.skipped.summaries += counts.summaries;
-    Ok(result)
+    otlp2parquet_handlers::decode_metrics_values(body, format)
+        .map_err(|e| anyhow::anyhow!("Failed to parse OTLP metrics request: {}", e))
 }
 
 async fn write_metric_batches(
     metric_type: MetricType,
-    values: &[Value],
+    values: Vec<Value>,
 ) -> Result<Vec<String>, AppError> {
     if values.is_empty() {
         return Ok(Vec::new());
@@ -577,12 +452,19 @@ async fn write_metric_batches(
     let schema = match metric_type {
         MetricType::Gauge => gauge_schema(),
         MetricType::Sum => sum_schema(),
-        _ => return Ok(Vec::new()),
+        _ => {
+            tracing::warn!(
+                metric_type = ?metric_type,
+                count = values.len(),
+                "Unsupported metric type - data not persisted"
+            );
+            return Ok(Vec::new());
+        }
     };
 
     let mut paths = Vec::new();
 
-    for (service_name, subset) in group_values_by_service(values.to_vec()) {
+    for (service_name, subset) in group_values_by_service(values) {
         let batch = otlp2records::values_to_arrow(&subset, &schema).map_err(|e| {
             AppError::bad_request(anyhow::anyhow!(
                 "Failed to convert OTLP metrics to Arrow: {}",
@@ -619,98 +501,6 @@ async fn write_metric_batches(
     }
 
     Ok(paths)
-}
-
-fn merge_skipped(target: &mut SkippedMetrics, other: &SkippedMetrics) {
-    target.histograms += other.histograms;
-    target.exponential_histograms += other.exponential_histograms;
-    target.summaries += other.summaries;
-    target.nan_values += other.nan_values;
-    target.infinity_values += other.infinity_values;
-    target.missing_values += other.missing_values;
-}
-
-fn report_skipped_metrics(skipped: &SkippedMetrics) {
-    if skipped.has_skipped() {
-        tracing::debug!(
-            histograms = skipped.histograms,
-            exponential_histograms = skipped.exponential_histograms,
-            summaries = skipped.summaries,
-            nan_values = skipped.nan_values,
-            infinity_values = skipped.infinity_values,
-            missing_values = skipped.missing_values,
-            total = skipped.total(),
-            "Skipped unsupported or invalid metric data points"
-        );
-    }
-}
-
-fn to_records_format(format: InputFormat) -> RecordsFormat {
-    match format {
-        InputFormat::Protobuf => RecordsFormat::Protobuf,
-        InputFormat::Json => RecordsFormat::Json,
-        InputFormat::Jsonl => RecordsFormat::Json,
-    }
-}
-
-fn group_values_by_service(values: Vec<Value>) -> Vec<(String, Vec<Value>)> {
-    let mut order = Vec::new();
-    let mut index: HashMap<String, usize> = HashMap::new();
-    let mut groups: Vec<Vec<Value>> = Vec::new();
-
-    for value in values {
-        let service = extract_service_name(&value);
-        let idx = if let Some(idx) = index.get(&service) {
-            *idx
-        } else {
-            let idx = groups.len();
-            index.insert(service.clone(), idx);
-            order.push(service);
-            groups.push(Vec::new());
-            idx
-        };
-        groups[idx].push(value);
-    }
-
-    order.into_iter().zip(groups).collect()
-}
-
-fn extract_service_name(value: &Value) -> String {
-    let key: KeyString = "service_name".into();
-    if let Value::Object(map) = value {
-        if let Some(Value::Bytes(bytes)) = map.get(&key) {
-            if !bytes.is_empty() {
-                return String::from_utf8_lossy(bytes).into_owned();
-            }
-        }
-    }
-    "unknown".to_string()
-}
-
-fn first_timestamp_micros(values: &[Value]) -> i64 {
-    let key: KeyString = "timestamp".into();
-    let mut min: Option<i64> = None;
-
-    for value in values {
-        if let Value::Object(map) = value {
-            if let Some(ts) = map.get(&key) {
-                if let Some(millis) = value_to_i64(ts) {
-                    let micros = millis.saturating_mul(1_000);
-                    min = Some(min.map_or(micros, |current| current.min(micros)));
-                }
-            }
-        }
-    }
-
-    min.unwrap_or(0)
-}
-
-fn value_to_i64(value: &Value) -> Option<i64> {
-    match value {
-        Value::Integer(i) => Some(*i),
-        Value::Float(f) => Some(f.into_inner() as i64),
-        _ => None,
-    }
 }
 
 fn estimate_subset_bytes(total_bytes: usize, subset_len: usize, total_len: usize) -> usize {

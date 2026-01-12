@@ -1,6 +1,5 @@
 //! OTLP JSON normalization utilities.
 
-pub mod field_names;
 pub mod json_normalizer;
 
 pub use json_normalizer::{

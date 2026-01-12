@@ -19,3 +19,4 @@ tracing = { workspace = true }
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }
 bytes = { version = "1", default-features = false }
+ordered-float = "4"

@@ -2924,6 +2924,7 @@ dependencies = [
  "metrics",
  "otlp2parquet-batch",
  "otlp2parquet-common",
+ "otlp2parquet-handlers",
  "otlp2parquet-proto",
  "otlp2parquet-writer",
  "otlp2records",
@@ -3008,6 +3009,7 @@ name = "otlp2parquet-handlers"
 version = "0.6.0"
 dependencies = [
  "bytes",
+ "ordered-float 4.6.0",
  "otlp2parquet-batch",
  "otlp2parquet-common",
  "otlp2parquet-writer",
@@ -3079,7 +3081,8 @@ dependencies = [
 [[package]]
 name = "otlp2records"
 version = "0.1.0"
-source = "git+https://github.com/smithclay/otlp2records#755f736647705fcc52bde96d5e058ad4da52f99e"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dce27e6355e887e5b24ada739fbe450463d7c646f19bd41dc4b282615243fdb5"
 dependencies = [
  "arrow",
  "base64 0.21.7",
