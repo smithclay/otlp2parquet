@@ -330,36 +330,8 @@ publish: ## Publish all crates to crates.io (in dependency order)
 	@cargo ws publish
 
 #
-# Performance Profiling & Benchmarking Commands
+# Performance Profiling Commands
 #
-
-.PHONY: bench
-bench: ## Run all benchmarks with Criterion
-	@echo "==> Running benchmarks..."
-	@cargo bench
-	@echo "==> Benchmark results: target/criterion/report/index.html"
-
-.PHONY: bench-baseline
-bench-baseline: ## Save benchmark baseline for comparison
-	@echo "==> Saving benchmark baseline..."
-	@cargo bench -- --save-baseline base
-	@echo "==> Baseline saved as 'base'"
-
-.PHONY: bench-compare
-bench-compare: ## Run benchmarks and compare against baseline
-	@echo "==> Running benchmarks and comparing to baseline..."
-	@cargo bench -- --baseline base
-	@echo "==> Comparison results: target/criterion/report/index.html"
-
-.PHONY: flamegraph
-flamegraph: ## Generate CPU flamegraph for e2e_pipeline benchmark
-	@echo "==> Generating flamegraph..."
-	@if ! command -v cargo-flamegraph >/dev/null 2>&1; then \
-		echo "Installing cargo-flamegraph..."; \
-		cargo install flamegraph; \
-	fi
-	@cargo flamegraph --bench e2e_pipeline -- --bench
-	@echo "==> Flamegraph saved to: flamegraph.svg"
 
 .PHONY: bloat
 bloat: ## Analyze binary size with cargo-bloat
@@ -382,11 +354,10 @@ llvm-lines: ## Analyze LLVM IR line counts with cargo-llvm-lines
 	@echo "==> Results saved to: llvm_lines.txt"
 
 .PHONY: profile-all
-profile-all: bloat llvm-lines flamegraph ## Run all profiling tools
+profile-all: bloat llvm-lines ## Run all profiling tools
 	@echo "==> All profiling complete!"
 	@echo "    - Binary size: bloat.txt"
 	@echo "    - LLVM lines: llvm_lines.txt"
-	@echo "    - CPU profile: flamegraph.svg"
 
 #
 # Smoke Tests (Unified Framework)

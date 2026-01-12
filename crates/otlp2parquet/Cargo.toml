@@ -52,11 +52,6 @@ aws-sdk-s3tables = { version = "1.47", default-features = false, features = ["ru
 
 [dev-dependencies]
 tempfile = "3.13"
-# Benchmarking infrastructure
-criterion = { version = "0.5", default-features = false, features = ["html_reports"] }
-otlp2parquet-proto = { path = "../otlp2parquet-proto" }
-flate2 = "1.0"
-prost = { workspace = true }
 # Docker e2e tests
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 aws-config = { version = "1.8", default-features = false, features = ["rustls", "behavior-version-latest", "rt-tokio"] }
@@ -76,11 +71,3 @@ docker-tests = []
 smoke-server = []
 smoke-lambda = ["dep:aws-sdk-cloudformation", "dep:aws-sdk-cloudwatchlogs", "dep:aws-sdk-s3tables"]
 smoke-workers = []
-
-[[bench]]
-name = "decode_otlp"
-harness = false
-
-[[bench]]
-name = "transform_arrow"
-harness = false

@@ -3,7 +3,6 @@ members = [
     "crates/otlp2parquet",
     "crates/otlp2parquet-common",
     "crates/otlp2parquet-writer",
-    "crates/otlp2parquet-proto",
     "crates/otlp2parquet-cloudflare",
     "crates/otlp2parquet-lambda",
     "crates/otlp2parquet-handlers",
@@ -40,7 +39,6 @@ opt-level = 3
 
 [workspace.dependencies]
 # Internal crates - all use workspace version
-otlp2parquet-proto = { version = "0.7.0", path = "crates/otlp2parquet-proto" }
 otlp2parquet-common = { version = "0.7.0", path = "crates/otlp2parquet-common" }
 otlp2parquet-writer = { version = "0.7.0", path = "crates/otlp2parquet-writer" }
 otlp2records = { version = "0.1.1", default-features = false }
