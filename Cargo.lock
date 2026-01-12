@@ -2991,9 +2991,9 @@ version = "0.6.0"
 dependencies = [
  "anyhow",
  "arrow",
- "base64 0.22.1",
  "chrono",
  "hex",
+ "otlp2records",
  "parquet",
  "serde",
  "serde_json",
@@ -3077,7 +3077,7 @@ dependencies = [
 [[package]]
 name = "otlp2records"
 version = "0.1.0"
-source = "git+https://github.com/smithclay/otlp2records?rev=f227949e15f6471a84f74d438caa299b655fce95#f227949e15f6471a84f74d438caa299b655fce95"
+source = "git+https://github.com/smithclay/otlp2records?rev=66e88fdc006acb63fe57b600f2ff25a3c841dea7#66e88fdc006acb63fe57b600f2ff25a3c841dea7"
 dependencies = [
  "arrow",
  "base64 0.21.7",
