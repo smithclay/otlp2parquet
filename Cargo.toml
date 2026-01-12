@@ -48,8 +48,8 @@ otlp2parquet-core = { version = "0.6.0", path = "crates/otlp2parquet-core" }
 otlp2parquet-writer = { version = "0.6.0", path = "crates/otlp2parquet-writer" }
 
 # Arrow/Parquet - MINIMAL features only
-arrow = { version = "56.2", default-features = false, features = ["ipc"] }
-parquet = { version = "56.2", default-features = false, features = ["snap", "arrow", "async"] }
+arrow = { version = "57.2", default-features = false, features = ["ipc"] }
+parquet = { version = "57.2", default-features = false, features = ["snap", "arrow", "async"] }
 
 # OTLP Protocol - minimal
 prost = { version = "0.14", default-features = false, features = ["std"] }
