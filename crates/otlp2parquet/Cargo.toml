@@ -25,7 +25,7 @@ arrow = { workspace = true }
 parking_lot = "0.12"
 
 # HTTP server
-axum = { version = "0.7", default-features = false, features = ["tokio", "http1", "http2", "json"] }
+axum = { version = "0.8", default-features = false, features = ["tokio", "http1", "http2", "json"] }
 tower-http = { version = "0.6", default-features = false, features = ["trace", "decompression-gzip"] }
 
 # Async runtime
