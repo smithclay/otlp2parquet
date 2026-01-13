@@ -27,18 +27,6 @@ cpu_ms = 2000
 binding = "LOGS_BUCKET"
 bucket_name = "{{BUCKET_NAME}}"
 
-{{#BATCHING}}
-# Durable Objects for batching (SQLite-backed for persistence across hibernation)
-[[durable_objects.bindings]]
-name = "BATCHER"
-class_name = "OtlpBatcherV2"
-
-# Migration: SQLite storage for DO (persists across hibernation)
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["OtlpBatcherV2"]
-{{/BATCHING}}
-
 [vars]
 OTLP2PARQUET_STORAGE_BACKEND = "r2"
 OTLP2PARQUET_R2_BUCKET = "{{BUCKET_NAME}}"
@@ -55,10 +43,6 @@ OTLP2PARQUET_BASIC_AUTH_ENABLED = "{{BASIC_AUTH_ENABLED}}"
 {{#BASICAUTH}}
 # Username and password are set via wrangler secret
 {{/BASICAUTH}}
-# Batching configuration
-OTLP2PARQUET_BATCH_ENABLED = "{{BATCH_ENABLED}}"
-OTLP2PARQUET_BATCH_MAX_ROWS = "{{BATCH_MAX_ROWS}}"
-OTLP2PARQUET_BATCH_MAX_AGE_SECS = "{{BATCH_MAX_AGE_SECS}}"
 
 {{#LOGGING}}
 [observability]

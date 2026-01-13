@@ -6,15 +6,6 @@ compatibility_date = "2025-01-15"
 [build]
 command = "cargo install -q worker-build && worker-build --release"
 
-# Durable Objects for batching (SQLite-backed for persistence across hibernation)
-[[durable_objects.bindings]]
-name = "BATCHER"
-class_name = "OtlpBatcherV2"
-
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["OtlpBatcherV2"]
-
 [observability.traces]
 enabled = true
 head_sampling_rate = 0.05
