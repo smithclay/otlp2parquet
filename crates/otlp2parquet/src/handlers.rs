@@ -12,7 +12,7 @@ use metrics::{counter, histogram};
 use otlp2parquet_common::{InputFormat, MetricType, SignalType};
 
 use crate::batch::CompletedBatch;
-use otlp2parquet_handlers::{
+use crate::codec::{
     decode_logs_partitioned, decode_metrics_partitioned, decode_traces_partitioned,
     report_skipped_metrics, ServiceGroupedBatches,
 };
@@ -124,7 +124,7 @@ async fn process_logs(
 /// Process logs with batching - accumulate in memory, flush when thresholds hit
 async fn process_logs_batched(
     batcher: &crate::batch::BatchManager,
-    grouped: otlp2parquet_handlers::ServiceGroupedBatches,
+    grouped: ServiceGroupedBatches,
     body_len: usize,
     start: Instant,
 ) -> Result<Response, AppError> {
@@ -203,7 +203,7 @@ async fn process_logs_batched(
 
 /// Process logs directly - write each batch immediately (no batching)
 async fn process_logs_direct(
-    grouped: otlp2parquet_handlers::ServiceGroupedBatches,
+    grouped: ServiceGroupedBatches,
     start: Instant,
 ) -> Result<Response, AppError> {
     let mut uploaded_paths = Vec::new();
@@ -218,7 +218,7 @@ async fn process_logs_direct(
         total_records += pb.record_count;
         counter!("otlp.ingest.records", pb.record_count as u64);
 
-        let path = otlp2parquet_writer::write_batch(otlp2parquet_writer::WriteBatchRequest {
+        let path = crate::writer::write_batch(crate::writer::WriteBatchRequest {
             batch: &pb.batch,
             signal_type: SignalType::Logs,
             metric_type: None,
@@ -298,7 +298,7 @@ async fn process_traces(
             "signal" => "traces"
         );
 
-        let path = otlp2parquet_writer::write_batch(otlp2parquet_writer::WriteBatchRequest {
+        let path = crate::writer::write_batch(crate::writer::WriteBatchRequest {
             batch: &pb.batch,
             signal_type: SignalType::Traces,
             metric_type: None,
@@ -460,7 +460,7 @@ async fn write_metric_batches(
             continue;
         }
 
-        let path = otlp2parquet_writer::write_batch(otlp2parquet_writer::WriteBatchRequest {
+        let path = crate::writer::write_batch(crate::writer::WriteBatchRequest {
             batch: &pb.batch,
             signal_type: SignalType::Metrics,
             metric_type: Some(metric_type.as_str()),
@@ -499,7 +499,7 @@ pub(crate) async fn persist_log_batch(
             continue;
         }
 
-        let path = otlp2parquet_writer::write_batch(otlp2parquet_writer::WriteBatchRequest {
+        let path = crate::writer::write_batch(crate::writer::WriteBatchRequest {
             batch,
             signal_type: SignalType::Logs,
             metric_type: None,

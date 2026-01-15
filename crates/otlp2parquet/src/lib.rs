@@ -23,9 +23,10 @@ use axum::{
 use otlp2parquet_common::config::RuntimeConfig;
 
 mod batch;
+pub mod codec;
 
+use crate::writer::set_parquet_row_group_size;
 use batch::{BatchConfig, BatchManager};
-use otlp2parquet_writer::set_parquet_row_group_size;
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -36,6 +37,7 @@ use tracing::{debug, error, info, warn};
 
 mod handlers;
 mod init;
+mod writer;
 
 pub mod connect;
 

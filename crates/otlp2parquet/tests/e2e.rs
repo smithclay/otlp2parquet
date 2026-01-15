@@ -5,9 +5,10 @@
 use std::fs;
 use std::path::PathBuf;
 
-use otlp2parquet_handlers::{
-    decode_logs_partitioned, decode_metrics_partitioned, decode_traces_partitioned, InputFormat,
+use otlp2parquet::codec::{
+    decode_logs_partitioned, decode_metrics_partitioned, decode_traces_partitioned,
 };
+use otlp2parquet_common::InputFormat;
 use otlp2records::{decode_metrics, transform_logs, transform_metrics, transform_traces};
 
 /// Get path to workspace root testdata directory

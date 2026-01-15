@@ -1,4 +1,4 @@
-//! Error types for the OTLP writer crate
+//! Error types for Parquet writer operations.
 
 use thiserror::Error;
 
@@ -14,12 +14,10 @@ fn redact_secret(secret: &str) -> String {
         return "(empty)".to_string();
     }
     if secret.len() < 10 {
-        // For short secrets, show first and last char only
         let first = secret.chars().next().unwrap_or('?');
         let last = secret.chars().last().unwrap_or('?');
         return format!("{}***{}", first, last);
     }
-    // Show first 4 and last 4 characters
     let prefix: String = secret.chars().take(4).collect();
     let suffix: String = secret
         .chars()
@@ -40,6 +38,7 @@ pub enum ErrorCode {
     /// E005: Write operation failed
     E005WriteFailure,
     /// E006: Platform not supported for operation
+    #[allow(dead_code)]
     E006UnsupportedPlatform,
 }
 
@@ -60,7 +59,7 @@ impl ErrorCode {
     }
 }
 
-/// Errors that can occur during OTLP writing operations
+/// Errors that can occur during Parquet writing operations
 #[derive(Debug, Error)]
 pub enum WriterError {
     /// Invalid configuration provided
@@ -80,6 +79,7 @@ pub enum WriterError {
     },
 
     /// Platform not supported for this operation
+    #[allow(dead_code)]
     #[error("[{code}] Platform not supported: {message}\n\nSupported platforms: {supported}\n\nSee: {docs_url}")]
     UnsupportedPlatform {
         code: &'static str,
@@ -111,6 +111,7 @@ impl WriterError {
     }
 
     /// Create an unsupported platform error with error code
+    #[allow(dead_code)]
     pub fn unsupported_platform(message: String, supported: String) -> Self {
         let code_enum = ErrorCode::E006UnsupportedPlatform;
         Self::UnsupportedPlatform {
@@ -142,12 +143,10 @@ mod tests {
 
     #[test]
     fn test_redact_secret_long() {
-        // Token-like secret
         assert_eq!(
             redact_secret("lTkWygojZsXFtfv07Rlzw80moyduOwJcZJ63grtT"),
             "lTkW...grtT"
         );
-        // Access key ID
         assert_eq!(
             redact_secret("e12dcf5a655bfd1917be71c51eb60f35"),
             "e12d...0f35"
@@ -156,9 +155,7 @@ mod tests {
 
     #[test]
     fn test_redact_secret_boundary() {
-        // Exactly 10 chars - should use long format
         assert_eq!(redact_secret("1234567890"), "1234...7890");
-        // 9 chars - should use short format
         assert_eq!(redact_secret("123456789"), "1***9");
     }
 }

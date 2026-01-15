@@ -1,13 +1,11 @@
 //! Shared codec utilities for OTLP decoding and value extraction.
 //!
-//! This module provides pure functions for decoding OTLP payloads that can be
-//! Used across all server handlers.
+//! This module provides pure functions for decoding OTLP payloads.
 
 use otlp2records::{
     group_batch_by_service, transform_logs, transform_metrics, transform_traces, InputFormat,
 };
 
-// Re-export types that consumers need
 pub use otlp2records::{
     PartitionedBatch, PartitionedMetrics, ServiceGroupedBatches, SkippedMetrics,
 };

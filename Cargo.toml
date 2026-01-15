@@ -2,8 +2,6 @@
 members = [
     "crates/otlp2parquet",
     "crates/otlp2parquet-common",
-    "crates/otlp2parquet-writer",
-    "crates/otlp2parquet-handlers",
 ]
 exclude = ["examples/generate-parquet-testdata"]
 resolver = "2"
@@ -32,8 +30,6 @@ opt-level = 3
 [workspace.dependencies]
 # Internal crates - all use workspace version
 otlp2parquet-common = { version = "0.7.1", path = "crates/otlp2parquet-common" }
-otlp2parquet-writer = { version = "0.7.1", path = "crates/otlp2parquet-writer" }
-otlp2parquet-handlers = { version = "0.7.1", path = "crates/otlp2parquet-handlers" }
 otlp2records = { version = "0.1.1", default-features = false }
 
 # Arrow/Parquet - MINIMAL features only

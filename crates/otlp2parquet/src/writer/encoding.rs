@@ -39,7 +39,6 @@ fn compression_setting() -> Compression {
 pub(crate) fn writer_properties() -> &'static WriterProperties {
     static PROPERTIES: OnceLock<WriterProperties> = OnceLock::new();
     PROPERTIES.get_or_init(|| {
-        // Embed OTLP version and schema information in Parquet metadata
         let metadata = vec![
             KeyValue {
                 key: "otlp.version".to_string(),

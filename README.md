@@ -8,7 +8,7 @@
 
 Receive OpenTelemetry logs, metrics, and traces and write them as Parquet files to local disk or S3-compatible storage. Query with duckdb, Spark, pandas, or anything that reads Parquet.
 
-If you want to stream observability data to an Apache Iceberg catalog: check out the related [otlp2pipeline](https://github.com/smithclay/otlp2pipeline) project.
+If you want to stream real-time observability data directly to AWS, Azure or Cloudflare: check out the related [otlp2pipeline](https://github.com/smithclay/otlp2pipeline) project.
 
 ```mermaid
 flowchart TB

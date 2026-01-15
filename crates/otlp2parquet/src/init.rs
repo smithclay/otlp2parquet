@@ -43,7 +43,7 @@ pub(crate) fn init_writer(config: &RuntimeConfig) -> Result<()> {
         }
     }
     // Initialize storage for direct writes
-    otlp2parquet_writer::initialize_storage(config)
+    crate::writer::initialize_storage(config)
         .map_err(|e| anyhow::anyhow!("Failed to initialize storage: {}", e))?;
 
     Ok(())

@@ -1973,21 +1973,26 @@ dependencies = [
  "arrow",
  "async-trait",
  "axum",
+ "bytes",
  "clap",
  "dhat",
  "dialoguer",
+ "futures",
  "metrics",
+ "once_cell",
+ "opendal",
  "otlp2parquet-common",
- "otlp2parquet-handlers",
- "otlp2parquet-writer",
  "otlp2records",
  "parking_lot 0.12.5",
+ "parquet",
  "paste",
  "rand 0.8.5",
  "reqwest",
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.17",
+ "time",
  "tokio",
  "tower-http",
  "tracing",
@@ -2005,43 +2010,6 @@ dependencies = [
  "serde",
  "toml",
  "tracing",
-]
-
-[[package]]
-name = "otlp2parquet-handlers"
-version = "0.7.1"
-dependencies = [
- "bytes",
- "ordered-float 4.6.0",
- "otlp2parquet-common",
- "otlp2parquet-writer",
- "otlp2records",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "otlp2parquet-writer"
-version = "0.7.1"
-dependencies = [
- "anyhow",
- "arrow",
- "bytes",
- "futures",
- "getrandom 0.2.17",
- "gloo-timers",
- "js-sys",
- "once_cell",
- "opendal",
- "otlp2parquet-common",
- "otlp2records",
- "parquet",
- "serde_json",
- "thiserror 2.0.17",
- "time",
- "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -3306,7 +3274,6 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
- "parking_lot 0.12.5",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",

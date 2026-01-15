@@ -14,9 +14,7 @@ Ingest OTLP logs/metrics/traces over HTTP (protobuf/JSON/JSONL), convert to Arro
 ## Workspace Map
 - `otlp2parquet-proto`: Generated OTLP protobuf definitions (prost).
 - `otlp2parquet-common`: Shared types, configuration, and re-exports from otlp2records.
-- `otlp2parquet-writer`: Parquet writing and storage initialization.
-- `otlp2parquet-handlers`: Shared HTTP/signal processing (parse → convert → write) reused by all platforms.
-- `otlp2parquet`: Main CLI/Server (Axum HTTP, multi-backend storage, in-memory batching).
+- `otlp2parquet`: Main CLI/Server (Axum HTTP, multi-backend storage, in-memory batching, writer + codecs).
 - `otlp2parquet-lambda`: AWS Lambda runtime adapter (S3, writes per-request).
 - `otlp2parquet-cloudflare`: Cloudflare Workers WASM adapter (R2, writes per-request).
 
