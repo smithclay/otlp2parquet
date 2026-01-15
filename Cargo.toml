@@ -15,7 +15,7 @@ name = "otlp2parquet"
 path = "src/main.rs"
 
 [dependencies]
-otlp2records = { version = "0.2.1", default-features = false, features = ["parquet"] }
+otlp2records = { version = "0.2.2", default-features = false, features = ["parquet"] }
 
 arrow = { version = "54", default-features = false, features = ["ipc"] }
 
@@ -39,7 +39,7 @@ time = { version = "0.3", default-features = false, features = ["std"] }
 uuid = { version = "1", default-features = false, features = ["v4"] }
 metrics = { version = "0.24", default-features = false }
 clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
-opendal = { version = "0.55", default-features = false, features = ["services-fs", "services-s3"] }
+opendal = { version = "0.55", default-features = false, features = ["blocking", "services-fs", "services-s3"] }
 
 [dev-dependencies]
 tempfile = "3.13"
