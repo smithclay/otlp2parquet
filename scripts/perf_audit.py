@@ -336,11 +336,6 @@ def main():
             "throughput_rows_per_s": round(metrics.get("throughput_rows_per_s", 0.0), 2),
             "alloc_bytes_total": 0,  # Would need dhat integration
             "max_rss_mb": 0.0,
-            "lambda": {
-                "cold_ms": 0,
-                "warm_ms": 0,
-                "package_mb": 0.0
-            }
         },
         "hotspots": hotspots,
         "batch_sensitivity": [

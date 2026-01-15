@@ -8,7 +8,7 @@
 
 Receive OpenTelemetry logs, metrics, and traces and write them as Parquet files to local disk or S3-compatible storage. Query with duckdb, Spark, pandas, or anything that reads Parquet.
 
-If you want to stream real-time observability data directly to AWS, Azure or Cloudflare: check out the related [otlp2pipeline](https://github.com/smithclay/otlp2pipeline) project.
+If you want to stream real-time observability data directly to AWS, Azure or Cloudflare: check out the related **[otlp2pipeline](https://github.com/smithclay/otlp2pipeline)** project.
 
 ```mermaid
 flowchart TB
@@ -46,6 +46,7 @@ otlp2parquet
 Server starts on `http://localhost:4318`. Send a simple OTLP HTTP log:
 
 ```bash
+# otlp2parquet batches writes to disk every BATCH_AGE_MAX_SECONDS by default
 curl -X POST http://localhost:4318/v1/logs \
   -H "Content-Type: application/json" \
   -d '{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"body":{"stringValue":"hello world"}}]}]}]}'

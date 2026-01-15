@@ -119,13 +119,5 @@ mod tests {
         let server = RuntimeConfig::from_platform_defaults(Platform::Server);
         assert_eq!(server.storage.backend, StorageBackend::Fs);
         assert!(server.server.is_some());
-
-        let lambda = RuntimeConfig::from_platform_defaults(Platform::Lambda);
-        assert_eq!(lambda.storage.backend, StorageBackend::S3);
-        assert!(lambda.lambda.is_some());
-
-        let workers = RuntimeConfig::from_platform_defaults(Platform::CloudflareWorkers);
-        assert_eq!(workers.storage.backend, StorageBackend::R2);
-        assert!(workers.cloudflare.is_some());
     }
 }

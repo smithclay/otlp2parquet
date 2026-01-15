@@ -32,12 +32,6 @@ pub struct RuntimeConfig {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server: Option<ServerConfig>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lambda: Option<LambdaConfig>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cloudflare: Option<CloudflareConfig>,
 }
 
 /// Batch configuration
@@ -127,7 +121,7 @@ impl std::str::FromStr for StorageBackend {
         match s.to_lowercase().as_str() {
             "fs" | "filesystem" => Ok(StorageBackend::Fs),
             "s3" | "aws" => Ok(StorageBackend::S3),
-            "r2" | "cloudflare" => Ok(StorageBackend::R2),
+            "r2" => Ok(StorageBackend::R2),
             _ => anyhow::bail!("Unsupported storage backend: {}. Supported: fs, s3, r2", s),
         }
     }
@@ -194,16 +188,6 @@ pub enum LogFormat {
     Json,
 }
 
-/// Lambda-specific configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct LambdaConfig {}
-
-/// Cloudflare Workers-specific configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct CloudflareConfig {
-    // Future cloudflare-specific config can go here
-}
-
 impl RuntimeConfig {
     /// Load configuration from all sources with priority
     #[cfg(not(target_arch = "wasm32"))]
@@ -212,7 +196,7 @@ impl RuntimeConfig {
         sources::load_config(platform)
     }
 
-    /// `wasm32` (Cloudflare Workers) builds cannot touch host env or filesystem.
+    /// `wasm32` builds cannot touch host env or filesystem.
     /// Return platform defaults so the runtime can layer worker-specific overrides.
     #[cfg(target_arch = "wasm32")]
     pub fn load() -> Result<Self> {
@@ -252,22 +236,16 @@ impl RuntimeConfig {
         if other.server.is_some() {
             self.server = other.server;
         }
-        if other.lambda.is_some() {
-            self.lambda = other.lambda;
-        }
-        if other.cloudflare.is_some() {
-            self.cloudflare = other.cloudflare;
-        }
     }
 
-    /// Apply environment overrides from a custom source (e.g., Workers Env).
+    /// Apply environment overrides from a custom source (e.g., WASM env).
     pub fn apply_env_overrides_from<E: EnvSource>(&mut self, env: &E) -> Result<()> {
         env_overrides::apply_env_overrides(self, env)
     }
 
     /// Build a configuration for the given platform using inline config content
     /// plus overrides supplied by an `EnvSource`. Intended for runtimes that
-    /// cannot read files or host environment variables (Cloudflare Workers).
+    /// cannot read files or host environment variables.
     pub fn load_for_platform_with_env<E: EnvSource>(
         platform: Platform,
         inline_config: Option<&str>,
@@ -356,21 +334,7 @@ fn platform_defaults(platform: Platform) -> RuntimeConfig {
             max_payload_bytes: defaults.max_payload_bytes,
         },
         storage,
-        server: if platform == Platform::Server {
-            Some(ServerConfig::default())
-        } else {
-            None
-        },
-        lambda: if platform == Platform::Lambda {
-            Some(LambdaConfig::default())
-        } else {
-            None
-        },
-        cloudflare: if platform == Platform::CloudflareWorkers {
-            Some(CloudflareConfig::default())
-        } else {
-            None
-        },
+        server: Some(ServerConfig::default()),
     }
 }
 
@@ -388,10 +352,6 @@ mod tests {
             StorageBackend::Fs
         );
         assert_eq!("aws".parse::<StorageBackend>().unwrap(), StorageBackend::S3);
-        assert_eq!(
-            "cloudflare".parse::<StorageBackend>().unwrap(),
-            StorageBackend::R2
-        );
     }
 
     #[test]

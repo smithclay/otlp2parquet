@@ -25,8 +25,8 @@ pub mod config;
 pub mod types;
 
 pub use config::{
-    BatchConfig, CloudflareConfig, EnvSource, FsConfig, LambdaConfig, LogFormat, Platform,
-    RequestConfig, RuntimeConfig, ServerConfig, StorageBackend, StorageConfig, ENV_PREFIX,
+    BatchConfig, EnvSource, FsConfig, LogFormat, Platform, RequestConfig, RuntimeConfig,
+    ServerConfig, StorageBackend, StorageConfig, ENV_PREFIX,
 };
 pub use otlp2records::InputFormat;
 pub use types::{Blake3Hash, MetricType, SignalKey, SignalType};

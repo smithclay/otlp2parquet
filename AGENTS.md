@@ -2,20 +2,17 @@
 **Universal OTel Logs, Metrics & Traces Ingestion Pipeline (Rust)**
 
 ## Mission
-Ingest OTLP logs/metrics/traces over HTTP (protobuf/JSON/JSONL), convert to Arrow RecordBatch, and write Parquet to object storage. Must ship as <3MB compressed WASM for Cloudflare Workers and native binary for AWS Lambda.
+Ingest OTLP logs/metrics/traces over HTTP (protobuf/JSON/JSONL), convert to Arrow RecordBatch, and write Parquet to object storage. Must ship as <3MB compressed WASM and native binary.
 
 ## Non-Negotiables
-- **Binary size**: target 2.5MB compressed (limit 3MB). Use `default-features = false` everywhere, profile with `make wasm-size`/`twiggy`, keep dependencies minimal.
+- **Binary size**: target 2.5MB compressed (limit 3MB). Use `default-features = false` everywhere, profile with `twiggy`, keep dependencies minimal.
 - **Schema**: ClickHouse-compatible PascalCase columns. Metrics use five distinct schemas (Gauge, Sum, Histogram, ExponentialHistogram, Summary).
-- **Platform detection**: `AWS_LAMBDA_FUNCTION_NAME` => Lambda; `CF_WORKER` => Cloudflare; otherwise Server.
-- **Storage**: OpenDAL. Platform limits: Lambda=S3, Cloudflare=R2, Server=multi-backend (S3/R2/FS).
+- **Storage**: OpenDAL. Server supports multi-backend (S3/R2/FS).
 - **Config**: `config.toml` plus `OTLP2PARQUET_*` env overrides; platform defaults chosen automatically.
 
 ## Workspace Map
 - `otlp2parquet-proto`: Generated OTLP protobuf definitions (prost).
 - `otlp2parquet`: Main CLI/Server (Axum HTTP, multi-backend storage, in-memory batching, writer + codecs; owns config/types).
-- `otlp2parquet-lambda`: AWS Lambda runtime adapter (S3, writes per-request).
-- `otlp2parquet-cloudflare`: Cloudflare Workers WASM adapter (R2, writes per-request).
 
 ## Signals & Partitioning
 - **Logs**: single schema; `logs/{service}/year=.../month=.../day=.../hour=.../{timestamp}-{uuid}.parquet`
@@ -29,5 +26,5 @@ Ingest OTLP logs/metrics/traces over HTTP (protobuf/JSON/JSONL), convert to Arro
 - Zero clippy warnings; panic-free production code; HTTP client is unified via `reqwest`.
 
 ## Build & Test Flow
-- Make targets: `make dev`, `make pre-commit`, `make clippy`, `make check`, `make test`, `make test-e2e`, `make wasm-full`, `make wasm-size`, `make wasm-profile`.
+- Make targets: `make dev`, `make pre-commit`, `make clippy`, `make check`, `make test`, `make test-e2e`.
 - Conventional Commits required (e.g., `feat: ...`, `fix: ...`); hooks enforce format.

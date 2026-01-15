@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context, Result};
 pub const ENV_PREFIX: &str = "OTLP2PARQUET_";
 
 /// Abstraction over environment-variable lookups so runtimes without `std::env`
-/// (e.g., Cloudflare Workers) can supply their own source of overrides.
+/// can supply their own source of overrides.
 pub trait EnvSource {
     fn get(&self, key: &str) -> Option<String>;
 
@@ -111,9 +111,6 @@ pub fn apply_env_overrides<E: EnvSource>(config: &mut RuntimeConfig, env: &E) ->
     if let Some(prefix) = get_env_string(env, "R2_PREFIX")? {
         ensure_r2(config).prefix = normalize_prefix(prefix);
     }
-
-    // Note: AWS_REGION should be set directly in wrangler.toml [vars] for Cloudflare Workers
-    // WASM cannot use std::env::set_var, so OpenDAL reads it from worker::Env via get_raw_env_string above
 
     Ok(())
 }
