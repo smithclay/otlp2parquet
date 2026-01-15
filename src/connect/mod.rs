@@ -54,7 +54,7 @@ pub struct CodexArgs {
 
 /// Generate OpenTelemetry Collector configuration
 async fn execute_otel_collector(args: OtelCollectorArgs) -> Result<()> {
-    let url = resolve_endpoint_url(args.url.as_deref()).await?;
+    let url = resolve_endpoint_url(args.url.as_deref())?;
 
     let config = generate_collector_config(&url);
     println!("{}", config);
@@ -64,7 +64,7 @@ async fn execute_otel_collector(args: OtelCollectorArgs) -> Result<()> {
 
 /// Generate Claude Code shell exports
 async fn execute_claude_code(args: ClaudeCodeArgs) -> Result<()> {
-    let url = resolve_endpoint_url(args.url.as_deref()).await?;
+    let url = resolve_endpoint_url(args.url.as_deref())?;
 
     let output = generate_claude_code_config(&url, &args.format);
     println!("{}", output);
@@ -74,7 +74,7 @@ async fn execute_claude_code(args: ClaudeCodeArgs) -> Result<()> {
 
 /// Generate OpenAI Codex CLI configuration
 async fn execute_codex(args: CodexArgs) -> Result<()> {
-    let url = resolve_endpoint_url(args.url.as_deref()).await?;
+    let url = resolve_endpoint_url(args.url.as_deref())?;
 
     let config = generate_codex_config(&url);
     println!("{}", config);

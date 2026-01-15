@@ -9,7 +9,6 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
 mod env_overrides;
 mod platform;
@@ -55,11 +54,7 @@ fn default_batching_enabled() -> bool {
     true
 }
 
-impl BatchConfig {
-    pub fn max_age(&self) -> Duration {
-        Duration::from_secs(self.max_age_secs)
-    }
-}
+impl BatchConfig {}
 
 impl Default for BatchConfig {
     fn default() -> Self {

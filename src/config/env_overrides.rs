@@ -84,27 +84,11 @@ pub fn apply_env_overrides<E: EnvSource>(config: &mut RuntimeConfig, env: &E) ->
         ensure_s3(config).endpoint = Some(endpoint);
     }
     if let Some(prefix) = get_env_string(env, "S3_PREFIX")? {
-        // Normalize prefix: ensure it ends with "/" if non-empty
-        let normalized = if prefix.is_empty() {
-            None
-        } else if prefix.ends_with('/') {
-            Some(prefix)
-        } else {
-            Some(format!("{}/", prefix))
-        };
-        ensure_s3(config).prefix = normalized;
+        ensure_s3(config).prefix = normalize_prefix(prefix);
     }
     // Also support generic PREFIX for backwards compatibility
     if let Some(prefix) = get_env_string(env, "PREFIX")? {
-        // Normalize prefix: ensure it ends with "/" if non-empty
-        let normalized = if prefix.is_empty() {
-            None
-        } else if prefix.ends_with('/') {
-            Some(prefix)
-        } else {
-            Some(format!("{}/", prefix))
-        };
-        ensure_s3(config).prefix = normalized;
+        ensure_s3(config).prefix = normalize_prefix(prefix);
     }
 
     // R2 storage
@@ -125,15 +109,7 @@ pub fn apply_env_overrides<E: EnvSource>(config: &mut RuntimeConfig, env: &E) ->
         ensure_r2(config).endpoint = Some(endpoint);
     }
     if let Some(prefix) = get_env_string(env, "R2_PREFIX")? {
-        // Normalize prefix: ensure it ends with "/" if non-empty
-        let normalized = if prefix.is_empty() {
-            None
-        } else if prefix.ends_with('/') {
-            Some(prefix)
-        } else {
-            Some(format!("{}/", prefix))
-        };
-        ensure_r2(config).prefix = normalized;
+        ensure_r2(config).prefix = normalize_prefix(prefix);
     }
 
     // Note: AWS_REGION should be set directly in wrangler.toml [vars] for Cloudflare Workers
@@ -214,5 +190,15 @@ fn get_env_bool<E: EnvSource>(env: &E, key: &str) -> Result<Option<bool>> {
             Ok(Some(parsed))
         }
         None => Ok(None),
+    }
+}
+
+fn normalize_prefix(prefix: String) -> Option<String> {
+    if prefix.is_empty() {
+        None
+    } else if prefix.ends_with('/') {
+        Some(prefix)
+    } else {
+        Some(format!("{}/", prefix))
     }
 }
