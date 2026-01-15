@@ -1,3 +1,0 @@
-*.env
-wrangler-smoke-*.toml
-wrangler-dev.toml

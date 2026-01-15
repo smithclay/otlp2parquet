@@ -45,17 +45,11 @@ rand = { version = "0.8", default-features = false, features = ["std", "std_rng"
 
 # Optional dependencies for smoke tests
 dhat = { version = "0.3", optional = true }
-aws-sdk-cloudformation = { version = "1.104", default-features = false, features = ["rustls", "rt-tokio"], optional = true }
-aws-sdk-cloudwatchlogs = { version = "1.114", default-features = false, features = ["rustls", "rt-tokio"], optional = true }
-aws-sdk-s3tables = { version = "1.47", default-features = false, features = ["rustls", "rt-tokio"], optional = true }
 
 [dev-dependencies]
 tempfile = "3.13"
 # Docker e2e tests
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-aws-config = { version = "1.8", default-features = false, features = ["rustls", "behavior-version-latest", "rt-tokio"] }
-aws-sdk-s3 = { version = "1.119", default-features = false, features = ["rustls", "rt-tokio"] }
-aws-credential-types = "1.2"
 # Smoke test dependencies
 tokio = { workspace = true, features = ["process"] }
 async-trait = "0.1"
@@ -68,5 +62,3 @@ default = []
 dhat-heap = ["dep:dhat"]
 docker-tests = []
 smoke-server = []
-smoke-lambda = ["dep:aws-sdk-cloudformation", "dep:aws-sdk-cloudwatchlogs", "dep:aws-sdk-s3tables"]
-smoke-workers = []

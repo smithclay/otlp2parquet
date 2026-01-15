@@ -2,13 +2,13 @@
 
 > Store your observability data in cheap object storage. Servers optional.
 
-**otlp2parquet** ingests OpenTelemetry logs, traces, and metrics, converts them to Parquet, and writes to object storage. Deploy to Cloudflare Workers, AWS Lambda, or run locally with Docker.
+**otlp2parquet** ingests OpenTelemetry logs, traces, and metrics, converts them to Parquet, and writes to object storage. Run locally with Docker or on your own servers.
 
 ## Why otlp2parquet?
 
-- **Cheap storage** - Write to S3, R2, or local filesystem. No vendor lock-in.
-- **Serverless** - Deploy to Cloudflare Workers (<3MB WASM) or AWS Lambda.
-- **Query anywhere** - DuckDB, Athena, Spark - any Parquet reader works.
+- **Cheap storage** - Write to S3-compatible object storage or local filesystem. No vendor lock-in.
+- **Portable** - Run as a local binary or container.
+- **Query anywhere** - DuckDB, Spark, Trino - any Parquet reader works.
 
 ## Get Started
 
@@ -18,9 +18,8 @@ Deploy in under 5 minutes:
 # Install the CLI
 cargo install otlp2parquet
 
-# Deploy to your platform
-otlp2parquet create cloudflare
-otlp2parquet create aws
+# Run locally
+otlp2parquet
 ```
 
 Or run locally with Docker:

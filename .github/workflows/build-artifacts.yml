@@ -23,14 +23,10 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             arch: amd64
             runner: ubuntu-latest
-            lambda_arch: x86-64
-            asset_name: otlp2parquet-lambda-linux-amd64
             cli_asset_name: otlp2parquet-cli-linux-amd64
           - target: aarch64-unknown-linux-gnu
             arch: arm64
             runner: ubuntu-24.04-arm
-            lambda_arch: arm64
-            asset_name: otlp2parquet-lambda-linux-arm64
             cli_asset_name: otlp2parquet-cli-linux-arm64
     steps:
       - uses: actions/checkout@v6
@@ -50,19 +46,6 @@ jobs:
         with:
           version: 0.14.0
 
-      - name: Install cargo-lambda
-        run: pip install cargo-lambda
-
-      # Use cargo-lambda for Lambda binary - it cross-compiles with proper glibc targeting
-      # for Amazon Linux 2023 (glibc 2.34), regardless of host glibc version
-      - name: Build lambda binary with cargo-lambda
-        run: |
-          cd crates/otlp2parquet-lambda
-          cargo lambda build --release --${{ matrix.lambda_arch }}
-          # Copy to expected location for packaging
-          mkdir -p ../../target/${{ matrix.target }}/release
-          cp ../../target/lambda/bootstrap/bootstrap ../../target/${{ matrix.target }}/release/bootstrap
-
       # CLI binary uses native compilation - glibc version doesn't matter for server/container use
       - name: Build CLI binary
         env:
@@ -72,39 +55,10 @@ jobs:
       - name: Package binary
         run: |
           set -euo pipefail
-          LAMBDA_BINARY="target/${{ matrix.target }}/release/bootstrap"
           SERVER_DIR="target/${{ matrix.target }}/release"
-          TMP_LAMBDA="$(mktemp -d)"
-          cp "$LAMBDA_BINARY" "$TMP_LAMBDA/otlp2parquet-lambda"
-          tar czf "$SERVER_DIR/${{ matrix.asset_name }}.tar.gz" -C "$TMP_LAMBDA" otlp2parquet-lambda
-          rm -rf "$TMP_LAMBDA"
           mkdir -p dist/linux-${{ matrix.arch }}
           cp "$SERVER_DIR/otlp2parquet" "dist/linux-${{ matrix.arch }}/otlp2parquet"
           tar czf "$SERVER_DIR/${{ matrix.cli_asset_name }}.tar.gz" -C dist "linux-${{ matrix.arch }}"
-
-      - name: Package Lambda as zip
-        run: |
-          set -euo pipefail
-          LAMBDA_BINARY="target/${{ matrix.target }}/release/bootstrap"
-          TMP_DIR="$(mktemp -d)"
-          cp "$LAMBDA_BINARY" "$TMP_DIR/bootstrap"
-          cd "$TMP_DIR"
-          zip -j "$GITHUB_WORKSPACE/target/${{ matrix.target }}/release/${{ matrix.asset_name }}.zip" bootstrap
-          cd "$GITHUB_WORKSPACE"
-          rm -rf "$TMP_DIR"
-          echo "Created ${{ matrix.asset_name }}.zip"
-
-      - name: Upload Lambda zip artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: ${{ matrix.asset_name }}-zip
-          path: target/${{ matrix.target }}/release/${{ matrix.asset_name }}.zip
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: ${{ matrix.asset_name }}
-          path: target/${{ matrix.target }}/release/${{ matrix.asset_name }}.tar.gz
 
       - name: Upload server artifact
         uses: actions/upload-artifact@v6
@@ -170,56 +124,3 @@ jobs:
         with:
           name: otlp2parquet-image-${{ matrix.arch }}
           path: dist/otlp2parquet-${{ matrix.arch }}.tar
-
-  wasm:
-    name: Cloudflare WASM
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.ref && inputs.ref || github.ref }}
-
-      - name: Configure toolchain
-        uses: ./.github/actions/setup-rust
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          targets: wasm32-unknown-unknown
-          cache-prefix: release-wasm
-          cache-key: cloudflare
-
-      - name: Setup wasm-opt
-        uses: ./.github/actions/setup-wasm-opt
-
-      - name: Install Wrangler
-        run: npm install -g wrangler
-
-      - name: Package worker with Wrangler
-        run: |
-          rm -rf worker-dist
-          mkdir -p worker-dist
-          cd crates/otlp2parquet-cloudflare
-          wrangler deploy --dry-run --outdir ../../worker-dist --config wrangler.ci.toml
-
-      - name: Optimize packaged WASM
-        run: |
-          WASM_FILES=$(find worker-dist -name "*.wasm")
-          if [ -z "$WASM_FILES" ]; then
-            echo "No WASM files produced by Wrangler packaging" >&2
-            exit 1
-          fi
-          for file in $WASM_FILES; do
-            echo "Optimizing ${file}"
-            wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int -o "${file}.opt" "$file"
-            mv "${file}.opt" "$file"
-          done
-
-      - name: Archive worker bundle
-        run: |
-          mkdir -p dist
-          (cd worker-dist && zip -r ../dist/otlp2parquet-worker.zip .)
-
-      - name: Upload WASM artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: otlp2parquet-wasm
-          path: dist

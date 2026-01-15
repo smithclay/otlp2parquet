@@ -14,10 +14,6 @@ help: ## Show this help message
 check: ## Run cargo check on all feature combinations
 	@echo "==> Checking server..."
 	@cargo check
-	@echo "==> Checking lambda..."
-	@cargo check -p otlp2parquet-lambda
-	@echo "==> Checking cloudflare..."
-	@cargo check -p otlp2parquet-cloudflare --target wasm32-unknown-unknown
 
 .PHONY: fmt
 fmt: ## Format all Rust code
@@ -31,17 +27,11 @@ fmt-check: ## Check Rust code formatting
 clippy: ## Run clippy on all feature combinations
 	@echo "==> Clippy server..."
 	@cargo clippy --all-targets -- -D warnings
-	@echo "==> Clippy lambda..."
-	@cargo clippy -p otlp2parquet-lambda --all-targets -- -D warnings
-	@echo "==> Clippy cloudflare..."
-	@cargo clippy -p otlp2parquet-cloudflare --all-targets --target wasm32-unknown-unknown -- -D warnings
 
 .PHONY: test
 test: ## Run tests for all testable feature combinations
 	@echo "==> Testing server..."
 	@cargo test
-	@echo "==> Testing lambda..."
-	@cargo test -p otlp2parquet-lambda
 
 .PHONY: test-verbose
 test-verbose: ## Run tests with verbose output
@@ -55,41 +45,15 @@ test-verbose: ## Run tests with verbose output
 build: ## Build all feature combinations (debug mode)
 	@echo "==> Building server..."
 	@cargo build
-	@echo "==> Building lambda..."
-	@cargo build -p otlp2parquet-lambda
-	@echo "==> Building cloudflare..."
-	@cargo build -p otlp2parquet-cloudflare --target wasm32-unknown-unknown
 
 .PHONY: build-release
 build-release: ## Build all feature combinations (release mode)
 	@echo "==> Building server (release)..."
 	@cargo build --release
-	@echo "==> Building lambda (release)..."
-	@cargo build --release -p otlp2parquet-lambda
-	@echo "==> Building cloudflare (release)..."
-	@cargo build --release -p otlp2parquet-cloudflare --target wasm32-unknown-unknown
 
 .PHONY: build-server
 build-server: ## Build server binary only (default mode)
 	@cargo build --release
-
-.PHONY: build-lambda
-build-lambda: ## Build Lambda binary and create bootstrap-arm64.zip for deployment
-	@echo "==> Building Lambda binary with cargo-lambda..."
-	@cd crates/otlp2parquet-lambda && cargo lambda build --release --arm64
-	@echo "==> Creating bootstrap-arm64.zip..."
-	@cd target/lambda/bootstrap && zip -q ../bootstrap-arm64.zip bootstrap
-	@echo "==> Lambda deployment package ready at: target/lambda/bootstrap-arm64.zip"
-	@SIZE=$$(stat -f%z target/lambda/bootstrap-arm64.zip 2>/dev/null || stat -c%s target/lambda/bootstrap-arm64.zip 2>/dev/null); \
-	python3 -c "import sys; size=int(sys.argv[1]); print(f\"==> Package size: {size/1024:.1f} KB ({size/1024/1024:.2f} MB)\")" $$SIZE
-
-.PHONY: build-cloudflare
-build-cloudflare: ## Build Cloudflare Workers with worker-build
-	@echo "==> Building WASM for Cloudflare Workers..."
-	@cd crates/otlp2parquet-cloudflare && cargo install -q worker-build && worker-build --release
-	@echo "==> WASM ready at: crates/otlp2parquet-cloudflare/build/index_bg.wasm"
-	@SIZE=$$(stat -f%z crates/otlp2parquet-cloudflare/build/index_bg.wasm 2>/dev/null || stat -c%s crates/otlp2parquet-cloudflare/build/index_bg.wasm 2>/dev/null); \
-	python3 -c "import sys; size=int(sys.argv[1]); print(f\"==> WASM size: {size/1024:.1f} KB ({size/1024/1024:.3f} MB)\")" $$SIZE
 
 .PHONY: build-cli
 build-cli: ## Build CLI binary in release mode
@@ -108,69 +72,6 @@ run-cli: ## Run CLI binary in development mode
 	@cargo run --bin otlp2parquet
 
 #
-# WASM-Specific Commands
-#
-
-WASM_BINARY := crates/otlp2parquet-cloudflare/build/index_bg.wasm
-WASM_OPTIMIZED := crates/otlp2parquet-cloudflare/build/index_bg_optimized.wasm
-WASM_COMPRESSED := crates/otlp2parquet-cloudflare/build/index_bg_optimized.wasm.gz
-
-.PHONY: wasm
-wasm: build-cloudflare ## Build WASM binary for Cloudflare Workers
-
-.PHONY: wasm-opt
-wasm-opt: wasm ## Optimize WASM binary with wasm-opt
-	@echo "==> Optimizing WASM binary..."
-	@if ! command -v wasm-opt >/dev/null 2>&1; then \
-		echo "ERROR: wasm-opt not found. Install binaryen:"; \
-		echo "  macOS: brew install binaryen"; \
-		echo "  Linux: apt install binaryen or download from https://github.com/WebAssembly/binaryen/releases"; \
-		exit 1; \
-	fi
-	@wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext \
-	        -o $(WASM_OPTIMIZED) $(WASM_BINARY)
-	@echo "==> WASM optimization complete"
-	@$(MAKE) wasm-size
-
-.PHONY: wasm-compress
-wasm-compress: wasm-opt ## Compress optimized WASM binary with gzip
-	@echo "==> Compressing WASM binary..."
-	@gzip -9 -f -k $(WASM_OPTIMIZED)
-	@echo "==> Compression complete"
-	@$(MAKE) wasm-size
-
-.PHONY: wasm-size
-wasm-size: ## Show WASM binary sizes
-	@echo ""
-	@echo "WASM Binary Sizes:"
-	@echo "=================="
-	@if [ -f $(WASM_BINARY) ]; then \
-		SIZE=$$(stat -f%z $(WASM_BINARY) 2>/dev/null || stat -c%s $(WASM_BINARY) 2>/dev/null); \
-		python3 -c "import sys; size=int(sys.argv[1]); label=sys.argv[2]; print(f\"{label}:  {size/1024:.1f} KB ({size/1024/1024:.3f} MB)\")" $$SIZE Original; \
-	fi
-	@if [ -f $(WASM_OPTIMIZED) ]; then \
-		SIZE=$$(stat -f%z $(WASM_OPTIMIZED) 2>/dev/null || stat -c%s $(WASM_OPTIMIZED) 2>/dev/null); \
-		python3 -c "import sys; size=int(sys.argv[1]); label=sys.argv[2]; print(f\"{label}: {size/1024:.1f} KB ({size/1024/1024:.3f} MB)\")" $$SIZE Optimized; \
-	fi
-	@if [ -f $(WASM_COMPRESSED) ]; then \
-		SIZE=$$(stat -f%z $(WASM_COMPRESSED) 2>/dev/null || stat -c%s $(WASM_COMPRESSED) 2>/dev/null); \
-		python3 -c "import sys; size=int(sys.argv[1]); max_size=3145728; percent=size*100/max_size; print(f\"Compressed: {size/1024:.1f} KB ({size/1024/1024:.3f} MB) - {percent:.1f}% of 3MB limit\"); print(\"WARNING: Exceeds 3MB Cloudflare Workers limit!\" if size > max_size else \"✓ Within Cloudflare Workers 3MB limit\")" $$SIZE; \
-	fi
-	@echo ""
-
-.PHONY: wasm-profile
-wasm-profile: wasm ## Profile WASM binary size with twiggy
-	@if ! command -v twiggy >/dev/null 2>&1; then \
-		echo "Installing twiggy..."; \
-		cargo install twiggy; \
-	fi
-	@echo "==> Top 20 largest items in WASM binary:"
-	@twiggy top -n 20 $(WASM_BINARY)
-
-.PHONY: wasm-full
-wasm-full: wasm-compress wasm-profile ## Build, optimize, compress, and profile WASM binary
-
-#
 # Demo WASM Build
 #
 
@@ -184,18 +85,9 @@ clean-wasm-demo: ## Remove demo WASM artifacts
 #
 
 .PHONY: clean
-clean: ## Remove build artifacts (including WASM/Cloudflare build)
+clean: ## Remove build artifacts
 	@cargo clean
-	@rm -rf target/lambda
-	@rm -rf crates/otlp2parquet-cloudflare/build/
-	@rm -f crates/otlp2parquet-cloudflare/wrangler-smoke-*.toml
 	@echo "Cleaned all build artifacts"
-
-.PHONY: clean-wasm
-clean-wasm: ## Remove WASM-specific artifacts
-	@rm -f $(WASM_OPTIMIZED) $(WASM_COMPRESSED)
-	@rm -rf crates/otlp2parquet-cloudflare/build/
-	@echo "Cleaned WASM artifacts"
 
 #
 # Development Workflow Commands
@@ -205,7 +97,7 @@ clean-wasm: ## Remove WASM-specific artifacts
 pre-commit: fmt clippy test ## Run pre-commit checks (fmt, clippy, test)
 
 .PHONY: ci
-ci: fmt-check clippy test build-release wasm-compress ## Run full CI pipeline locally
+ci: fmt-check clippy test build-release ## Run full CI pipeline locally
 
 .PHONY: dev
 dev: check test ## Quick development check (fast)
@@ -231,39 +123,6 @@ install-tools: ## Install required development tools
 	@echo "==> Installing Rust toolchain..."
 	@rustup toolchain install stable
 	@rustup component add rustfmt clippy
-	@rustup target add wasm32-unknown-unknown
-	@echo "==> Installing wasm-opt (binaryen)..."
-	@if command -v brew >/dev/null 2>&1; then \
-		brew install binaryen; \
-	else \
-		echo "Please install binaryen manually: https://github.com/WebAssembly/binaryen/releases"; \
-	fi
-	@echo "==> Installing twiggy..."
-	@cargo install twiggy
-	@echo "==> Installing Cloudflare Wrangler CLI..."
-	@if command -v wrangler >/dev/null 2>&1; then \
-		echo "wrangler already installed."; \
-	elif command -v npm >/dev/null 2>&1; then \
-		npm install -g wrangler; \
-	else \
-		echo "Please install wrangler manually: npm install -g wrangler"; \
-	fi
-	@echo "==> Installing AWS SAM CLI..."
-	@if command -v sam >/dev/null 2>&1; then \
-		echo "aws-sam-cli already installed."; \
-	elif command -v brew >/dev/null 2>&1; then \
-		brew install aws-sam-cli; \
-	elif command -v pipx >/dev/null 2>&1; then \
-		pipx install aws-sam-cli; \
-	else \
-		echo "Please install aws-sam-cli manually: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html"; \
-	fi
-	@echo "==> Installing cargo-lambda..."
-	@if command -v cargo-lambda >/dev/null 2>&1; then \
-		cargo-lambda --version; \
-	else \
-		cargo install --locked cargo-lambda; \
-	fi
 	@echo "==> Installing uv (Python package manager)..."
 	@curl -LsSf https://astral.sh/uv/install.sh | sh
 	@echo "==> Installing DuckDB (for smoke tests)..."
@@ -289,15 +148,6 @@ version: ## Show versions of build tools
 	@echo "Components:"
 	@rustfmt --version 2>/dev/null || echo "rustfmt: not installed"
 	@cargo clippy --version 2>/dev/null || echo "clippy: not installed"
-	@echo ""
-	@echo "WASM tools:"
-	@wasm-opt --version 2>/dev/null || echo "wasm-opt: not installed"
-	@twiggy --version 2>/dev/null || echo "twiggy: not installed"
-	@echo ""
-	@echo "Serverless tooling:"
-	@wrangler --version 2>/dev/null || echo "wrangler: not installed"
-	@sam --version 2>/dev/null | head -n 1 || echo "aws-sam-cli: not installed"
-	@cargo-lambda --version 2>/dev/null || echo "cargo-lambda: not installed"
 	@echo ""
 	@echo "Data tools:"
 	@duckdb --version 2>/dev/null || echo "duckdb: not installed"
@@ -364,9 +214,9 @@ profile-all: bloat llvm-lines ## Run all profiling tools
 #
 
 .PHONY: test-smoke
-test-smoke: ## Run smoke tests for all platforms (requires Docker + cloud credentials)
-	@echo "==> Running unified smoke tests for all platforms..."
-	@cargo test --test smoke --features smoke-server,smoke-lambda,smoke-workers
+test-smoke: ## Run smoke tests for server only (requires Docker + DuckDB)
+	@echo "==> Running server smoke tests..."
+	@cargo test --test smoke --features smoke-server -- --test-threads=1
 
 .PHONY: smoke-server
 smoke-server: ## Run server smoke tests only (requires Docker + DuckDB)
@@ -388,33 +238,5 @@ smoke-server-verbose: ## Run server smoke tests with verbose output
 .PHONY: test-all
 test-all: test smoke-server ## Run unit tests + server smoke tests
 
-#
-# Platform Smoke Tests (requires cloud credentials)
-#
-
-.PHONY: smoke-lambda
-smoke-lambda: build-lambda ## Run Lambda + S3 Tables smoke tests (requires AWS credentials)
-	@echo "==> Running Lambda smoke tests..."
-	@echo "Prerequisites: AWS credentials (deployment bucket auto-created)"
-	@cargo test --test smoke --features smoke-lambda -- --test-threads=1
-
-.PHONY: smoke-workers
-smoke-workers: wasm-compress ## Run Workers + R2 smoke tests (requires Cloudflare credentials)
-	@echo "==> Running Workers smoke tests..."
-	@echo "Prerequisites: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID env vars"
-	@if [ -f crates/otlp2parquet-cloudflare/.env ]; then \
-		echo "Loading environment from crates/otlp2parquet-cloudflare/.env"; \
-		set -a && . crates/otlp2parquet-cloudflare/.env && set +a && \
-		PATH="$$PATH" cargo test --test smoke --features smoke-workers -- --test-threads=1; \
-	else \
-		PATH="$$PATH" cargo test --test smoke --features smoke-workers -- --test-threads=1; \
-	fi
-
-.PHONY: smoke-all
-smoke-all: smoke-lambda smoke-workers ## Run all platform smoke tests (requires all cloud credentials)
-
 .PHONY: test-full
 test-full: test smoke-server ## Run unit tests + server smoke tests (no cloud required)
-
-.PHONY: test-ci
-test-ci: test-full smoke-all ## Run complete test suite including cloud smoke tests

@@ -10,15 +10,10 @@ All variables use the `OTLP2PARQUET_` prefix and override config file values.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OTLP2PARQUET_STORAGE_BACKEND` | Auto | Storage type: `s3`, `r2`, or `fs` |
+| `OTLP2PARQUET_STORAGE_BACKEND` | Auto | Storage type: `s3` or `fs` |
 | `OTLP2PARQUET_S3_BUCKET` | - | S3 bucket name |
-| `OTLP2PARQUET_S3_REGION` | - | AWS region |
-| `OTLP2PARQUET_S3_ENDPOINT` | AWS | Custom S3 endpoint for MinIO or LocalStack |
-| `OTLP2PARQUET_R2_BUCKET` | - | R2 bucket name |
-| `OTLP2PARQUET_R2_ACCOUNT_ID` | - | Cloudflare account ID |
-| `AWS_ACCESS_KEY_ID` | - | R2 access key (no prefix) |
-| `AWS_SECRET_ACCESS_KEY` | - | R2 secret key (no prefix) |
-| `AWS_ENDPOINT_URL` | Auto | R2 endpoint (no prefix) |
+| `OTLP2PARQUET_S3_REGION` | - | Storage region |
+| `OTLP2PARQUET_S3_ENDPOINT` | Auto | Custom S3 endpoint for MinIO or other S3-compatible storage |
 | `OTLP2PARQUET_STORAGE_PATH` | `./data` | Filesystem storage path |
 | `OTLP2PARQUET_PARQUET_ROW_GROUP_SIZE` | `32768` | Parquet row group size |
 
@@ -33,18 +28,12 @@ All variables use the `OTLP2PARQUET_` prefix and override config file values.
 
 ### Batching
 
-Server only. Lambda and Cloudflare process requests individually.
-
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OTLP2PARQUET_BATCHING_ENABLED` | `true` | Enable in-memory batching |
 | `OTLP2PARQUET_BATCH_MAX_ROWS` | `200000` | Max rows per batch |
 | `OTLP2PARQUET_BATCH_MAX_BYTES` | `134217728` | Max bytes per batch (128MB) |
 | `OTLP2PARQUET_BATCH_MAX_AGE_SECS` | `10` | Max batch age in seconds |
-
-### Lambda
-
-No Lambda-specific environment variables.
 
 ---
 

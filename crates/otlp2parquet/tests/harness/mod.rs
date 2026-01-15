@@ -1,12 +1,10 @@
 //! Smoke test harness for platform-specific integration tests
 //!
-//! Provides a unified interface for testing otlp2parquet across different platforms:
-//! - Lambda + S3
-//! - Cloudflare Workers + R2
+//! Provides a unified interface for testing otlp2parquet on the server:
 //! - Local Server + MinIO
 //!
 //! Each platform implements the `SmokeTestHarness` trait, providing:
-//! 1. deploy() - Deploy infrastructure (Lambda function, Workers script)
+//! 1. deploy() - Deploy infrastructure
 //! 2. send_signals() - Send OTLP test data (logs, metrics, traces)
 //! 3. verify_execution() - Check for errors in platform logs
 //! 4. duckdb_verifier() - Get configured DuckDB verifier for Parquet validation
@@ -16,17 +14,8 @@
 //!
 //! DuckDB queries Parquet files directly from storage:
 //! - Docker/Server: MinIO S3
-//! - Lambda: AWS S3
-//! - Workers: Cloudflare R2
 
-#![cfg_attr(
-    not(any(
-        feature = "smoke-server",
-        feature = "smoke-lambda",
-        feature = "smoke-workers"
-    )),
-    allow(dead_code)
-)]
+#![cfg_attr(not(feature = "smoke-server"), allow(dead_code))]
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -107,18 +96,12 @@ pub struct StorageConfig {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum StorageBackend {
-    /// AWS S3 (or S3-compatible like MinIO)
+    /// S3-compatible (MinIO, local testing)
     S3 {
         region: String,
         bucket: String,
         endpoint: Option<String>, // For MinIO
         credentials: S3Credentials,
-    },
-    /// Cloudflare R2
-    R2 {
-        account_id: String,
-        bucket: String,
-        credentials: R2Credentials,
     },
 }
 
@@ -133,13 +116,6 @@ pub enum S3Credentials {
         access_key: String,
         secret_key: String,
     },
-}
-
-/// R2 credentials configuration
-#[derive(Debug, Clone)]
-pub struct R2Credentials {
-    pub access_key_id: String,
-    pub secret_access_key: String,
 }
 
 /// Validation report from DuckDB verification
@@ -176,7 +152,7 @@ impl DuckDBVerifier {
     fn generate_verification_script(&self, _prefix: &str) -> Result<String> {
         let mut script = String::new();
 
-        // Install extensions for S3/R2 access
+        // Install extensions for S3 access
         script.push_str("INSTALL httpfs;\n");
         script.push_str("LOAD httpfs;\n\n");
 
@@ -226,22 +202,6 @@ impl DuckDBVerifier {
                     }
                 }
             }
-            StorageBackend::R2 {
-                account_id,
-                bucket: _,
-                credentials,
-            } => {
-                script.push_str(&format!(
-                    "CREATE SECRET r2_secret (
-    TYPE S3,
-    KEY_ID '{}',
-    SECRET '{}',
-    ENDPOINT '{}.r2.cloudflarestorage.com',
-    REGION 'auto'
-);\n\n",
-                    credentials.access_key_id, credentials.secret_access_key, account_id
-                ));
-            }
         }
 
         // Direct Parquet file scanning with glob patterns
@@ -285,11 +245,6 @@ impl DuckDBVerifier {
                     Ok(format!("s3://{}/{}/**/*.parquet", bucket, full_prefix))
                 }
             }
-            StorageBackend::R2 { bucket, .. } => {
-                // DuckDB doesn't support r2:// URI scheme
-                // Use s3:// with R2 endpoint configured in secret
-                Ok(format!("s3://{}/{}/**/*.parquet", bucket, full_prefix))
-            }
         }
     }
 
@@ -318,7 +273,6 @@ impl DuckDBVerifier {
             .context("Failed to spawn duckdb process")?;
 
         // Add timeout to prevent hanging on connection issues
-        // R2 Data Catalog queries can be slow (~60s for 3 tables)
         let output = tokio::time::timeout(
             std::time::Duration::from_secs(120),
             child.wait_with_output(),
@@ -443,9 +397,3 @@ impl TestDataSet {
 
 #[cfg(feature = "smoke-server")]
 pub mod server;
-
-#[cfg(feature = "smoke-lambda")]
-pub mod lambda;
-
-#[cfg(feature = "smoke-workers")]
-pub mod workers;

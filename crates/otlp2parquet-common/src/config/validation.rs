@@ -135,8 +135,7 @@ fn validate_storage_config(config: &StorageConfig) -> Result<()> {
                     "R2 bucket name is required\n\n\
                     How to fix:\n\
                       • Environment: export {}R2_BUCKET=my-bucket\n\
-                      • TOML: [storage.r2]\n              bucket = \"my-bucket\"\n\n\
-                    See: https://smithclay.github.io/otlp2parquet/setup/cloudflare.html",
+                      • TOML: [storage.r2]\n              bucket = \"my-bucket\"\n",
                     ENV_PREFIX
                 );
             }
@@ -147,8 +146,7 @@ fn validate_storage_config(config: &StorageConfig) -> Result<()> {
                     How to fix:\n\
                       • Environment: export {}R2_ACCOUNT_ID=<your-account-id>\n\
                       • TOML: [storage.r2]\n              account_id = \"<your-account-id>\"\n\
-                      • Find your account ID: Cloudflare Dashboard → R2\n\n\
-                    See: https://smithclay.github.io/otlp2parquet/setup/cloudflare.html",
+                      • Find your account ID in your R2 dashboard\n",
                     ENV_PREFIX
                 );
             }
@@ -159,8 +157,7 @@ fn validate_storage_config(config: &StorageConfig) -> Result<()> {
                     How to fix:\n\
                       • Environment: export {}R2_ACCESS_KEY_ID=<your-key>\n\
                       • TOML: [storage.r2]\n              access_key_id = \"<your-key>\"\n\
-                      • Create API token: Cloudflare Dashboard → R2 → Manage R2 API Tokens\n\n\
-                    See: https://smithclay.github.io/otlp2parquet/setup/cloudflare.html",
+                      • Create an R2 API token in your storage dashboard\n",
                     ENV_PREFIX
                 );
             }
@@ -171,8 +168,7 @@ fn validate_storage_config(config: &StorageConfig) -> Result<()> {
                     How to fix:\n\
                       • Environment: export {}R2_SECRET_ACCESS_KEY=<your-secret>\n\
                       • TOML: [storage.r2]\n              secret_access_key = \"<your-secret>\"\n\
-                      • Create API token: Cloudflare Dashboard → R2 → Manage R2 API Tokens\n\n\
-                    See: https://smithclay.github.io/otlp2parquet/setup/cloudflare.html",
+                      • Create an R2 API token in your storage dashboard\n",
                     ENV_PREFIX
                 );
             }

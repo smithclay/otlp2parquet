@@ -4,8 +4,8 @@ use anyhow::Result;
 
 const DEFAULT_ENDPOINT: &str = "http://localhost:4318";
 
-/// Resolve the worker/server URL from provided argument or default
-pub async fn resolve_worker_url(url: Option<&str>) -> Result<String> {
+/// Resolve the OTLP endpoint URL from provided argument or default
+pub async fn resolve_endpoint_url(url: Option<&str>) -> Result<String> {
     match url {
         Some(u) => Ok(u.to_string()),
         None => Ok(DEFAULT_ENDPOINT.to_string()),
@@ -18,13 +18,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_with_url() {
-        let result = resolve_worker_url(Some("https://my-worker.workers.dev")).await;
-        assert_eq!(result.unwrap(), "https://my-worker.workers.dev");
+        let result = resolve_endpoint_url(Some("https://example.com")).await;
+        assert_eq!(result.unwrap(), "https://example.com");
     }
 
     #[tokio::test]
     async fn test_resolve_without_url() {
-        let result = resolve_worker_url(None).await;
+        let result = resolve_endpoint_url(None).await;
         assert_eq!(result.unwrap(), "http://localhost:4318");
     }
 }

@@ -8,7 +8,7 @@
 //
 // Features:
 // - Axum HTTP server (HTTP/1.1, HTTP/2)
-// - Multi-backend storage (S3, R2, Filesystem, GCS)
+// - Multi-backend storage (S3-compatible, filesystem)
 // - Structured logging with tracing
 // - Graceful shutdown
 // - Production-ready
@@ -38,7 +38,6 @@ mod handlers;
 mod init;
 
 pub mod connect;
-pub mod deploy;
 
 use handlers::{handle_logs, handle_metrics, handle_traces, health_check, ready_check};
 pub use init::init_tracing;

@@ -1,30 +1,18 @@
-//! Unified smoke tests for all platforms
+//! Unified smoke tests for server mode
 //!
 //! This module provides a unified test framework that runs the same test logic
-//! across all platforms (Server, Lambda, Workers) writing Parquet files.
+//! against the server implementation writing Parquet files.
 //!
 //! ## Test Matrix
 //! - Server + MinIO S3
-//! - Lambda + AWS S3
-//! - Workers + Cloudflare R2
 //!
 //! ## Running Tests
 //! ```bash
-//! # All platforms (requires Docker + cloud credentials)
-//! cargo test --test smoke --features smoke-server,smoke-lambda,smoke-workers
-//!
 //! # Server only (local Docker)
 //! cargo test --test smoke --features smoke-server
-//!
-//! # Cloud platforms only
-//! cargo test --test smoke --features smoke-lambda,smoke-workers
 //! ```
 
-#![cfg(any(
-    feature = "smoke-server",
-    feature = "smoke-lambda",
-    feature = "smoke-workers"
-))]
+#![cfg(feature = "smoke-server")]
 
 mod harness;
 
@@ -48,7 +36,7 @@ fn init_tracing() {
     });
 }
 
-/// Macro to generate smoke tests for all platforms
+/// Macro to generate smoke tests for server
 ///
 /// Usage:
 /// ```
@@ -57,8 +45,6 @@ fn init_tracing() {
 ///
 /// This generates:
 /// - server::test_name
-/// - lambda::test_name
-/// - workers::test_name
 macro_rules! smoke_test {
     ($test_name:ident, $test_fn:expr) => {
         paste::paste! {
@@ -74,29 +60,6 @@ macro_rules! smoke_test {
                 }
             }
 
-            #[cfg(feature = "smoke-lambda")]
-            mod [<lambda_ $test_name>] {
-                use super::*;
-
-                #[tokio::test]
-                async fn test() -> Result<()> {
-                    init_tracing();
-                    let harness = harness::lambda::LambdaHarness::new().await?;
-                    $test_fn(&harness).await
-                }
-            }
-
-            #[cfg(feature = "smoke-workers")]
-            mod [<workers_ $test_name>] {
-                use super::*;
-
-                #[tokio::test]
-                async fn test() -> Result<()> {
-                    init_tracing();
-                    let harness = harness::workers::WorkersHarness::from_env()?;
-                    $test_fn(&harness).await
-                }
-            }
         }
     };
 }
@@ -218,22 +181,3 @@ async fn test_traces_pipeline_impl(harness: &dyn SmokeTestHarness) -> Result<()>
 smoke_test!(logs_pipeline, test_logs_pipeline_impl);
 smoke_test!(metrics_pipeline, test_metrics_pipeline_impl);
 smoke_test!(traces_pipeline, test_traces_pipeline_impl);
-
-// ============================================================================
-// WORKERS BATCHING TESTS
-// ============================================================================
-
-/// Test logs pipeline with Workers batching mode (Durable Objects)
-#[cfg(feature = "smoke-workers")]
-mod workers_logs_batching_pipeline {
-    use super::*;
-
-    #[tokio::test]
-    async fn test() -> Result<()> {
-        init_tracing();
-        let harness = harness::workers::WorkersHarness::from_env_with_batching(
-            harness::workers::BatchMode::Enabled,
-        )?;
-        test_logs_pipeline_impl(&harness).await
-    }
-}

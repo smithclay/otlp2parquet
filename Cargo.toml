@@ -3,8 +3,6 @@ members = [
     "crates/otlp2parquet",
     "crates/otlp2parquet-common",
     "crates/otlp2parquet-writer",
-    "crates/otlp2parquet-cloudflare",
-    "crates/otlp2parquet-lambda",
     "crates/otlp2parquet-handlers",
 ]
 exclude = ["examples/generate-parquet-testdata"]
@@ -27,12 +25,6 @@ panic = "abort"           # Smaller panic handler
 
 [profile.release.package."*"]
 opt-level = "z"
-
-[profile.release.package.otlp2parquet-cloudflare]
-opt-level = "z"
-
-[profile.release.package.otlp2parquet-lambda]
-opt-level = 3
 
 [profile.release.package.otlp2parquet]
 opt-level = 3
@@ -65,11 +57,6 @@ hex = "0.4"
 base64 = "0.22"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi"] }
-
-# AWS SigV4 for S3 Tables authentication
-aws-sigv4 = { version = "1.3.6", default-features = false, features = ["sign-http"] }
-aws-credential-types = { version = "1.2", default-features = false }
-aws-config = { version = "1.8", default-features = false, features = ["rustls", "behavior-version-latest", "rt-tokio"] }
 
 # Build dependencies
 prost-build = "0.14"

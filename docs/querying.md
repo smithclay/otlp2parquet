@@ -1,6 +1,6 @@
 # Query Data
 
-Query your Parquet files with DuckDB, Athena, or any Parquet reader.
+Query your Parquet files with DuckDB or any Parquet reader.
 
 ## DuckDB (Recommended)
 
@@ -124,68 +124,6 @@ LIMIT 100;
 ```
 
 ## Other Query Engines
-
-??? note "AWS Athena"
-    Create external tables for each signal type:
-
-    ```sql
-    -- Create logs table
-    CREATE EXTERNAL TABLE otlp_logs (
-      Timestamp TIMESTAMP,
-      TraceId BINARY,
-      SpanId BINARY,
-      ServiceName STRING,
-      SeverityText STRING,
-      SeverityNumber INT,
-      Body STRING,
-      ResourceAttributes STRING,
-      LogAttributes STRING
-    )
-    STORED AS PARQUET
-    LOCATION 's3://my-bucket/logs/'
-    TBLPROPERTIES ('parquet.compress'='SNAPPY');
-
-    -- Create traces table
-    CREATE EXTERNAL TABLE otlp_traces (
-      Timestamp TIMESTAMP,
-      TraceId STRING,
-      SpanId STRING,
-      ParentSpanId STRING,
-      ServiceName STRING,
-      SpanName STRING,
-      SpanKind STRING,
-      Duration BIGINT,
-      StatusCode STRING,
-      StatusMessage STRING
-    )
-    STORED AS PARQUET
-    LOCATION 's3://my-bucket/traces/';
-
-    -- Create gauge metrics table
-    CREATE EXTERNAL TABLE otlp_metrics_gauge (
-      Timestamp TIMESTAMP,
-      ServiceName STRING,
-      MetricName STRING,
-      MetricDescription STRING,
-      MetricUnit STRING,
-      Value DOUBLE,
-      Attributes STRING
-    )
-    STORED AS PARQUET
-    LOCATION 's3://my-bucket/metrics/gauge/';
-
-    -- Query logs
-    SELECT ServiceName, COUNT(*) as log_count
-    FROM otlp_logs
-    WHERE Timestamp > current_timestamp - interval '1' hour
-    GROUP BY ServiceName;
-
-    -- Query traces
-    SELECT SpanName, AVG(Duration) / 1e9 as avg_seconds
-    FROM otlp_traces
-    WHERE StatusCode = 'STATUS_CODE_ERROR'
-    GROUP BY SpanName;
-    ```
 
 ??? note "Apache Spark"
     ```python

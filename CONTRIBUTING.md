@@ -18,10 +18,6 @@ make install-tools
 
 This installs:
 - Rust toolchain with clippy and rustfmt
-- WASM target (wasm32-unknown-unknown)
-- wasm-opt (binaryen)
-- cargo-lambda
-- Cloudflare wrangler
 - DuckDB
 - pre-commit hooks
 
@@ -32,12 +28,6 @@ Use the Makefile. Avoid calling cargo directly.
 ```bash
 # Build CLI binary
 make build-cli
-
-# Build Lambda function
-make build-lambda
-
-# Build Cloudflare Worker
-make build-cloudflare
 
 # Check all platforms
 make check
@@ -59,8 +49,6 @@ Write production code that never panics.
 - Keep allocations lean. Prefer `&str` over `String`.
 - Run clippy. Fix all warnings. Zero tolerance.
 
-Binary size matters. The WASM build must stay under 3MB compressed.
-
 ## Testing
 
 Run tests before committing:
@@ -78,13 +66,6 @@ For server smoke tests (requires Docker and DuckDB):
 
 ```bash
 make smoke-server
-```
-
-For platform smoke tests (requires cloud credentials):
-
-```bash
-make smoke-lambda   # AWS
-make smoke-workers  # Cloudflare
 ```
 
 ## Commit Messages

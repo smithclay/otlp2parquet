@@ -5,7 +5,7 @@ mod url;
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
-pub use url::resolve_worker_url;
+pub use url::resolve_endpoint_url;
 
 #[derive(Subcommand)]
 pub enum ConnectCommand {
@@ -54,7 +54,7 @@ pub struct CodexArgs {
 
 /// Generate OpenTelemetry Collector configuration
 async fn execute_otel_collector(args: OtelCollectorArgs) -> Result<()> {
-    let url = resolve_worker_url(args.url.as_deref()).await?;
+    let url = resolve_endpoint_url(args.url.as_deref()).await?;
 
     let config = generate_collector_config(&url);
     println!("{}", config);
@@ -64,7 +64,7 @@ async fn execute_otel_collector(args: OtelCollectorArgs) -> Result<()> {
 
 /// Generate Claude Code shell exports
 async fn execute_claude_code(args: ClaudeCodeArgs) -> Result<()> {
-    let url = resolve_worker_url(args.url.as_deref()).await?;
+    let url = resolve_endpoint_url(args.url.as_deref()).await?;
 
     let output = generate_claude_code_config(&url, &args.format);
     println!("{}", output);
@@ -74,7 +74,7 @@ async fn execute_claude_code(args: ClaudeCodeArgs) -> Result<()> {
 
 /// Generate OpenAI Codex CLI configuration
 async fn execute_codex(args: CodexArgs) -> Result<()> {
-    let url = resolve_worker_url(args.url.as_deref()).await?;
+    let url = resolve_endpoint_url(args.url.as_deref()).await?;
 
     let config = generate_codex_config(&url);
     println!("{}", config);
@@ -214,8 +214,8 @@ mod tests {
 
     #[test]
     fn test_generate_collector_config() {
-        let config = generate_collector_config("https://my-worker.workers.dev");
-        assert!(config.contains("endpoint: https://my-worker.workers.dev"));
+        let config = generate_collector_config("https://example.com");
+        assert!(config.contains("endpoint: https://example.com"));
         assert!(config.contains("compression: gzip"));
         assert!(config.contains("processors: [batch]"));
         assert!(config.contains("send_batch_size: 1000"));
@@ -227,21 +227,19 @@ mod tests {
 
     #[test]
     fn test_generate_claude_code_shell() {
-        let config = generate_claude_code_shell("https://my-worker.workers.dev");
+        let config = generate_claude_code_shell("https://example.com");
         assert!(config.contains("CLAUDE_CODE_ENABLE_TELEMETRY=1"));
         assert!(config.contains("OTEL_METRICS_EXPORTER=otlp"));
         assert!(config.contains("OTEL_LOGS_EXPORTER=otlp"));
-        assert!(config.contains("OTEL_EXPORTER_OTLP_ENDPOINT=https://my-worker.workers.dev"));
+        assert!(config.contains("OTEL_EXPORTER_OTLP_ENDPOINT=https://example.com"));
         assert!(config.contains("http/protobuf"));
     }
 
     #[test]
     fn test_generate_claude_code_json() {
-        let config = generate_claude_code_json("https://my-worker.workers.dev");
+        let config = generate_claude_code_json("https://example.com");
         assert!(config.contains("\"CLAUDE_CODE_ENABLE_TELEMETRY\": \"1\""));
-        assert!(
-            config.contains("\"OTEL_EXPORTER_OTLP_ENDPOINT\": \"https://my-worker.workers.dev\"")
-        );
+        assert!(config.contains("\"OTEL_EXPORTER_OTLP_ENDPOINT\": \"https://example.com\""));
         // Should include file path instructions
         assert!(config.contains("settings.json"));
         assert!(config.contains("~/.claude/settings.json"));
@@ -249,11 +247,11 @@ mod tests {
 
     #[test]
     fn test_generate_codex_config() {
-        let config = generate_codex_config("https://my-worker.workers.dev");
+        let config = generate_codex_config("https://example.com");
         assert!(config.contains("[otel]"));
         assert!(config.contains("exporter = \"otlp-http\""));
         assert!(config.contains("[otel.exporter.\"otlp-http\"]"));
-        assert!(config.contains("endpoint = \"https://my-worker.workers.dev/v1/logs\""));
+        assert!(config.contains("endpoint = \"https://example.com/v1/logs\""));
         assert!(config.contains("protocol = \"binary\""));
         // Should include config file path instructions
         assert!(config.contains("~/.codex/config.toml"));

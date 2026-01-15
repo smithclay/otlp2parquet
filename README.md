@@ -24,7 +24,7 @@ flowchart TB
 
     subgraph Storage["Storage"]
         Local["Local File"]
-        S3["S3/R2"]
+        S3["S3-Compatible"]
     end
 
     Query["Query Engines"]
@@ -35,8 +35,6 @@ flowchart TB
 ```
 
 ## Quick Start
-
-See [Deploy to Cloud](#deploy-to-the-cloud) for running in an AWS Lambda or Cloudflare Worker.
 
 ```bash
 # requires rust toolchain: `curl https://sh.rustup.rs -sSf | sh`
@@ -71,40 +69,14 @@ otlp2parquet connect codex
 ## Why?
 
 - **Keep monitoring data around a long time** Parquet on S3 can be 90% cheaper than large monitoring vendors for long-term analytics.
-- **Query with good tools** — duckDB, Spark, Athena, Trino, Pandas
-- **Deploy anywhere** — Local binary, Cloudflare Workers (WASM), AWS Lambda. In basic testing, converting to Parquet with a Lambda or Worker costs around $0.01 to $0.02 per uncompressed GB of log data in compute.
+- **Query with good tools** — duckDB, Spark, Trino, Pandas
+- **Deploy anywhere** — Local binary, containers, or your own servers.
 
-## Deploy to the Cloud
+## Run with Docker
 
-Once you've kicked the tires locally, deploy to serverless:
-
-**Cloudflare Workers + R2 with [wrangler](https://developers.cloudflare.com/workers/wrangler/install-and-update/) CLI:**
 ```bash
-# Generates config for workers
-otlp2parquet create cloudflare
-
-# Deploy to Cloudflare
-wrangler deploy
+docker-compose up
 ```
-
-**AWS Lambda + S3 with [AWS CLI](https://aws.amazon.com/cli/):**
-```bash
-# Generates a Cloudformation template for Lambda + S3
-otlp2parquet create aws
-
-# Deploy with Cloudformation
-aws cloudformation deploy --template-file template.yaml --stack-name otlp2parquet --capabilities CAPABILITY_IAM
-
-# Send a log (requires IAM sigv4 auth by default)
-uvx awscurl \
-  --service lambda \
-  --region $AWS_REGION \
-  -X POST $FUNCTION_URL \
-  -H "Content-Type: application/json" \
-  -d '{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"body":{"stringValue":"hello world"}}]}]}]}'
-```
-
-Both commands walk you through setup and generate the config files you need.
 
 ## Supported Signals
 
@@ -114,7 +86,7 @@ Logs, Metrics, Traces via OTLP/HTTP (protobuf or JSON, gzip compression supporte
 ## APIs, schemas, and partition layout
 - OTLP/HTTP endpoints: `/v1/logs`, `/v1/metrics`, `/v1/traces` (protobuf or JSON; gzip supported)
 - Partition layout: `logs/{service}/year=.../hour=.../{ts}-{uuid}.parquet`, `metrics/{type}/{service}/...`, `traces/{service}/...`
-- Storage: filesystem, S3, or R2
+- Storage: filesystem or S3-compatible object storage
 - Schemas: ClickHouse-compatible, PascalCase columns; five metric schemas (Gauge, Sum, Histogram, ExponentialHistogram, Summary)
 - Error model: HTTP 400 on invalid input/too large; 5xx on conversion/storage
 
@@ -135,7 +107,7 @@ Logs, Metrics, Traces via OTLP/HTTP (protobuf or JSON, gzip compression supporte
 <details>
 <summary>Caveats</summary>
 
-- **Batching**: Use an OTel Collector upstream to batch. There is experimental batching support available in the Cloudflare Worker implementation.
+- **Batching**: Use an OTel Collector upstream to batch and reduce request overhead.
 - **Schema**: Uses ClickHouse-compatible column names. Will converge with OTel Arrow (OTAP) when it stabilizes.
 - **Status**: Functional but evolving. API may change.
 

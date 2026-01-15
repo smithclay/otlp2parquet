@@ -10,10 +10,6 @@ updates:
       - "dependencies"
       - "rust"
     groups:
-      # Group AWS SDK updates
-      aws-sdk:
-        patterns:
-          - "aws-*"
       # Group Arrow/Parquet updates
       arrow:
         patterns:

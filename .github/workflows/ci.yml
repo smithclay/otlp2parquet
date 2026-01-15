@@ -1,9 +1,6 @@
 name: CI
 
-# Validates all three platform targets:
-# - Cloudflare Workers (WASM with OpenDAL S3→R2)
-# - AWS Lambda (native binary with OpenDAL S3)
-# - Server (default mode - native binary with OpenDAL multi-backend)
+# Validates the server target (default mode - native binary with OpenDAL multi-backend)
 
 on:
   push:
@@ -56,7 +53,6 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           components: clippy
-          targets: wasm32-unknown-unknown
           cache-prefix: clippy
           cache-key: all-targets
       - name: Run clippy
@@ -87,30 +83,10 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          targets: wasm32-unknown-unknown
           cache-prefix: build
           cache-key: release
       - name: Build release binaries
         run: make build-release
-
-  # Check WASM build size for Cloudflare Workers
-  # Target: <3MB compressed (currently ~1006KB with OpenDAL)
-  wasm-size:
-    name: WASM Size Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Configure toolchain
-        uses: ./.github/actions/setup-rust
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          targets: wasm32-unknown-unknown
-          cache-prefix: wasm
-          cache-key: size-check
-      - name: Setup wasm-opt
-        uses: ./.github/actions/setup-wasm-opt
-      - name: Build & check WASM size
-        run: make wasm-compress
 
   # Security audit
   audit:
@@ -179,7 +155,6 @@ jobs:
       - clippy
       - test
       - build
-      - wasm-size
       - audit
       - docs
       - smoke-server
