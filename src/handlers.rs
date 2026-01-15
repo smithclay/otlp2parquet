@@ -321,17 +321,26 @@ async fn process_metrics(
         signal = "metrics",
         gauge_batches = partitioned.gauge.len(),
         sum_batches = partitioned.sum.len(),
+        histogram_batches = partitioned.histogram.len(),
+        exp_histogram_batches = partitioned.exp_histogram.len(),
         "parse"
     );
 
     let gauge_count = partitioned.gauge.total_records;
     let sum_count = partitioned.sum.total_records;
+    let histogram_count = partitioned.histogram.total_records;
+    let exp_histogram_count = partitioned.exp_histogram.total_records;
 
     let write_start = Instant::now();
     let mut uploaded_paths = Vec::new();
 
     uploaded_paths.extend(write_metric_batches(MetricType::Gauge, partitioned.gauge).await?);
     uploaded_paths.extend(write_metric_batches(MetricType::Sum, partitioned.sum).await?);
+    uploaded_paths
+        .extend(write_metric_batches(MetricType::Histogram, partitioned.histogram).await?);
+    uploaded_paths.extend(
+        write_metric_batches(MetricType::ExponentialHistogram, partitioned.exp_histogram).await?,
+    );
 
     debug!(
         elapsed_us = write_start.elapsed().as_micros() as u64,
@@ -352,9 +361,12 @@ async fn process_metrics(
 
     let total_data_points = gauge_count
         + sum_count
-        + partitioned.skipped.histograms
-        + partitioned.skipped.exponential_histograms
-        + partitioned.skipped.summaries;
+        + histogram_count
+        + exp_histogram_count
+        + partitioned.skipped.summaries
+        + partitioned.skipped.nan_values
+        + partitioned.skipped.infinity_values
+        + partitioned.skipped.missing_values;
 
     counter!(
         "otlp.ingest.records",
@@ -370,11 +382,11 @@ async fn process_metrics(
 
     let response = Json(json!({
         "status": "ok",
-        "data_points_processed": gauge_count + sum_count,
+        "data_points_processed": gauge_count + sum_count + histogram_count + exp_histogram_count,
         "gauge_count": gauge_count,
         "sum_count": sum_count,
-        "histogram_count": partitioned.skipped.histograms,
-        "exponential_histogram_count": partitioned.skipped.exponential_histograms,
+        "histogram_count": histogram_count,
+        "exponential_histogram_count": exp_histogram_count,
         "summary_count": partitioned.skipped.summaries,
         "partitions": uploaded_paths,
     }));
@@ -392,7 +404,10 @@ async fn write_metric_batches(
 
     // Validate supported metric types
     match metric_type {
-        MetricType::Gauge | MetricType::Sum => {}
+        MetricType::Gauge
+        | MetricType::Sum
+        | MetricType::Histogram
+        | MetricType::ExponentialHistogram => {}
         _ => {
             warn!(
                 metric_type = ?metric_type,

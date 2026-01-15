@@ -15,8 +15,6 @@ pub use otlp2records::{
 pub fn report_skipped_metrics(skipped: &SkippedMetrics) {
     if skipped.has_skipped() {
         tracing::warn!(
-            histograms = skipped.histograms,
-            exponential_histograms = skipped.exponential_histograms,
             summaries = skipped.summaries,
             nan_values = skipped.nan_values,
             infinity_values = skipped.infinity_values,
@@ -64,6 +62,14 @@ pub fn decode_metrics_partitioned(
             .map(group_batch_by_service)
             .unwrap_or_default(),
         sum: batches.sum.map(group_batch_by_service).unwrap_or_default(),
+        histogram: batches
+            .histogram
+            .map(group_batch_by_service)
+            .unwrap_or_default(),
+        exp_histogram: batches
+            .exp_histogram
+            .map(group_batch_by_service)
+            .unwrap_or_default(),
         skipped: batches.skipped,
     })
 }

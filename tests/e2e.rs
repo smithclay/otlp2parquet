@@ -79,30 +79,35 @@ async fn test_metrics_sum_protobuf() {
 }
 
 #[tokio::test]
-async fn test_metrics_histogram_protobuf_skipped() {
+async fn test_metrics_histogram_protobuf() {
     let payload = fs::read(testdata_path("metrics_histogram.pb"))
         .expect("Failed to read metrics_histogram.pb");
 
-    let result = decode_metrics(&payload, InputFormat::Protobuf)
-        .expect("Failed to decode histogram metrics");
+    let batches = transform_metrics(&payload, InputFormat::Protobuf)
+        .expect("Failed to transform histogram metrics");
 
+    assert!(batches.histogram.is_some(), "Expected histogram batch");
     assert!(
-        result.skipped.histograms > 0,
-        "Expected histogram data to be skipped"
+        batches.histogram.unwrap().num_rows() > 0,
+        "Expected histogram rows"
     );
 }
 
 #[tokio::test]
-async fn test_metrics_exponential_histogram_protobuf_skipped() {
+async fn test_metrics_exponential_histogram_protobuf() {
     let payload = fs::read(testdata_path("metrics_exponential_histogram.pb"))
         .expect("Failed to read metrics_exponential_histogram.pb");
 
-    let result = decode_metrics(&payload, InputFormat::Protobuf)
-        .expect("Failed to decode exponential histogram metrics");
+    let batches = transform_metrics(&payload, InputFormat::Protobuf)
+        .expect("Failed to transform exponential histogram metrics");
 
     assert!(
-        result.skipped.exponential_histograms > 0,
-        "Expected exponential histogram data to be skipped"
+        batches.exp_histogram.is_some(),
+        "Expected exponential histogram batch"
+    );
+    assert!(
+        batches.exp_histogram.unwrap().num_rows() > 0,
+        "Expected exponential histogram rows"
     );
 }
 
@@ -176,7 +181,7 @@ async fn test_metrics_sum_jsonl() {
 }
 
 #[tokio::test]
-async fn test_metrics_histogram_jsonl_skipped() {
+async fn test_metrics_histogram_jsonl() {
     let payload = fs::read(testdata_path("metrics_histogram.jsonl"))
         .expect("Failed to read metrics_histogram.jsonl");
 
@@ -185,8 +190,8 @@ async fn test_metrics_histogram_jsonl_skipped() {
         .expect("Failed to decode metrics JSONL");
 
     assert!(
-        partitioned.skipped.histograms > 0,
-        "Expected histogram data to be skipped"
+        !partitioned.histogram.is_empty(),
+        "Expected histogram metrics"
     );
 }
 
