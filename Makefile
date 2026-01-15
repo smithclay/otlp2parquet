@@ -58,7 +58,7 @@ build-server: ## Build server binary only (default mode)
 .PHONY: build-cli
 build-cli: ## Build CLI binary in release mode
 	@echo "==> Building otlp2parquet CLI binary..."
-	@cargo build --release -p otlp2parquet --bin otlp2parquet
+	@cargo build --release --bin otlp2parquet
 	@echo "==> Binary available at: target/release/otlp2parquet"
 
 .PHONY: install-cli
@@ -108,11 +108,11 @@ dev: check test ## Quick development check (fast)
 
 .PHONY: doc
 doc: ## Build documentation
-	@cargo doc --no-deps --workspace
+	@cargo doc --no-deps
 
 .PHONY: doc-open
 doc-open: ## Build and open documentation in browser
-	@cargo doc --no-deps --workspace --open
+	@cargo doc --no-deps --open
 
 #
 # Utility Commands
@@ -161,23 +161,14 @@ audit: ## Run security audit on dependencies
 #
 
 .PHONY: publish-dry-run
-publish-dry-run: ## Dry-run publish all crates to crates.io (in dependency order)
-	@echo "==> Dry-run publishing workspace crates..."
-	@if ! command -v cargo-ws >/dev/null 2>&1; then \
-		echo "Installing cargo-workspaces..."; \
-		cargo install cargo-workspaces; \
-	fi
-	@cargo ws publish --dry-run
+publish-dry-run: ## Dry-run publish crate to crates.io
+	@echo "==> Dry-run publishing crate to crates.io..."
+	@cargo publish --dry-run
 
 .PHONY: publish
-publish: ## Publish all crates to crates.io (in dependency order)
-	@echo "==> Publishing workspace crates to crates.io..."
-	@echo "Order: otlp2parquet-proto -> otlp2parquet-common -> otlp2parquet"
-	@if ! command -v cargo-ws >/dev/null 2>&1; then \
-		echo "Installing cargo-workspaces..."; \
-		cargo install cargo-workspaces; \
-	fi
-	@cargo ws publish
+publish: ## Publish crate to crates.io
+	@echo "==> Publishing crate to crates.io..."
+	@cargo publish
 
 #
 # Performance Profiling Commands

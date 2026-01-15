@@ -2,10 +2,10 @@
 //!
 //! Writes OTLP Arrow RecordBatch data to partitioned Parquet files using OpenDAL.
 
+use crate::SignalType;
 use arrow::array::RecordBatch;
 use bytes::Bytes;
 use futures::future::BoxFuture;
-use otlp2parquet_common::SignalType;
 use parquet::arrow::{async_writer::AsyncFileWriter, AsyncArrowWriter};
 use parquet::errors::{ParquetError, Result as ParquetResult};
 use std::borrow::Cow;
@@ -262,8 +262,10 @@ mod tests {
         use arrow::array::TimestampMillisecondArray;
         use otlp2records::{transform_logs, InputFormat};
 
-        let test_data =
-            std::fs::read("../../testdata/logs.pb").expect("Failed to read testdata/logs.pb");
+        let test_data_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata")
+            .join("logs.pb");
+        let test_data = std::fs::read(&test_data_path).expect("Failed to read testdata/logs.pb");
 
         let batch =
             transform_logs(&test_data, InputFormat::Protobuf).expect("Failed to transform logs");

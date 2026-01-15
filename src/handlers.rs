@@ -2,6 +2,7 @@
 //
 // Implements OTLP ingestion and health check endpoints
 
+use crate::{InputFormat, MetricType, SignalType};
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
@@ -9,7 +10,6 @@ use axum::{
     Json,
 };
 use metrics::{counter, histogram};
-use otlp2parquet_common::{InputFormat, MetricType, SignalType};
 
 use crate::batch::CompletedBatch;
 use crate::codec::{

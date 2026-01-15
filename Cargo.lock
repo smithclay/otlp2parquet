@@ -1967,7 +1967,7 @@ dependencies = [
 
 [[package]]
 name = "otlp2parquet"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "arrow",
@@ -1978,10 +1978,10 @@ dependencies = [
  "dhat",
  "dialoguer",
  "futures",
+ "hex",
  "metrics",
  "once_cell",
  "opendal",
- "otlp2parquet-common",
  "otlp2records",
  "parking_lot 0.12.5",
  "parquet",
@@ -1994,22 +1994,11 @@ dependencies = [
  "thiserror 2.0.17",
  "time",
  "tokio",
+ "toml",
  "tower-http",
  "tracing",
  "tracing-subscriber",
  "uuid",
-]
-
-[[package]]
-name = "otlp2parquet-common"
-version = "0.7.1"
-dependencies = [
- "anyhow",
- "hex",
- "otlp2records",
- "serde",
- "toml",
- "tracing",
 ]
 
 [[package]]

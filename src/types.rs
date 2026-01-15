@@ -78,7 +78,7 @@ impl FromStr for MetricType {
 ///
 /// # Examples
 /// ```
-/// use otlp2parquet_common::types::SignalKey;
+/// use otlp2parquet::types::SignalKey;
 /// use std::str::FromStr;
 ///
 /// // Parse from DO ID format

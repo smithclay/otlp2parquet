@@ -1,7 +1,7 @@
 //! Storage operator initialization and management.
 
+use crate::config::{RuntimeConfig, StorageBackend};
 use once_cell::sync::OnceCell;
-use otlp2parquet_common::config::{RuntimeConfig, StorageBackend};
 
 use super::error::{Result, WriterError};
 

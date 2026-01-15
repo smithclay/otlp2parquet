@@ -4,9 +4,11 @@ use std::process::Command;
 use tempfile::TempDir;
 
 fn get_binary_path() -> PathBuf {
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_otlp2parquet") {
+        return PathBuf::from(path);
+    }
+
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.pop(); // Go up to workspace root
-    path.pop();
     path.push("target");
     path.push("debug");
     path.push("otlp2parquet");

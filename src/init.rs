@@ -2,8 +2,8 @@
 //
 // Storage backend and logging/tracing setup
 
+use crate::config::{LogFormat, RuntimeConfig, StorageBackend};
 use anyhow::Result;
-use otlp2parquet_common::config::{LogFormat, RuntimeConfig, StorageBackend};
 use tracing::info;
 
 /// Initialize storage from RuntimeConfig

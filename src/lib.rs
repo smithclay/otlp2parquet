@@ -20,13 +20,22 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use otlp2parquet_common::config::RuntimeConfig;
+
+pub mod config;
+pub mod types;
+
+pub use config::{
+    BatchConfig, CloudflareConfig, EnvSource, FsConfig, LambdaConfig, LogFormat, Platform,
+    RequestConfig, RuntimeConfig, ServerConfig, StorageBackend, StorageConfig, ENV_PREFIX,
+};
+pub use otlp2records::InputFormat;
+pub use types::{Blake3Hash, MetricType, SignalKey, SignalType};
 
 mod batch;
 pub mod codec;
 
 use crate::writer::set_parquet_row_group_size;
-use batch::{BatchConfig, BatchManager};
+use batch::{BatchConfig as BatcherConfig, BatchManager};
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -158,7 +167,7 @@ pub async fn run_with_config(config: RuntimeConfig) -> Result<()> {
     init_writer(&config)?;
 
     // Configure batching
-    let batch_config = BatchConfig {
+    let batch_config = BatcherConfig {
         max_rows: config.batch.max_rows,
         max_bytes: config.batch.max_bytes,
         max_age: Duration::from_secs(config.batch.max_age_secs),
