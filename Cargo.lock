@@ -1983,18 +1983,15 @@ dependencies = [
  "arrow",
  "async-trait",
  "axum",
- "bytes",
  "clap",
  "dhat",
  "dialoguer",
- "futures",
  "hex",
  "metrics",
  "once_cell",
  "opendal",
  "otlp2records",
  "parking_lot",
- "parquet",
  "paste",
  "rand 0.8.5",
  "reqwest",
@@ -2027,6 +2024,7 @@ dependencies = [
  "once_cell",
  "opentelemetry-proto",
  "ordered-float 4.6.0",
+ "parquet",
  "prost",
  "serde",
  "serde_json",
@@ -2080,16 +2078,13 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "chrono",
- "futures",
  "half",
  "hashbrown 0.15.5",
  "num",
  "num-bigint",
  "paste",
  "seq-macro",
- "snap",
  "thrift",
- "tokio",
  "twox-hash 1.6.3",
 ]
 
@@ -2910,12 +2905,6 @@ dependencies = [
  "quote",
  "syn",
 ]
-
-[[package]]
-name = "snap"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b6b67fb9a61334225b5b790716f609cd58395f895b3fe8b328786812a40bc3b"
 
 [[package]]
 name = "socket2"

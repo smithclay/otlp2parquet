@@ -15,7 +15,6 @@ All variables use the `OTLP2PARQUET_` prefix and override config file values.
 | `OTLP2PARQUET_S3_REGION` | - | Storage region |
 | `OTLP2PARQUET_S3_ENDPOINT` | Auto | Custom S3 endpoint for MinIO or other S3-compatible storage |
 | `OTLP2PARQUET_STORAGE_PATH` | `./data` | Filesystem storage path |
-| `OTLP2PARQUET_PARQUET_ROW_GROUP_SIZE` | `32768` | Parquet row group size |
 
 ### Server
 

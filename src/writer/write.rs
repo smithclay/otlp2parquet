@@ -4,45 +4,12 @@
 
 use crate::SignalType;
 use arrow::array::RecordBatch;
-use bytes::Bytes;
-use futures::future::BoxFuture;
-use parquet::arrow::{async_writer::AsyncFileWriter, AsyncArrowWriter};
-use parquet::errors::{ParquetError, Result as ParquetResult};
+use otlp2records::output::to_parquet_bytes;
 use std::borrow::Cow;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
 use super::error::{Result, WriterError};
-
-struct OpendalAsyncWriter(opendal::Writer);
-
-impl OpendalAsyncWriter {
-    fn new(inner: opendal::Writer) -> Self {
-        Self(inner)
-    }
-}
-
-impl AsyncFileWriter for OpendalAsyncWriter {
-    fn write(&mut self, bs: Bytes) -> BoxFuture<'_, ParquetResult<()>> {
-        Box::pin(async move {
-            self.0
-                .write(bs)
-                .await
-                .map_err(|e| ParquetError::External(Box::new(e)))?;
-            Ok(())
-        })
-    }
-
-    fn complete(&mut self) -> BoxFuture<'_, ParquetResult<()>> {
-        Box::pin(async move {
-            self.0
-                .close()
-                .await
-                .map_err(|e| ParquetError::External(Box::new(e)))?;
-            Ok(())
-        })
-    }
-}
 
 /// Request parameters for writing a batch to storage.
 pub struct WriteBatchRequest<'a> {
@@ -78,28 +45,17 @@ async fn write_plain_parquet(
 
     tracing::debug!("Writing plain Parquet to path: {}", file_path);
 
-    let op_writer = op.writer(&file_path).await.map_err(|e| {
-        WriterError::write_failure(format!("Failed to open writer for '{}': {}", file_path, e))
+    let parquet_bytes = to_parquet_bytes(batch).map_err(|e| {
+        WriterError::write_failure(format!("Failed to encode Parquet bytes: {}", e))
     })?;
-    let async_writer = OpendalAsyncWriter::new(op_writer);
+    let bytes_written = parquet_bytes.len();
 
-    let mut parquet_writer = AsyncArrowWriter::try_new(
-        async_writer,
-        batch.schema(),
-        Some(super::encoding::writer_properties().clone()),
-    )
-    .map_err(|e| WriterError::write_failure(format!("Failed to create Parquet writer: {}", e)))?;
-
-    parquet_writer
-        .write(batch)
-        .await
-        .map_err(|e| WriterError::write_failure(format!("Failed to write RecordBatch: {}", e)))?;
-
-    parquet_writer.finish().await.map_err(|e| {
-        WriterError::write_failure(format!("Failed to close Parquet writer: {}", e))
+    op.write(&file_path, parquet_bytes).await.map_err(|e| {
+        WriterError::write_failure(format!(
+            "Failed to write parquet bytes to '{}': {}",
+            file_path, e
+        ))
     })?;
-
-    let bytes_written = parquet_writer.bytes_written();
 
     let row_count = batch.num_rows();
     tracing::info!(

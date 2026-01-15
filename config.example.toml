@@ -62,7 +62,6 @@ backend = "fs"
 
 # Parquet row group size (advanced tuning)
 # Recommended: 32,768 - 1,048,576 rows per group
-# parquet_row_group_size = 32768
 
 # --- Filesystem Storage (backend="fs") ---
 [storage.fs]

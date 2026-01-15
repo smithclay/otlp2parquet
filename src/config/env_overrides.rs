@@ -59,10 +59,6 @@ pub fn apply_env_overrides<E: EnvSource>(config: &mut RuntimeConfig, env: &E) ->
             .parse::<StorageBackend>()
             .context("Invalid OTLP2PARQUET_STORAGE_BACKEND value")?;
     }
-    if let Some(row_group_size) = get_env_usize(env, "PARQUET_ROW_GROUP_SIZE")? {
-        config.storage.parquet_row_group_size = row_group_size;
-    }
-
     // Filesystem storage
     if let Some(path) = get_env_string(env, "STORAGE_PATH")? {
         if config.storage.fs.is_none() {

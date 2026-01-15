@@ -34,7 +34,6 @@ pub use types::{Blake3Hash, MetricType, SignalKey, SignalType};
 mod batch;
 pub mod codec;
 
-use crate::writer::set_parquet_row_group_size;
 use batch::{BatchConfig as BatcherConfig, BatchManager};
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -151,7 +150,6 @@ pub async fn run_with_config(config: RuntimeConfig) -> Result<()> {
     init_tracing(&config);
 
     // Configure Parquet writer properties before first use
-    set_parquet_row_group_size(config.storage.parquet_row_group_size);
 
     info!("Server mode - full-featured HTTP server with multi-backend storage");
 

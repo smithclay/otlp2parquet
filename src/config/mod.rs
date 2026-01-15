@@ -79,8 +79,6 @@ impl Default for RequestConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
     pub backend: StorageBackend,
-    #[serde(default = "default_parquet_row_group_size")]
-    pub parquet_row_group_size: usize,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fs: Option<FsConfig>,
@@ -108,10 +106,6 @@ impl std::fmt::Display for StorageBackend {
             StorageBackend::R2 => write!(f, "r2"),
         }
     }
-}
-
-fn default_parquet_row_group_size() -> usize {
-    32 * 1024
 }
 
 impl std::str::FromStr for StorageBackend {
@@ -290,14 +284,12 @@ fn platform_defaults(platform: Platform) -> RuntimeConfig {
     let storage = match storage_backend {
         StorageBackend::Fs => StorageConfig {
             backend: StorageBackend::Fs,
-            parquet_row_group_size: default_parquet_row_group_size(),
             fs: Some(FsConfig::default()),
             s3: None,
             r2: None,
         },
         StorageBackend::S3 => StorageConfig {
             backend: StorageBackend::S3,
-            parquet_row_group_size: default_parquet_row_group_size(),
             fs: None,
             s3: Some(S3Config {
                 bucket: "otlp-logs".to_string(),
@@ -309,7 +301,6 @@ fn platform_defaults(platform: Platform) -> RuntimeConfig {
         },
         StorageBackend::R2 => StorageConfig {
             backend: StorageBackend::R2,
-            parquet_row_group_size: default_parquet_row_group_size(),
             fs: None,
             s3: None,
             r2: Some(R2Config {
