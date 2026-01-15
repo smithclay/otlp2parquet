@@ -32,18 +32,14 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["e
 
 parking_lot = "0.12"
 
-axum = { version = "0.7", default-features = false, features = ["tokio", "http1", "http2", "json"] }
+axum = { version = "0.8.8", default-features = false, features = ["tokio", "http1", "http2", "json"] }
 tower-http = { version = "0.6", default-features = false, features = ["trace", "decompression-gzip"] }
 
 time = { version = "0.3", default-features = false, features = ["std"] }
 uuid = { version = "1", default-features = false, features = ["v4"] }
-metrics = { version = "0.21", default-features = false }
+metrics = { version = "0.24", default-features = false }
 clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
-dialoguer = { version = "0.12", default-features = false, features = ["password"] }
-rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
-opendal = { version = "0.54", default-features = false, features = ["services-fs", "services-s3"] }
-
-dhat = { version = "0.3", optional = true }
+opendal = { version = "0.55", default-features = false, features = ["services-fs", "services-s3"] }
 
 [dev-dependencies]
 tempfile = "3.13"
@@ -56,7 +52,6 @@ paste = "1.0"
 
 [features]
 default = []
-dhat-heap = ["dep:dhat"]
 docker-tests = []
 smoke-server = []
 

@@ -78,7 +78,7 @@ async fn handle_signal(
 
     let max_payload = state.max_payload_bytes;
     if body.len() > max_payload {
-        counter!("otlp.ingest.rejected", 1);
+        counter!("otlp.ingest.rejected").increment(1);
         return Err(AppError::with_status(
             StatusCode::PAYLOAD_TOO_LARGE,
             anyhow::anyhow!("payload {} exceeds limit {}", body.len(), max_payload),
@@ -99,8 +99,8 @@ async fn process_logs(
 ) -> Result<Response, AppError> {
     let start = Instant::now();
     let body_len = body.len();
-    counter!("otlp.ingest.requests", 1);
-    histogram!("otlp.ingest.bytes", body_len as f64);
+    counter!("otlp.ingest.requests").increment(1);
+    histogram!("otlp.ingest.bytes").record(body_len as f64);
 
     let parse_start = Instant::now();
     let grouped = decode_logs_partitioned(&body, format).map_err(|e| {
@@ -143,7 +143,7 @@ async fn process_logs_batched(
         }
 
         total_records += pb.record_count;
-        counter!("otlp.ingest.records", pb.record_count as u64);
+        counter!("otlp.ingest.records").increment(pb.record_count as u64);
 
         // Ingest into batcher - may return completed batches if thresholds hit
         let (completed, _metadata) = batcher
@@ -184,10 +184,7 @@ async fn process_logs_batched(
         "batch_ingest"
     );
 
-    histogram!(
-        "otlp.ingest.latency_ms",
-        start.elapsed().as_secs_f64() * 1000.0
-    );
+    histogram!("otlp.ingest.latency_ms").record(start.elapsed().as_secs_f64() * 1000.0);
 
     let response = Json(json!({
         "status": "ok",
@@ -221,10 +218,7 @@ async fn process_logs_direct(
         "write"
     );
 
-    histogram!(
-        "otlp.ingest.latency_ms",
-        start.elapsed().as_secs_f64() * 1000.0
-    );
+    histogram!("otlp.ingest.latency_ms").record(start.elapsed().as_secs_f64() * 1000.0);
 
     let response = Json(json!({
         "status": "ok",
@@ -242,8 +236,8 @@ async fn process_traces(
     body: axum::body::Bytes,
 ) -> Result<Response, AppError> {
     let start = Instant::now();
-    counter!("otlp.ingest.requests", 1, "signal" => "traces");
-    histogram!("otlp.ingest.bytes", body.len() as f64, "signal" => "traces");
+    counter!("otlp.ingest.requests", "signal" => "traces").increment(1);
+    histogram!("otlp.ingest.bytes", "signal" => "traces").record(body.len() as f64);
 
     let parse_start = Instant::now();
     let grouped = decode_traces_partitioned(&body, format).map_err(|e| {
@@ -285,11 +279,8 @@ async fn process_traces(
             .into_response());
     }
 
-    histogram!(
-        "otlp.ingest.latency_ms",
-        start.elapsed().as_secs_f64() * 1000.0,
-        "signal" => "traces"
-    );
+    histogram!("otlp.ingest.latency_ms", "signal" => "traces")
+        .record(start.elapsed().as_secs_f64() * 1000.0);
 
     let response = Json(json!({
         "status": "ok",
@@ -305,8 +296,8 @@ async fn process_metrics(
     body: axum::body::Bytes,
 ) -> Result<Response, AppError> {
     let start = Instant::now();
-    counter!("otlp.ingest.requests", 1, "signal" => "metrics");
-    histogram!("otlp.ingest.bytes", body.len() as f64, "signal" => "metrics");
+    counter!("otlp.ingest.requests", "signal" => "metrics").increment(1);
+    histogram!("otlp.ingest.bytes", "signal" => "metrics").record(body.len() as f64);
 
     let parse_start = Instant::now();
     let partitioned = decode_metrics_partitioned(&body, format).map_err(|e| {
@@ -368,17 +359,10 @@ async fn process_metrics(
         + partitioned.skipped.infinity_values
         + partitioned.skipped.missing_values;
 
-    counter!(
-        "otlp.ingest.records",
-        total_data_points as u64,
-        "signal" => "metrics"
-    );
+    counter!("otlp.ingest.records", "signal" => "metrics").increment(total_data_points as u64);
 
-    histogram!(
-        "otlp.ingest.latency_ms",
-        start.elapsed().as_secs_f64() * 1000.0,
-        "signal" => "metrics"
-    );
+    histogram!("otlp.ingest.latency_ms", "signal" => "metrics")
+        .record(start.elapsed().as_secs_f64() * 1000.0);
 
     let response = Json(json!({
         "status": "ok",
@@ -453,7 +437,7 @@ pub(crate) async fn persist_log_batch(
         })
         .await?;
 
-        counter!("otlp.batch.flushes", 1);
+        counter!("otlp.batch.flushes").increment(1);
         paths.push(path);
     }
 
@@ -484,14 +468,11 @@ async fn write_grouped_batches(
         total_records += pb.record_count;
         match mode {
             BatchWriteMode::Logs => {
-                counter!("otlp.ingest.records", pb.record_count as u64);
+                counter!("otlp.ingest.records").increment(pb.record_count as u64);
             }
             BatchWriteMode::Traces => {
-                counter!(
-                    "otlp.ingest.records",
-                    pb.record_count as u64,
-                    "signal" => "traces"
-                );
+                counter!("otlp.ingest.records", "signal" => "traces")
+                    .increment(pb.record_count as u64);
             }
             BatchWriteMode::Metrics { .. } => {}
         }
@@ -510,23 +491,23 @@ async fn write_grouped_batches(
 
         match mode {
             BatchWriteMode::Logs => {
-                counter!("otlp.batch.flushes", 1);
-                histogram!("otlp.batch.rows", pb.record_count as f64);
+                counter!("otlp.batch.flushes").increment(1);
+                histogram!("otlp.batch.rows").record(pb.record_count as f64);
                 info!(
                     "Committed batch path={} service={} rows={}",
                     path, pb.service_name, pb.record_count
                 );
             }
             BatchWriteMode::Traces => {
-                counter!("otlp.traces.flushes", 1);
-                histogram!("otlp.batch.rows", pb.record_count as f64, "signal" => "traces");
+                counter!("otlp.traces.flushes").increment(1);
+                histogram!("otlp.batch.rows", "signal" => "traces").record(pb.record_count as f64);
                 info!(
                     "Committed traces batch path={} service={} spans={}",
                     path, pb.service_name, pb.record_count
                 );
             }
             BatchWriteMode::Metrics { metric_type } => {
-                counter!("otlp.metrics.flushes", 1, "metric_type" => metric_type);
+                counter!("otlp.metrics.flushes", "metric_type" => metric_type).increment(1);
                 info!(
                     "Committed metrics batch path={} metric_type={} service={} points={}",
                     path, metric_type, pb.service_name, pb.record_count
