@@ -77,9 +77,25 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
 
+      - name: Verify Cargo.toml version matches tag
+        env:
+          VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          if [ "$CARGO_VERSION" != "$VERSION" ]; then
+            echo "::error::Cargo.toml version ($CARGO_VERSION) does not match tag ($VERSION)"
+            exit 1
+          fi
+          echo "Version verified: $CARGO_VERSION"
+
+  ci:
+    name: Run CI Checks
+    needs: prepare
+    uses: ./.github/workflows/ci.yml
+
   artifacts:
     name: Build Release Artifacts
-    needs: prepare
+    needs: [prepare, ci]
     if: needs.prepare.outputs.tag != ''
     uses: ./.github/workflows/build-artifacts.yml
     with:
@@ -200,19 +216,38 @@ jobs:
           cd ..
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.prepare.outputs.tag }}
-          target_commitish: ${{ needs.prepare.outputs.commit }}
-          generate_release_notes: true
-          draft: false
-          prerelease: false
-          files: |
-            artifacts/**/*.tar.gz
-            artifacts/**/*.zip
-            checksums.txt
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes \
+            artifacts/**/*.tar.gz \
+            artifacts/**/*.zip \
+            checksums.txt
+
+  crates-publish:
+    name: Publish to crates.io
+    needs:
+      - prepare
+      - publish
+    if: needs.prepare.outputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+
+      - name: Configure toolchain
+        uses: ./.github/actions/setup-rust
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p otlp2parquet
 
   docs:
     name: Deploy Documentation
