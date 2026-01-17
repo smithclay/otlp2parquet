@@ -92,6 +92,10 @@ jobs:
     name: Run CI Checks
     needs: prepare
     uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+      checks: write
+    secrets: inherit
 
   artifacts:
     name: Build Release Artifacts
