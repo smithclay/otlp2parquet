@@ -227,8 +227,7 @@ jobs:
           gh release create "$TAG" \
             --title "$TAG" \
             --generate-notes \
-            artifacts/**/*.tar.gz \
-            artifacts/**/*.zip \
+            artifacts/*.tar.gz \
             checksums.txt
 
   crates-publish:
