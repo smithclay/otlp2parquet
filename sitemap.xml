@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+         <loc>https://smithclay.github.io/otlp2parquet/</loc>
+         <lastmod>2026-01-19</lastmod>
+    </url>
+    <url>
+         <loc>https://smithclay.github.io/otlp2parquet/deploying/</loc>
+         <lastmod>2026-01-19</lastmod>
+    </url>
+    <url>
+         <loc>https://smithclay.github.io/otlp2parquet/querying/</loc>
+         <lastmod>2026-01-19</lastmod>
+    </url>
+    <url>
+         <loc>https://smithclay.github.io/otlp2parquet/reference/</loc>
+         <lastmod>2026-01-19</lastmod>
+    </url>
+    <url>
+         <loc>https://smithclay.github.io/otlp2parquet/sending-data/</loc>
+         <lastmod>2026-01-19</lastmod>
+    </url>
+</urlset>
