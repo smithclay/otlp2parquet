@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn test_real_otlp_timestamp_from_testdata() {
-        use arrow::array::TimestampMillisecondArray;
+        use arrow::array::TimestampMicrosecondArray;
         use otlp2records::{transform_logs, InputFormat};
 
         let test_data_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -227,11 +227,11 @@ mod tests {
             transform_logs(&test_data, InputFormat::Protobuf).expect("Failed to transform logs");
 
         if let Some(ts_col) = batch.column_by_name("timestamp") {
-            if let Some(ts_array) = ts_col.as_any().downcast_ref::<TimestampMillisecondArray>() {
-                let timestamp_ms = ts_array.value(0);
-                assert_eq!(timestamp_ms.to_string().len(), 13);
+            if let Some(ts_array) = ts_col.as_any().downcast_ref::<TimestampMicrosecondArray>() {
+                let timestamp_us = ts_array.value(0);
+                assert_eq!(timestamp_us.to_string().len(), 16);
             } else {
-                panic!("timestamp column is not TimestampMillisecondArray");
+                panic!("timestamp column is not TimestampMicrosecondArray");
             }
         } else {
             panic!("No timestamp column found");
