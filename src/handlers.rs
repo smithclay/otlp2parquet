@@ -90,7 +90,13 @@ async fn handle_signal(
 
     // Forward to additional endpoints if configured
     if let Some(ref forwarder) = state.forwarder {
-        forward_request(forwarder.clone(), signal, content_type.map(String::from), body.clone()).await;
+        forward_request(
+            forwarder.clone(),
+            signal,
+            content_type.map(String::from),
+            body.clone(),
+        )
+        .await;
     }
 
     match signal {
@@ -102,9 +108,16 @@ async fn handle_signal(
 
 /// Forward request to additional endpoints
 /// If blocking mode is enabled, waits for completion; otherwise spawns background task
-async fn forward_request(forwarder: Arc<Forwarder>, signal: SignalType, content_type: Option<String>, body: Bytes) {
+async fn forward_request(
+    forwarder: Arc<Forwarder>,
+    signal: SignalType,
+    content_type: Option<String>,
+    body: Bytes,
+) {
     if forwarder.is_blocking() {
-        let success_count = forwarder.forward(signal, content_type.as_deref(), body).await;
+        let success_count = forwarder
+            .forward(signal, content_type.as_deref(), body)
+            .await;
         debug!(
             signal = %signal.as_str(),
             success_count,
@@ -113,7 +126,9 @@ async fn forward_request(forwarder: Arc<Forwarder>, signal: SignalType, content_
         );
     } else {
         tokio::spawn(async move {
-            let success_count = forwarder.forward(signal, content_type.as_deref(), body).await;
+            let success_count = forwarder
+                .forward(signal, content_type.as_deref(), body)
+                .await;
             debug!(
                 signal = %signal.as_str(),
                 success_count,
