@@ -1908,12 +1908,13 @@ dependencies = [
 
 [[package]]
 name = "otlp2parquet"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "anyhow",
  "arrow",
  "async-trait",
  "axum",
+ "bytes",
  "clap",
  "hex",
  "metrics",

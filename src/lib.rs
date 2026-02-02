@@ -25,8 +25,8 @@ pub mod config;
 pub mod types;
 
 pub use config::{
-    BatchConfig, EnvSource, FsConfig, LogFormat, Platform, RequestConfig, RuntimeConfig,
-    ServerConfig, StorageBackend, StorageConfig, ENV_PREFIX,
+    AdditionalEndpoint, BatchConfig, EnvSource, ForwardingConfig, FsConfig, LogFormat, Platform,
+    RequestConfig, RuntimeConfig, ServerConfig, StorageBackend, StorageConfig, ENV_PREFIX,
 };
 pub use otlp2records::InputFormat;
 pub use types::{Blake3Hash, MetricType, SignalKey, SignalType};
@@ -43,6 +43,7 @@ use tokio::signal;
 use tower_http::decompression::RequestDecompressionLayer;
 use tracing::{debug, error, info, warn};
 
+mod forwarding;
 mod handlers;
 mod init;
 mod writer;
@@ -58,6 +59,7 @@ use init::init_writer;
 pub(crate) struct AppState {
     pub batcher: Option<Arc<BatchManager>>,
     pub max_payload_bytes: usize,
+    pub forwarder: Option<Arc<forwarding::Forwarder>>,
 }
 
 /// Error type that implements IntoResponse
@@ -187,10 +189,32 @@ pub async fn run_with_config(config: RuntimeConfig) -> Result<()> {
     let max_payload_bytes = config.request.max_payload_bytes;
     info!("Max payload size set to {} bytes", max_payload_bytes);
 
+    // Configure forwarding to additional endpoints
+    let forwarder = if let Some(ref fwd_config) = config.forwarding {
+        if !fwd_config.additional_endpoints.is_empty() {
+            let forwarder =
+                forwarding::Forwarder::new(fwd_config).context("Failed to initialize forwarder")?;
+            info!(
+                "Forwarding enabled to {} additional endpoint(s) (blocking={})",
+                forwarder.endpoint_count(),
+                fwd_config.blocking
+            );
+            for ep in &fwd_config.additional_endpoints {
+                info!("  - {}", ep.endpoint);
+            }
+            Some(Arc::new(forwarder))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // Create app state
     let state = AppState {
         batcher,
         max_payload_bytes,
+        forwarder,
     };
 
     let router_state = state.clone();

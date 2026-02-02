@@ -106,3 +106,37 @@ log_level = "info"
 # Log format: Output format for logs
 # Options: "text" | "json"
 log_format = "text"
+
+
+# ==============================================================================
+# Forwarding Configuration (Optional)
+# ==============================================================================
+# Forward incoming OTLP requests to additional endpoints unchanged.
+# Similar to Datadog's additional_endpoints feature.
+# Useful for sending telemetry data to multiple backends simultaneously.
+
+# [forwarding]
+# # Timeout in seconds for forwarding requests (default: 30)
+# timeout_secs = 30
+#
+# # Whether to wait for forwarding to complete before responding (default: false)
+# # If false, forwarding happens asynchronously in the background
+# blocking = false
+#
+# # Additional endpoints to forward OTLP data to
+# # Each endpoint can have custom headers for authentication
+# [[forwarding.additional_endpoints]]
+# endpoint = "https://otlp.example.com:4318"
+# [forwarding.additional_endpoints.headers]
+# Authorization = "Bearer your-api-token"
+# X-Custom-Header = "custom-value"
+#
+# [[forwarding.additional_endpoints]]
+# endpoint = "https://another-backend.example.com:4318"
+# [forwarding.additional_endpoints.headers]
+# X-API-Key = "your-api-key"
+
+# Environment variable alternative:
+# OTLP2PARQUET_ADDITIONAL_ENDPOINTS='[{"endpoint":"https://otlp.example.com:4318","headers":{"Authorization":"Bearer token"}}]'
+# OTLP2PARQUET_FORWARD_TIMEOUT_SECS=30
+# OTLP2PARQUET_FORWARD_BLOCKING=false

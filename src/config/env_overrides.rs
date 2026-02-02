@@ -1,4 +1,7 @@
-use super::{FsConfig, LogFormat, R2Config, RuntimeConfig, S3Config, ServerConfig, StorageBackend};
+use super::{
+    AdditionalEndpoint, ForwardingConfig, FsConfig, LogFormat, R2Config, RuntimeConfig, S3Config,
+    ServerConfig, StorageBackend,
+};
 use anyhow::{anyhow, Context, Result};
 
 pub const ENV_PREFIX: &str = "OTLP2PARQUET_";
@@ -108,6 +111,23 @@ pub fn apply_env_overrides<E: EnvSource>(config: &mut RuntimeConfig, env: &E) ->
         ensure_r2(config).prefix = normalize_prefix(prefix);
     }
 
+    // Forwarding configuration
+    // ADDITIONAL_ENDPOINTS: JSON array of endpoint objects
+    // Example: '[{"endpoint":"https://otlp.example.com:4318","headers":{"Authorization":"Bearer token"}}]'
+    if let Some(endpoints_json) = get_env_string(env, "ADDITIONAL_ENDPOINTS")? {
+        let endpoints: Vec<AdditionalEndpoint> = serde_json::from_str(&endpoints_json)
+            .context("Failed to parse OTLP2PARQUET_ADDITIONAL_ENDPOINTS as JSON")?;
+        ensure_forwarding(config).additional_endpoints = endpoints;
+    }
+
+    if let Some(val) = get_env_u64(env, "FORWARD_TIMEOUT_SECS")? {
+        ensure_forwarding(config).timeout_secs = val;
+    }
+
+    if let Some(val) = get_env_bool(env, "FORWARD_BLOCKING")? {
+        ensure_forwarding(config).blocking = val;
+    }
+
     Ok(())
 }
 
@@ -133,6 +153,12 @@ fn ensure_r2(config: &mut RuntimeConfig) -> &mut R2Config {
 
 fn ensure_server(config: &mut RuntimeConfig) -> &mut ServerConfig {
     config.server.get_or_insert_with(ServerConfig::default)
+}
+
+fn ensure_forwarding(config: &mut RuntimeConfig) -> &mut ForwardingConfig {
+    config
+        .forwarding
+        .get_or_insert_with(ForwardingConfig::default)
 }
 
 fn get_env_string<E: EnvSource>(env: &E, key: &str) -> Result<Option<String>> {
