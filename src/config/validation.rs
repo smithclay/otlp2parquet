@@ -21,6 +21,11 @@ pub fn validate_config(config: &RuntimeConfig) -> Result<()> {
         validate_server_config(server)?;
     }
 
+    // Validate forwarding config
+    if let Some(ref forwarding) = config.forwarding {
+        validate_forwarding_config(forwarding)?;
+    }
+
     Ok(())
 }
 
@@ -182,6 +187,45 @@ fn validate_server_config(config: &ServerConfig) -> Result<()> {
     // Basic validation that it looks like an address
     if !config.listen_addr.contains(':') {
         bail!("server.listen_addr must be in format 'host:port'");
+    }
+
+    Ok(())
+}
+
+fn validate_forwarding_config(config: &ForwardingConfig) -> Result<()> {
+    if config.timeout_secs == 0 {
+        bail!("forwarding.timeout_secs must be greater than 0");
+    }
+
+    // Validate each endpoint
+    for (idx, endpoint) in config.additional_endpoints.iter().enumerate() {
+        if endpoint.endpoint.is_empty() {
+            bail!(
+                "forwarding.additional_endpoints[{}].endpoint must not be empty",
+                idx
+            );
+        }
+
+        // Basic URL validation - must have a scheme
+        if !endpoint.endpoint.starts_with("http://") && !endpoint.endpoint.starts_with("https://") {
+            bail!(
+                "forwarding.additional_endpoints[{}].endpoint must start with http:// or https://\n\
+                Got: {}\n\n\
+                Example: https://otlp.example.com:4318",
+                idx,
+                endpoint.endpoint
+            );
+        }
+
+        // Validate header names don't contain invalid characters
+        for key in endpoint.headers.keys() {
+            if key.is_empty() {
+                bail!(
+                    "forwarding.additional_endpoints[{}].headers contains an empty header name",
+                    idx
+                );
+            }
+        }
     }
 
     Ok(())

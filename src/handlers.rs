@@ -9,6 +9,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use bytes::Bytes;
 use metrics::{counter, histogram};
 
 use crate::batch::CompletedBatch;
@@ -17,9 +18,11 @@ use crate::codec::{
     report_skipped_metrics, ServiceGroupedBatches,
 };
 use serde_json::json;
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
+use crate::forwarding::Forwarder;
 use crate::{AppError, AppState};
 
 /// POST /v1/logs - OTLP log ingestion endpoint
@@ -85,10 +88,54 @@ async fn handle_signal(
         ));
     }
 
+    // Forward to additional endpoints if configured
+    if let Some(ref forwarder) = state.forwarder {
+        forward_request(forwarder.clone(), signal, content_type, body.clone()).await;
+    }
+
     match signal {
         SignalType::Logs => process_logs(state, format, body).await,
         SignalType::Traces => process_traces(format, body).await,
         SignalType::Metrics => process_metrics(format, body).await,
+    }
+}
+
+/// Forward request to additional endpoints
+/// If forwarder is configured for blocking mode, waits for completion
+/// Otherwise, spawns a background task
+async fn forward_request(
+    forwarder: Arc<Forwarder>,
+    signal: SignalType,
+    content_type: Option<&str>,
+    body: Bytes,
+) {
+    if !forwarder.is_enabled() {
+        return;
+    }
+
+    let content_type_owned = content_type.map(String::from);
+
+    if forwarder.is_blocking() {
+        // Blocking mode: wait for forwarding to complete
+        let success_count = forwarder.forward(signal, content_type, body).await;
+        debug!(
+            signal = %signal.as_str(),
+            success_count,
+            total = forwarder.endpoint_count(),
+            "Forwarding completed (blocking)"
+        );
+    } else {
+        // Non-blocking mode: spawn background task
+        tokio::spawn(async move {
+            let content_type_ref = content_type_owned.as_deref();
+            let success_count = forwarder.forward(signal, content_type_ref, body).await;
+            debug!(
+                signal = %signal.as_str(),
+                success_count,
+                total = forwarder.endpoint_count(),
+                "Forwarding completed (async)"
+            );
+        });
     }
 }
 

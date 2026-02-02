@@ -9,6 +9,7 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 mod env_overrides;
 mod platform;
@@ -32,6 +33,9 @@ pub struct RuntimeConfig {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server: Option<ServerConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forwarding: Option<ForwardingConfig>,
 }
 
 /// Batch configuration
@@ -182,6 +186,50 @@ pub enum LogFormat {
     Json,
 }
 
+/// Configuration for forwarding OTLP requests to additional endpoints
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForwardingConfig {
+    /// Additional endpoints to forward OTLP data to
+    /// Similar to Datadog's additional_endpoints feature
+    #[serde(default)]
+    pub additional_endpoints: Vec<AdditionalEndpoint>,
+
+    /// Timeout in seconds for forwarding requests (default: 30)
+    #[serde(default = "default_forward_timeout_secs")]
+    pub timeout_secs: u64,
+
+    /// Whether to wait for forwarding to complete before responding (default: false)
+    /// If false, forwarding happens asynchronously
+    #[serde(default)]
+    pub blocking: bool,
+}
+
+fn default_forward_timeout_secs() -> u64 {
+    30
+}
+
+impl Default for ForwardingConfig {
+    fn default() -> Self {
+        Self {
+            additional_endpoints: Vec::new(),
+            timeout_secs: default_forward_timeout_secs(),
+            blocking: false,
+        }
+    }
+}
+
+/// An additional endpoint to forward OTLP data to
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdditionalEndpoint {
+    /// The base URL of the endpoint (e.g., "https://otlp.example.com:4318")
+    pub endpoint: String,
+
+    /// Custom headers to include with forwarded requests
+    /// Useful for authentication tokens, API keys, etc.
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+}
+
 impl RuntimeConfig {
     /// Load configuration from all sources with priority
     #[cfg(not(target_arch = "wasm32"))]
@@ -229,6 +277,10 @@ impl RuntimeConfig {
 
         if other.server.is_some() {
             self.server = other.server;
+        }
+
+        if other.forwarding.is_some() {
+            self.forwarding = other.forwarding;
         }
     }
 
@@ -326,6 +378,7 @@ fn platform_defaults(platform: Platform) -> RuntimeConfig {
         },
         storage,
         server: Some(ServerConfig::default()),
+        forwarding: None,
     }
 }
 

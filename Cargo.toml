@@ -23,6 +23,7 @@ serde = { version = "1", default-features = false, features = ["derive"] }
 serde_json = { version = "1", default-features = false, features = ["std"] }
 toml = { version = "0.9", default-features = false, features = ["parse", "serde"] }
 anyhow = "1"
+bytes = "1"
 thiserror = "2.0"
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "macros", "signal"] }
 once_cell = "1.19"
@@ -40,10 +41,11 @@ uuid = { version = "1", default-features = false, features = ["v4"] }
 metrics = { version = "0.24", default-features = false }
 clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 opendal = { version = "0.55", default-features = false, features = ["blocking", "services-fs", "services-s3"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip"] }
 
 [dev-dependencies]
 tempfile = "3.13"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip"] }
 tokio = { version = "1", default-features = false, features = ["process"] }
 async-trait = "0.1"
 uuid = { version = "1", features = ["v4"] }
