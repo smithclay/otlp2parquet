@@ -221,7 +221,7 @@ impl Default for ForwardingConfig {
 /// An additional endpoint to forward OTLP data to
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdditionalEndpoint {
-    /// The base URL of the endpoint (e.g., "https://otlp.example.com:4318")
+    /// The base URL of the endpoint (e.g., `https://otlp.example.com:4318`)
     pub endpoint: String,
 
     /// Custom headers to include with forwarded requests
