@@ -7,7 +7,6 @@ use crate::config::ForwardingConfig;
 use crate::SignalType;
 use bytes::Bytes;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, warn};
 
@@ -15,11 +14,12 @@ use tracing::{debug, warn};
 #[derive(Clone)]
 pub struct Forwarder {
     client: reqwest::Client,
-    endpoints: Arc<Vec<EndpointConfig>>,
+    endpoints: Vec<EndpointConfig>,
     blocking: bool,
 }
 
 /// Internal endpoint configuration with pre-parsed headers
+#[derive(Clone)]
 struct EndpointConfig {
     base_url: String,
     headers: HeaderMap,
@@ -44,14 +44,9 @@ impl Forwarder {
 
         Ok(Self {
             client,
-            endpoints: Arc::new(endpoints),
+            endpoints,
             blocking: config.blocking,
         })
-    }
-
-    /// Check if forwarding is enabled (has any endpoints configured)
-    pub fn is_enabled(&self) -> bool {
-        !self.endpoints.is_empty()
     }
 
     /// Check if forwarding should block the response
@@ -190,15 +185,14 @@ mod tests {
     }
 
     #[test]
-    fn test_forwarder_disabled_when_no_endpoints() {
+    fn test_forwarder_no_endpoints() {
         let config = ForwardingConfig::default();
         let forwarder = Forwarder::new(&config).unwrap();
-        assert!(!forwarder.is_enabled());
         assert_eq!(forwarder.endpoint_count(), 0);
     }
 
     #[test]
-    fn test_forwarder_enabled_with_endpoints() {
+    fn test_forwarder_with_endpoints() {
         let config = ForwardingConfig {
             additional_endpoints: vec![AdditionalEndpoint {
                 endpoint: "https://example.com:4318".to_string(),
@@ -207,7 +201,6 @@ mod tests {
             ..Default::default()
         };
         let forwarder = Forwarder::new(&config).unwrap();
-        assert!(forwarder.is_enabled());
         assert_eq!(forwarder.endpoint_count(), 1);
     }
 }
