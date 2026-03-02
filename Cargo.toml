@@ -42,7 +42,7 @@ clap = { version = "4.5", default-features = false, features = ["std", "derive",
 opendal = { version = "0.55", default-features = false, features = ["blocking", "services-fs", "services-s3"] }
 
 [dev-dependencies]
-tempfile = "3.13"
+tempfile = "3.26"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 tokio = { version = "1", default-features = false, features = ["process"] }
 async-trait = "0.1"
