@@ -61,7 +61,7 @@ jobs:
           tar czf "$SERVER_DIR/${{ matrix.cli_asset_name }}.tar.gz" -C dist "linux-${{ matrix.arch }}"
 
       - name: Upload server artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.cli_asset_name }}
           path: target/${{ matrix.target }}/release/${{ matrix.cli_asset_name }}.tar.gz
@@ -120,7 +120,7 @@ jobs:
           tags: otlp2parquet:${{ matrix.arch }}
 
       - name: Upload ${{ matrix.arch }} image artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: otlp2parquet-image-${{ matrix.arch }}
           path: dist/otlp2parquet-${{ matrix.arch }}.tar
