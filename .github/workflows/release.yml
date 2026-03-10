@@ -120,17 +120,17 @@ jobs:
       attestations: write
     steps:
       - name: Download pre-built images
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: otlp2parquet-image-*
           path: images
           merge-multiple: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -185,7 +185,7 @@ jobs:
           echo "digest=${MANIFEST_DIGEST}" >> "$GITHUB_OUTPUT"
 
       - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.push.outputs.digest }}
@@ -207,7 +207,7 @@ jobs:
           ref: ${{ needs.prepare.outputs.commit }}
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: otlp2parquet-*
           path: artifacts
