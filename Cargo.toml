@@ -17,11 +17,11 @@ path = "src/main.rs"
 [dependencies]
 otlp2records = { version = "0.3.1", default-features = false, features = ["parquet"] }
 
-arrow = { version = "57.2", default-features = false, features = ["ipc"] }
+arrow = { version = "57.3", default-features = false, features = ["ipc"] }
 
 serde = { version = "1", default-features = false, features = ["derive"] }
 serde_json = { version = "1", default-features = false, features = ["std"] }
-toml = { version = "0.9", default-features = false, features = ["parse", "serde"] }
+toml = { version = "1.0", default-features = false, features = ["parse", "serde"] }
 anyhow = "1"
 thiserror = "2.0"
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "macros", "signal"] }
