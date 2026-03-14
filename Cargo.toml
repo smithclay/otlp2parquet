@@ -4,7 +4,7 @@ description = "Stream OpenTelemetry logs, metrics, and traces to Parquet files"
 readme = "README.md"
 keywords = ["opentelemetry", "otlp", "parquet", "observability", "telemetry"]
 categories = ["command-line-utilities", "database"]
-version = "0.9.1"
+version = "0.10.0"
 edition = "2021"
 authors = ["otlp2parquet Contributors"]
 license = "Apache-2.0"
@@ -15,15 +15,15 @@ name = "otlp2parquet"
 path = "src/main.rs"
 
 [dependencies]
-otlp2records = { version = "0.3.1", default-features = false, features = ["parquet"] }
+otlp2records = { version = "0.4.0", default-features = false, features = ["parquet"] }
 
-arrow = { version = "57.3", default-features = false, features = ["ipc"] }
+arrow = { version = "58", default-features = false, features = ["ipc"] }
 
 serde = { version = "1", default-features = false, features = ["derive"] }
 serde_json = { version = "1", default-features = false, features = ["std"] }
 toml = { version = "1.0", default-features = false, features = ["parse", "serde"] }
 anyhow = "1"
-thiserror = "2.0"
+thiserror = "2.0.18"
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "macros", "signal"] }
 once_cell = "1.19"
 hex = "0.4"
