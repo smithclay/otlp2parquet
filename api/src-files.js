@@ -1,0 +1,2 @@
+createSrcSidebar('[["otlp2parquet",["",[["batch",[],["buffered_batch.rs","mod.rs"]],["config",[],["env_overrides.rs","mod.rs","platform.rs","sources.rs","validation.rs"]],["connect",[],["mod.rs","url.rs"]],["writer",[],["error.rs","mod.rs","storage.rs","write.rs"]]],["codec.rs","handlers.rs","init.rs","lib.rs","types.rs"]]]]');
+//{"start":19,"fragment_lengths":[306]}
