@@ -1948,7 +1948,7 @@ dependencies = [
 
 [[package]]
 name = "otlp2parquet"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "arrow",
@@ -1979,6 +1979,8 @@ dependencies = [
 [[package]]
 name = "otlp2records"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d936afb4c19cc6872872593bc47e47b9bed12ae7b12111fb0806a7e67dbc214"
 dependencies = [
  "arrow",
  "base64 0.21.7",
@@ -2952,9 +2954,9 @@ dependencies = [
 
 [[package]]
 name = "tempfile"
-version = "3.26.0"
+version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82a72c767771b47409d2345987fda8628641887d5466101319899796367354a0"
+checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
  "getrandom 0.4.2",
