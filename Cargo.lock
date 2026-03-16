@@ -1838,9 +1838,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.21.3"
+version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
+checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "once_cell_polyfill"
@@ -1948,7 +1948,7 @@ dependencies = [
 
 [[package]]
 name = "otlp2parquet"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "arrow",
@@ -1979,6 +1979,8 @@ dependencies = [
 [[package]]
 name = "otlp2records"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d936afb4c19cc6872872593bc47e47b9bed12ae7b12111fb0806a7e67dbc214"
 dependencies = [
  "arrow",
  "base64 0.21.7",

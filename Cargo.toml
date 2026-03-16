@@ -25,7 +25,7 @@ toml = { version = "1.0", default-features = false, features = ["parse", "serde"
 anyhow = "1"
 thiserror = "2.0.18"
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "macros", "signal"] }
-once_cell = "1.19"
+once_cell = "1.21"
 hex = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "json"] }
