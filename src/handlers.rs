@@ -161,9 +161,11 @@ async fn process_logs_batched(
         } else {
             // Thresholds hit - flush completed batches
             for batch in completed {
-                let paths = persist_batch(&batch, SignalType::Logs, None).await.map_err(|e| {
-                    AppError::internal(anyhow::anyhow!("Failed to flush batch: {}", e))
-                })?;
+                let paths = persist_batch(&batch, SignalType::Logs, None)
+                    .await
+                    .map_err(|e| {
+                        AppError::internal(anyhow::anyhow!("Failed to flush batch: {}", e))
+                    })?;
 
                 for path in &paths {
                     info!(
@@ -299,12 +301,11 @@ async fn process_traces_batched(
             );
         } else {
             for batch in completed {
-                let paths =
-                    persist_batch(&batch, SignalType::Traces, None)
-                        .await
-                        .map_err(|e| {
-                            AppError::internal(anyhow::anyhow!("Failed to flush batch: {}", e))
-                        })?;
+                let paths = persist_batch(&batch, SignalType::Traces, None)
+                    .await
+                    .map_err(|e| {
+                        AppError::internal(anyhow::anyhow!("Failed to flush batch: {}", e))
+                    })?;
 
                 for path in &paths {
                     info!(
@@ -474,9 +475,8 @@ async fn process_metrics_batched(
             counter!("otlp.ingest.records", "signal" => "metrics", "metric_type" => metric_type_str)
                 .increment(pb.record_count as u64);
 
-            let (completed, _metadata) = batcher
-                .ingest(&pb, approx_bytes_per_batch)
-                .map_err(|e| {
+            let (completed, _metadata) =
+                batcher.ingest(&pb, approx_bytes_per_batch).map_err(|e| {
                     AppError::internal(anyhow::anyhow!("Batch ingestion failed: {}", e))
                 })?;
 

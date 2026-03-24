@@ -280,7 +280,12 @@ async fn flush_pending_batches(state: &AppState) -> Result<()> {
     flush_batcher(&state.traces_batcher, SignalType::Traces, None).await?;
 
     if let Some(ref mb) = state.metrics_batchers {
-        flush_batcher(&Some(Arc::clone(&mb.gauge)), SignalType::Metrics, Some("gauge")).await?;
+        flush_batcher(
+            &Some(Arc::clone(&mb.gauge)),
+            SignalType::Metrics,
+            Some("gauge"),
+        )
+        .await?;
         flush_batcher(&Some(Arc::clone(&mb.sum)), SignalType::Metrics, Some("sum")).await?;
         flush_batcher(
             &Some(Arc::clone(&mb.histogram)),
@@ -371,8 +376,12 @@ async fn run_background_flush(state: AppState, shutdown: Arc<AtomicBool>, interv
         drain_expired_batcher(&state.traces_batcher, SignalType::Traces, None).await;
 
         if let Some(ref mb) = state.metrics_batchers {
-            drain_expired_batcher(&Some(Arc::clone(&mb.gauge)), SignalType::Metrics, Some("gauge"))
-                .await;
+            drain_expired_batcher(
+                &Some(Arc::clone(&mb.gauge)),
+                SignalType::Metrics,
+                Some("gauge"),
+            )
+            .await;
             drain_expired_batcher(&Some(Arc::clone(&mb.sum)), SignalType::Metrics, Some("sum"))
                 .await;
             drain_expired_batcher(
