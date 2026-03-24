@@ -53,10 +53,21 @@ use handlers::{handle_logs, handle_metrics, handle_traces, health_check, ready_c
 pub use init::init_tracing;
 use init::init_writer;
 
+/// Per-metric-type batchers for metrics ingestion
+#[derive(Clone)]
+pub(crate) struct MetricsBatchers {
+    pub gauge: Arc<BatchManager>,
+    pub sum: Arc<BatchManager>,
+    pub histogram: Arc<BatchManager>,
+    pub exp_histogram: Arc<BatchManager>,
+}
+
 /// Application state shared across all requests
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub batcher: Option<Arc<BatchManager>>,
+    pub traces_batcher: Option<Arc<BatchManager>>,
+    pub metrics_batchers: Option<MetricsBatchers>,
     pub max_payload_bytes: usize,
 }
 
@@ -171,9 +182,9 @@ pub async fn run_with_config(config: RuntimeConfig) -> Result<()> {
         max_age: Duration::from_secs(config.batch.max_age_secs),
     };
 
-    let batcher = if !config.batch.enabled {
+    let (batcher, traces_batcher, metrics_batchers) = if !config.batch.enabled {
         info!("Batching disabled by configuration");
-        None
+        (None, None, None)
     } else {
         info!(
             "Batching enabled (max_rows={} max_bytes={} max_age={}s)",
@@ -181,7 +192,15 @@ pub async fn run_with_config(config: RuntimeConfig) -> Result<()> {
             batch_config.max_bytes,
             batch_config.max_age.as_secs()
         );
-        Some(Arc::new(BatchManager::new(batch_config)))
+        let logs = Some(Arc::new(BatchManager::new(batch_config.clone())));
+        let traces = Some(Arc::new(BatchManager::new(batch_config.clone())));
+        let metrics = Some(MetricsBatchers {
+            gauge: Arc::new(BatchManager::new(batch_config.clone())),
+            sum: Arc::new(BatchManager::new(batch_config.clone())),
+            histogram: Arc::new(BatchManager::new(batch_config.clone())),
+            exp_histogram: Arc::new(BatchManager::new(batch_config)),
+        });
+        (logs, traces, metrics)
     };
 
     let max_payload_bytes = config.request.max_payload_bytes;
@@ -190,6 +209,8 @@ pub async fn run_with_config(config: RuntimeConfig) -> Result<()> {
     // Create app state
     let state = AppState {
         batcher,
+        traces_batcher,
+        metrics_batchers,
         max_payload_bytes,
     };
 
@@ -222,7 +243,8 @@ pub async fn run_with_config(config: RuntimeConfig) -> Result<()> {
 
     // Spawn background flush task if batching is enabled
     let shutdown_flag = Arc::new(AtomicBool::new(false));
-    let flush_handle = if state.batcher.is_some() {
+    let batching_enabled = state.batcher.is_some();
+    let flush_handle = if batching_enabled {
         let flush_state = state.clone();
         let flush_shutdown = Arc::clone(&shutdown_flag);
         let flush_interval =
@@ -254,42 +276,76 @@ pub async fn run_with_config(config: RuntimeConfig) -> Result<()> {
 }
 
 async fn flush_pending_batches(state: &AppState) -> Result<()> {
-    if let Some(batcher) = &state.batcher {
-        let pending = batcher
-            .drain_all()
-            .context("Failed to drain pending log batches during shutdown")?;
+    flush_batcher(&state.batcher, SignalType::Logs, None).await?;
+    flush_batcher(&state.traces_batcher, SignalType::Traces, None).await?;
 
-        if pending.is_empty() {
-            return Ok(());
-        }
+    if let Some(ref mb) = state.metrics_batchers {
+        flush_batcher(&Some(Arc::clone(&mb.gauge)), SignalType::Metrics, Some("gauge")).await?;
+        flush_batcher(&Some(Arc::clone(&mb.sum)), SignalType::Metrics, Some("sum")).await?;
+        flush_batcher(
+            &Some(Arc::clone(&mb.histogram)),
+            SignalType::Metrics,
+            Some("histogram"),
+        )
+        .await?;
+        flush_batcher(
+            &Some(Arc::clone(&mb.exp_histogram)),
+            SignalType::Metrics,
+            Some("exponential_histogram"),
+        )
+        .await?;
+    }
 
-        info!(
-            batch_count = pending.len(),
-            "Flushing buffered log batches before shutdown"
-        );
+    Ok(())
+}
 
-        for completed in pending {
-            let rows = completed.metadata.record_count;
-            let service = completed.metadata.service_name.as_ref().to_string();
-            match handlers::persist_log_batch(&completed).await {
-                Ok(paths) => {
-                    for path in paths {
-                        info!(
-                            path = %path,
-                            service_name = %service,
-                            rows,
-                            "Flushed pending batch"
-                        );
-                    }
-                }
-                Err(e) => {
-                    warn!(
-                        error = %e,
+async fn flush_batcher(
+    batcher: &Option<Arc<BatchManager>>,
+    signal_type: SignalType,
+    metric_type: Option<&str>,
+) -> Result<()> {
+    let Some(batcher) = batcher else {
+        return Ok(());
+    };
+
+    let pending = batcher.drain_all().context(format!(
+        "Failed to drain pending {} batches during shutdown",
+        signal_type.as_str()
+    ))?;
+
+    if pending.is_empty() {
+        return Ok(());
+    }
+
+    info!(
+        batch_count = pending.len(),
+        signal = signal_type.as_str(),
+        "Flushing buffered batches before shutdown"
+    );
+
+    for completed in pending {
+        let rows = completed.metadata.record_count;
+        let service = completed.metadata.service_name.as_ref().to_string();
+        match handlers::persist_batch(&completed, signal_type, metric_type).await {
+            Ok(paths) => {
+                for path in paths {
+                    info!(
+                        path = %path,
                         service_name = %service,
+                        signal = signal_type.as_str(),
                         rows,
-                        "Failed to flush pending batch during shutdown"
+                        "Flushed pending batch"
                     );
                 }
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    service_name = %service,
+                    signal = signal_type.as_str(),
+                    rows,
+                    "Failed to flush pending batch during shutdown"
+                );
             }
         }
     }
@@ -311,40 +367,76 @@ async fn run_background_flush(state: AppState, shutdown: Arc<AtomicBool>, interv
             break;
         }
 
-        if let Some(batcher) = &state.batcher {
-            match batcher.drain_expired() {
-                Ok(expired) => {
-                    for completed in expired {
-                        let rows = completed.metadata.record_count;
-                        let service = completed.metadata.service_name.as_ref().to_string();
-                        match handlers::persist_log_batch(&completed).await {
-                            Ok(paths) => {
-                                for path in &paths {
-                                    info!(
-                                        path = %path,
-                                        service_name = %service,
-                                        rows,
-                                        "Flushed expired batch"
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                warn!(
-                                    error = %e,
-                                    service_name = %service,
-                                    rows,
-                                    "Failed to flush expired batch"
-                                );
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!(error = %e, "Failed to drain expired batches");
-                }
-            }
+        drain_expired_batcher(&state.batcher, SignalType::Logs, None).await;
+        drain_expired_batcher(&state.traces_batcher, SignalType::Traces, None).await;
+
+        if let Some(ref mb) = state.metrics_batchers {
+            drain_expired_batcher(&Some(Arc::clone(&mb.gauge)), SignalType::Metrics, Some("gauge"))
+                .await;
+            drain_expired_batcher(&Some(Arc::clone(&mb.sum)), SignalType::Metrics, Some("sum"))
+                .await;
+            drain_expired_batcher(
+                &Some(Arc::clone(&mb.histogram)),
+                SignalType::Metrics,
+                Some("histogram"),
+            )
+            .await;
+            drain_expired_batcher(
+                &Some(Arc::clone(&mb.exp_histogram)),
+                SignalType::Metrics,
+                Some("exponential_histogram"),
+            )
+            .await;
         }
     }
 
     debug!("Background flush task stopped");
+}
+
+async fn drain_expired_batcher(
+    batcher: &Option<Arc<BatchManager>>,
+    signal_type: SignalType,
+    metric_type: Option<&str>,
+) {
+    let Some(batcher) = batcher else {
+        return;
+    };
+
+    match batcher.drain_expired() {
+        Ok(expired) => {
+            for completed in expired {
+                let rows = completed.metadata.record_count;
+                let service = completed.metadata.service_name.as_ref().to_string();
+                match handlers::persist_batch(&completed, signal_type, metric_type).await {
+                    Ok(paths) => {
+                        for path in &paths {
+                            info!(
+                                path = %path,
+                                service_name = %service,
+                                signal = signal_type.as_str(),
+                                rows,
+                                "Flushed expired batch"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            service_name = %service,
+                            signal = signal_type.as_str(),
+                            rows,
+                            "Failed to flush expired batch"
+                        );
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                signal = signal_type.as_str(),
+                "Failed to drain expired batches"
+            );
+        }
+    }
 }
