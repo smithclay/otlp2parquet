@@ -21,7 +21,7 @@ arrow = { version = "58", default-features = false, features = ["ipc"] }
 
 serde = { version = "1", default-features = false, features = ["derive"] }
 serde_json = { version = "1", default-features = false, features = ["std"] }
-toml = { version = "1.0", default-features = false, features = ["parse", "serde"] }
+toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 anyhow = "1"
 thiserror = "2.0.18"
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "macros", "signal"] }
