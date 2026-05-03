@@ -4,7 +4,7 @@ description = "Stream OpenTelemetry logs, metrics, and traces to Parquet files"
 readme = "README.md"
 keywords = ["opentelemetry", "otlp", "parquet", "observability", "telemetry"]
 categories = ["command-line-utilities", "database"]
-version = "0.11.0"
+version = "0.12.0"
 edition = "2021"
 authors = ["otlp2parquet Contributors"]
 license = "Apache-2.0"
@@ -32,7 +32,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["e
 
 parking_lot = "0.12"
 
-axum = { version = "0.8.8", default-features = false, features = ["tokio", "http1", "http2", "json"] }
+axum = { version = "0.8.9", default-features = false, features = ["tokio", "http1", "http2", "json"] }
 tower-http = { version = "0.6", default-features = false, features = ["trace", "decompression-gzip"] }
 
 time = { version = "0.3", default-features = false, features = ["std"] }
