@@ -32,7 +32,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["e
 
 parking_lot = "0.12"
 
-axum = { version = "0.8.8", default-features = false, features = ["tokio", "http1", "http2", "json"] }
+axum = { version = "0.8.9", default-features = false, features = ["tokio", "http1", "http2", "json"] }
 tower-http = { version = "0.6", default-features = false, features = ["trace", "decompression-gzip"] }
 
 time = { version = "0.3", default-features = false, features = ["std"] }
