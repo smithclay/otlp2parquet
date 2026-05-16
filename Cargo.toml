@@ -15,7 +15,7 @@ name = "otlp2parquet"
 path = "src/main.rs"
 
 [dependencies]
-otlp2records = { version = "0.4.0", default-features = false, features = ["parquet"] }
+otlp2records = { version = "0.6.0", default-features = false, features = ["parquet"] }
 
 arrow = { version = "58", default-features = false, features = ["ipc"] }
 
