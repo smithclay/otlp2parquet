@@ -4,7 +4,7 @@
 
 use crate::SignalType;
 use arrow::array::RecordBatch;
-use otlp2records::output::to_parquet_bytes;
+use otlp2records::to_parquet;
 use std::borrow::Cow;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -45,7 +45,7 @@ async fn write_plain_parquet(
 
     tracing::debug!("Writing plain Parquet to path: {}", file_path);
 
-    let parquet_bytes = to_parquet_bytes(batch).map_err(|e| {
+    let parquet_bytes = to_parquet(batch).map_err(|e| {
         WriterError::write_failure(format!("Failed to encode Parquet bytes: {}", e))
     })?;
     let bytes_written = parquet_bytes.len();

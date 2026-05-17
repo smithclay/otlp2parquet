@@ -9,7 +9,7 @@ use otlp2parquet::codec::{
     decode_logs_partitioned, decode_metrics_partitioned, decode_traces_partitioned,
 };
 use otlp2parquet::InputFormat;
-use otlp2records::{decode_metrics, transform_logs, transform_metrics, transform_traces};
+use otlp2records::{transform_logs, transform_metrics, transform_traces};
 
 /// Get path to workspace root testdata directory
 fn testdata_path(file: &str) -> PathBuf {
@@ -116,8 +116,8 @@ async fn test_metrics_summary_protobuf_skipped() {
     let payload =
         fs::read(testdata_path("metrics_summary.pb")).expect("Failed to read metrics_summary.pb");
 
-    let result =
-        decode_metrics(&payload, InputFormat::Protobuf).expect("Failed to decode summary metrics");
+    let result = transform_metrics(&payload, InputFormat::Protobuf)
+        .expect("Failed to transform summary metrics");
 
     assert!(
         result.skipped.summaries > 0,
