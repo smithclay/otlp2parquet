@@ -1621,9 +1621,9 @@ dependencies = [
 
 [[package]]
 name = "otlp2records"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8696b42173d24c23c656fb66167f563e1071233e4fa06fa5a7aa339f4f6786ee"
+checksum = "6c36308be18d71ff7d004800049fefa9fbe7c3db5da84692a38167e11bab2b0c"
 dependencies = [
  "arrow-array",
  "arrow-ipc",
