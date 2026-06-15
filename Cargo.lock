@@ -1636,9 +1636,9 @@ dependencies = [
 
 [[package]]
 name = "otlp2records"
-version = "0.7.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c36308be18d71ff7d004800049fefa9fbe7c3db5da84692a38167e11bab2b0c"
+checksum = "c6e993e4bc4b2b1934c046dff3f8586321ceaa00e978b5329c0e5d1e5ec51d9a"
 dependencies = [
  "arrow-array",
  "arrow-ipc",
@@ -1659,6 +1659,8 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "tonic",
+ "tonic-prost",
 ]
 
 [[package]]
@@ -2666,9 +2668,9 @@ dependencies = [
 
 [[package]]
 name = "tonic"
-version = "0.14.6"
+version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac2a5518c70fa84342385732db33fb3f44bc4cc748936eb5833d2df34d6445ef"
+checksum = "fec7c61a0695dc1887c1b53952990f3ad2e3a31453e1f49f10e75424943a93ec"
 dependencies = [
  "async-trait",
  "base64",
@@ -2687,9 +2689,9 @@ dependencies = [
 
 [[package]]
 name = "tonic-prost"
-version = "0.14.6"
+version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50849f68853be452acf590cde0b146665b8d507b3b8af17261df47e02c209ea0"
+checksum = "a55376a0bbaa4975a3f10d009ad763d8f4108f067c7c2e74f3001fb49778d309"
 dependencies = [
  "bytes",
  "prost",
