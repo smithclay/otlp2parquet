@@ -14,6 +14,8 @@ pub fn initialize_storage(config: &RuntimeConfig) -> Result<()> {
         return Ok(());
     }
 
+    opendal::install_default();
+
     let operator = match config.storage.backend {
         StorageBackend::Fs => {
             let fs = config.storage.fs.as_ref().ok_or_else(|| {
