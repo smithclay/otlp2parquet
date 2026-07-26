@@ -1,0 +1,10 @@
+# Advisories to ignore until upstream opendal bumps quick-xml >= 0.41.0
+# quick-xml 0.39.4 is a transitive dependency of opendal-core 0.57.0;
+# opendal 0.58 was yanked, so we cannot update further.
+# The vulnerable XML parsing is only used for S3 API responses (trusted source).
+
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0194", # quick-xml: quadratic attribute check (DoS)
+    "RUSTSEC-2026-0195", # quick-xml: unbounded namespace allocation (DoS)
+]
