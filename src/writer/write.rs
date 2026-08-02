@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn test_real_otlp_timestamp_from_testdata() {
-        use arrow::array::TimestampMicrosecondArray;
+        use arrow::array::TimestampNanosecondArray;
         use otlp2records::{transform_logs, InputFormat};
 
         let test_data_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -226,16 +226,16 @@ mod tests {
         let batch =
             transform_logs(&test_data, InputFormat::Protobuf).expect("Failed to transform logs");
 
-        if let Some(ts_col) = batch.column_by_name("timestamp") {
-            if let Some(ts_array) = ts_col.as_any().downcast_ref::<TimestampMicrosecondArray>() {
-                let timestamp_us = ts_array.value(0);
-                assert_eq!(timestamp_us.to_string().len(), 16);
-            } else {
-                panic!("timestamp column is not TimestampMicrosecondArray");
-            }
-        } else {
-            panic!("No timestamp column found");
-        }
+        let ts_col = batch
+            .column_by_name("time_unix_nano")
+            .expect("No time_unix_nano column found");
+        let ts_array = ts_col
+            .as_any()
+            .downcast_ref::<TimestampNanosecondArray>()
+            .expect("time_unix_nano column is not TimestampNanosecondArray");
+        let timestamp_ns = ts_array.value(0);
+        assert!(timestamp_ns > 0, "timestamp should be positive");
+        assert_eq!(timestamp_ns.to_string().len(), 19);
     }
 
     #[test]
