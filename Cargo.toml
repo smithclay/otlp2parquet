@@ -15,7 +15,7 @@ name = "otlp2parquet"
 path = "src/main.rs"
 
 [dependencies]
-otlp2records = { version = "0.7.0", default-features = false, features = ["parquet"] }
+otlp2records = { version = "0.11.0", default-features = false, features = ["parquet"] }
 
 arrow = { version = "58", default-features = false, features = ["ipc"] }
 
@@ -33,13 +33,13 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["e
 parking_lot = "0.12"
 
 axum = { version = "0.8.9", default-features = false, features = ["tokio", "http1", "http2", "json"] }
-tower-http = { version = "0.6", default-features = false, features = ["trace", "decompression-gzip"] }
+tower-http = { version = "0.7", default-features = false, features = ["trace", "decompression-gzip"] }
 
 time = { version = "0.3", default-features = false, features = ["std"] }
 uuid = { version = "1", default-features = false, features = ["v4"] }
 metrics = { version = "0.24", default-features = false }
 clap = { version = "4.6", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
-opendal = { version = "0.56", default-features = false, features = ["blocking", "services-fs", "services-s3"] }
+opendal = { version = "0.58", default-features = false, features = ["blocking", "services-fs", "services-s3", "executors-tokio", "http-transport-reqwest"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 [dev-dependencies]
