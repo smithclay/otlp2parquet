@@ -21,14 +21,9 @@ pub fn initialize_storage(config: &RuntimeConfig) -> Result<()> {
             })?;
 
             let fs_builder = opendal::services::Fs::default().root(&fs.path);
-            opendal::Operator::new(fs_builder)
-                .map_err(|e| {
-                    WriterError::write_failure(format!(
-                        "Failed to create filesystem operator: {}",
-                        e
-                    ))
-                })?
-                .finish()
+            opendal::Operator::new(fs_builder).map_err(|e| {
+                WriterError::write_failure(format!("Failed to create filesystem operator: {}", e))
+            })?
         }
         StorageBackend::S3 => {
             let s3 = config.storage.s3.as_ref().ok_or_else(|| {
@@ -45,11 +40,9 @@ pub fn initialize_storage(config: &RuntimeConfig) -> Result<()> {
                 s3_builder = s3_builder.endpoint(endpoint);
             }
 
-            opendal::Operator::new(s3_builder)
-                .map_err(|e| {
-                    WriterError::write_failure(format!("Failed to create S3 operator: {}", e))
-                })?
-                .finish()
+            opendal::Operator::new(s3_builder).map_err(|e| {
+                WriterError::write_failure(format!("Failed to create S3 operator: {}", e))
+            })?
         }
         StorageBackend::R2 => {
             let r2 = config.storage.r2.as_ref().ok_or_else(|| {
@@ -70,11 +63,9 @@ pub fn initialize_storage(config: &RuntimeConfig) -> Result<()> {
                 .access_key_id(&r2.access_key_id)
                 .secret_access_key(&r2.secret_access_key);
 
-            opendal::Operator::new(r2_builder)
-                .map_err(|e| {
-                    WriterError::write_failure(format!("Failed to create R2 operator: {}", e))
-                })?
-                .finish()
+            opendal::Operator::new(r2_builder).map_err(|e| {
+                WriterError::write_failure(format!("Failed to create R2 operator: {}", e))
+            })?
         }
     };
 
