@@ -28,7 +28,6 @@ pub fn initialize_storage(config: &RuntimeConfig) -> Result<()> {
                         e
                     ))
                 })?
-                .finish()
         }
         StorageBackend::S3 => {
             let s3 = config.storage.s3.as_ref().ok_or_else(|| {
@@ -49,7 +48,6 @@ pub fn initialize_storage(config: &RuntimeConfig) -> Result<()> {
                 .map_err(|e| {
                     WriterError::write_failure(format!("Failed to create S3 operator: {}", e))
                 })?
-                .finish()
         }
         StorageBackend::R2 => {
             let r2 = config.storage.r2.as_ref().ok_or_else(|| {
@@ -74,7 +72,6 @@ pub fn initialize_storage(config: &RuntimeConfig) -> Result<()> {
                 .map_err(|e| {
                     WriterError::write_failure(format!("Failed to create R2 operator: {}", e))
                 })?
-                .finish()
         }
     };
 
