@@ -28,7 +28,7 @@ jobs:
       version: ${{ steps.vars.outputs.version }}
       commit: ${{ steps.vars.outputs.commit }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -202,7 +202,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.commit }}
 
@@ -238,7 +238,7 @@ jobs:
     if: needs.prepare.outputs.tag != ''
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.commit }}
 

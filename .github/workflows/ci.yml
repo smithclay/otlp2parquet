@@ -32,7 +32,7 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Configure toolchain
         uses: ./.github/actions/setup-rust
         with:
@@ -48,7 +48,7 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Configure toolchain
         uses: ./.github/actions/setup-rust
         with:
@@ -64,7 +64,7 @@ jobs:
     name: Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Configure toolchain
         uses: ./.github/actions/setup-rust
         with:
@@ -79,7 +79,7 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Configure toolchain
         uses: ./.github/actions/setup-rust
         with:
@@ -97,7 +97,7 @@ jobs:
       checks: write
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -107,7 +107,7 @@ jobs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Configure toolchain
         uses: ./.github/actions/setup-rust
         with:
@@ -126,7 +126,7 @@ jobs:
     # Skip on draft PRs to save CI resources
     if: github.event.pull_request.draft == false || github.ref == 'refs/heads/main'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Configure toolchain
         uses: ./.github/actions/setup-rust

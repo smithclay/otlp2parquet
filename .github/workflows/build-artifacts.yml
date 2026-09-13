@@ -29,7 +29,7 @@ jobs:
             runner: ubuntu-24.04-arm
             cli_asset_name: otlp2parquet-cli-linux-arm64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref && inputs.ref || github.ref }}
 
@@ -80,7 +80,7 @@ jobs:
             arch: arm64
             runner: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref && inputs.ref || github.ref }}
 
