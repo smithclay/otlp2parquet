@@ -22,10 +22,7 @@ pub fn initialize_storage(config: &RuntimeConfig) -> Result<()> {
 
             let fs_builder = opendal::services::Fs::default().root(&fs.path);
             opendal::Operator::new(fs_builder).map_err(|e| {
-                WriterError::write_failure(format!(
-                    "Failed to create filesystem operator: {}",
-                    e
-                ))
+                WriterError::write_failure(format!("Failed to create filesystem operator: {}", e))
             })?
         }
         StorageBackend::S3 => {
